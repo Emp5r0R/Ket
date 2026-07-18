@@ -125,7 +125,7 @@ jobs:
         run: ./packaging/fetch-hysteria.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/hysteria.exe
       - shell: bash
         run: ./packaging/validate-desktop-assets.sh windows
-      - run: npm exec tauri build -- --bundles nsis --config src-tauri/tauri.windows.conf.json
+      - run: npm exec tauri build -- --bundles nsis --config src-tauri/tauri.nsis.conf.json
         working-directory: apps/ket-desktop
       - uses: actions/upload-artifact@v4
         with:
