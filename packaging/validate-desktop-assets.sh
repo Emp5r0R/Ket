@@ -12,6 +12,8 @@ case "$platform" in
   windows)
     engine="$repo_root/apps/ket-desktop/src-tauri/binaries/hysteria.exe"
     service="$repo_root/target/release/ket-tunnel-service.exe"
+    installer="$repo_root/packaging/windows/install-tunnel-service.ps1"
+    hooks="$repo_root/apps/ket-desktop/src-tauri/windows/hooks.nsh"
     ;;
   *)
     printf 'Usage: %s <linux|windows>\n' "$0" >&2
@@ -29,6 +31,15 @@ for asset in "$engine" "$service"; do
     exit 1
   fi
 done
+
+if [[ "$platform" == windows ]]; then
+  for asset in "$installer" "$hooks"; do
+    if [[ ! -s "$asset" ]]; then
+      printf 'Missing Windows installer asset: %s\n' "$asset" >&2
+      exit 1
+    fi
+  done
+fi
 
 if [[ "$platform" == linux && ! -x "$service" ]]; then
   printf 'Linux tunnel service is not executable: %s\n' "$service" >&2

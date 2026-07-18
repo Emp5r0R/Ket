@@ -40,6 +40,8 @@ Build the service for Windows and run an elevated PowerShell session:
 
 The installer creates the `KetTunnel` automatic Windows service, configures restart-on-failure, places binaries under `%ProgramFiles%\Ket`, and restricts `%ProgramData%\Ket` so the selected desktop identity can read only the installation token. The Rust binary uses the Windows Service Control Manager dispatcher and reports start, running, and stopped states.
 
+The production NSIS package runs this installer automatically. It uses a per-machine installation, stops the broker before upgrades, installs the bundled service and checksum-pinned Hysteria engine, initializes the local authentication token, and removes the Windows service during uninstall.
+
 ## Overrides
 
 Development builds accept these process environment variables on both sides of the broker. Production packages should use the defaults.
