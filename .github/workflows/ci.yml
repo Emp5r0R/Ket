@@ -79,7 +79,9 @@ jobs:
           cache-dependency-path: apps/ket-desktop/package-lock.json
       - run: npm ci
         working-directory: apps/ket-desktop
+      - run: cargo build --locked -p ket-tunnel-service --release
       - run: ./packaging/fetch-hysteria.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/hysteria
+      - run: ./packaging/validate-desktop-assets.sh linux
       - run: npm exec tauri build -- --bundles deb
         working-directory: apps/ket-desktop
       - uses: actions/upload-artifact@v4
@@ -118,8 +120,11 @@ jobs:
           cache-dependency-path: apps/ket-desktop/package-lock.json
       - run: npm ci
         working-directory: apps/ket-desktop
+      - run: cargo build --locked -p ket-tunnel-service --release
       - shell: bash
         run: ./packaging/fetch-hysteria.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/hysteria.exe
+      - shell: bash
+        run: ./packaging/validate-desktop-assets.sh windows
       - run: npm exec tauri build -- --bundles nsis
         working-directory: apps/ket-desktop
       - uses: actions/upload-artifact@v4
