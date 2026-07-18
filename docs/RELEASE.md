@@ -24,13 +24,13 @@ npm --prefix apps/ket-desktop run build
 ./packaging/validate-android-apk.sh apps/ket-android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-For a production server, source `.env`, run `./packaging/validate-env.sh`, and validate both Compose files with `docker compose config --quiet`. Hysteria2 requires a DNS-only UDP hostname or a compatible Layer 4 proxy; ordinary Cloudflare HTTP proxying does not carry its UDP data plane.
+For a production server, source `.env`, run `./packaging/validate-env.sh`, and validate the base file plus each enabled overlay with `docker compose config --quiet`. Hysteria2 requires direct UDP reachability and VLESS + REALITY requires direct raw TCP reachability; ordinary Cloudflare HTTP proxying or a Cloudflare Tunnel does not carry either unmodified data plane.
 
 ## Signing
 
 The Android debug artifact is only for testing. Production Android, Linux, and Windows artifacts must be signed by the release owner and their checksums published alongside the files. Ket does not store signing keys in this repository.
 
-The current maintained data-plane integration is Hysteria2. Other protocol identifiers are contract-level extension points and must not be advertised as active until their maintained upstream engines and platform adapters are integrated and tested.
+The maintained server data planes are Hysteria2 and Xray-core VLESS + REALITY. Shipped desktop and Android clients currently activate Hysteria2; REALITY must not be advertised as client-ready until the pinned platform adapters are integrated and tested. Other protocol identifiers remain contract-level extension points.
 
 ## Multi-architecture image
 

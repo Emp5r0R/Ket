@@ -12,6 +12,7 @@ services:
     depends_on:
       control-plane:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     environment:
       HYSTERIA_DISABLE_UPDATE_CHECK: "1"

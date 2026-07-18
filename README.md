@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server can carry authenticated traffic through Hysteria2 and report per-session traffic. Linux/Windows packages and a multi-ABI Android APK now bundle checksum-pinned Hysteria data planes. Production signing, physical-device Android packet-flow testing, installer upgrade tests, and additional protocol engines are still required before this is a complete end-user VPN.
+> **Current state:** the Docker server can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. Linux/Windows packages and a multi-ABI Android APK currently bundle the checksum-pinned Hysteria data plane; client-side REALITY adapters, production signing, physical-device packet-flow tests, and installer upgrade tests remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -20,13 +20,14 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Per-grant connection limits, global capacity, expiry, renewal, release, and revocation.
 - Lease-scoped Hysteria2 credentials, HTTP authentication, traffic counters, online state, and connection kicks.
 - Generated Hysteria2 2.10 server configuration with TLS, HTTP/3 masquerading, optional Salamander/Gecko obfuscation, and abuse-resistant ACLs.
+- Generated Xray-core 26.3.27 VLESS + REALITY configuration with Vision, deterministic lease-scoped UUIDs, dynamic user reconciliation/revocation, traffic statistics, and abuse-resistant routing rules.
 - Android Compose client with HTTPS enrollment, strict Hysteria2 profile validation, foreground `VpnService` ownership, protected QUIC sockets, maintained hev TUN-to-SOCKS forwarding, lease renewal, local traffic metrics, and fail-closed engine supervision.
 - Typed discovery for Hysteria2, IKEv2, OpenVPN/stunnel, Shadowsocks 2022, VLESS XTLS Reality, WireGuard, stealth, and XOR-wrapped adapters.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
 - Atomic persistent state and graceful shutdown.
 - Rootless, capability-free Docker control-plane image with a read-only root filesystem.
 
-The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and the first data-plane deployment in [the Hysteria2 guide](docs/HYSTERIA2.md).
+The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and data-plane deployment in the [Hysteria2](docs/HYSTERIA2.md) and [VLESS + REALITY](docs/XRAY_REALITY.md) guides.
 
 ## Run with Docker
 
@@ -61,6 +62,15 @@ with mode `0600` into the shared `ket-dataplane` volume; do not bind-mount that
 volume or expose the internal authentication and statistics endpoints.
 
 This publishes Hysteria2 on UDP `443` by default. The hostname must reach the server over UDP; normal Cloudflare orange-cloud HTTP proxying is not a UDP tunnel. Use a DNS-only record or a deliberately configured Layer 4 product compatible with unmodified Hysteria packets.
+
+To enable the VLESS + REALITY server data plane, generate the X25519 and server-only credential keys described in [the deployment guide](docs/XRAY_REALITY.md), set `KET_XRAY_ENABLED=true`, and start its overlay:
+
+```bash
+docker compose -f compose.yaml -f compose.xray.yaml config --quiet
+docker compose -f compose.yaml -f compose.xray.yaml up --build -d
+```
+
+This publishes raw TCP `443` by default. Its hostname must resolve directly to the server through a DNS-only record; an ordinary Cloudflare Tunnel or orange-cloud HTTP proxy does not forward unmodified VLESS + REALITY traffic. The pinned Xray image is a multi-architecture manifest, so Docker selects the native `linux/amd64` or `linux/arm64` image for the host.
 
 Create an access grant:
 

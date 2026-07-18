@@ -1,4 +1,12 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::OpenOptions,
+    io::Write,
+    path::{Path, PathBuf},
+    process::Output,
+    sync::Arc,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -10,11 +18,19 @@ use hyper_util::{
 };
 use ket_core::SessionTraffic;
 use serde::Deserialize;
+use serde_json::Value;
 use thiserror::Error;
+use tokio::process::Command;
 
-use crate::{config::ServerConfig, service::unix_time};
+use crate::{
+    config::{ServerConfig, XrayConfig},
+    service::unix_time,
+    xray,
+};
 
 const MAX_STATS_RESPONSE_BYTES: usize = 1024 * 1024;
+const MAX_COMMAND_OUTPUT_BYTES: usize = 64 * 1024;
+const XRAY_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
 pub(crate) enum DataPlaneError {
@@ -24,7 +40,7 @@ pub(crate) enum DataPlaneError {
     Build(#[from] hyper::http::Error),
     #[error("data-plane request failed: {0}")]
     Request(#[from] hyper_util::client::legacy::Error),
-    #[error("data-plane request timed out")]
+    #[error("data-plane operation timed out")]
     Timeout,
     #[error("data-plane response body failed: {0}")]
     Body(#[from] hyper::Error),
@@ -34,11 +50,19 @@ pub(crate) enum DataPlaneError {
     ResponseTooLarge,
     #[error("data-plane response is invalid: {0}")]
     Decode(#[from] serde_json::Error),
+    #[error("data-plane I/O failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("data-plane command failed: {0}")]
+    Command(String),
+    #[error("data-plane controls failed: {0}")]
+    Composite(String),
 }
 
 #[async_trait]
 pub(crate) trait DataPlaneControl: Send + Sync {
     async fn healthy(&self) -> bool;
+    async fn provision(&self, session_id: &str) -> Result<(), DataPlaneError>;
+    async fn reconcile(&self, session_ids: &[String]) -> Result<(), DataPlaneError>;
     async fn traffic(&self, session_id: &str) -> Result<SessionTraffic, DataPlaneError>;
     async fn kick(&self, session_ids: &[String]) -> Result<(), DataPlaneError>;
 }
@@ -46,12 +70,20 @@ pub(crate) trait DataPlaneControl: Send + Sync {
 pub(crate) fn from_config(
     config: &ServerConfig,
 ) -> Result<Arc<dyn DataPlaneControl>, DataPlaneError> {
-    match &config.hysteria {
-        Some(hysteria) => Ok(Arc::new(HysteriaControl::new(
+    let mut controls: Vec<Arc<dyn DataPlaneControl>> = Vec::new();
+    if let Some(hysteria) = &config.hysteria {
+        controls.push(Arc::new(HysteriaControl::new(
             &hysteria.stats_url,
             &hysteria.stats_secret,
-        )?)),
-        None => Ok(Arc::new(NoDataPlane)),
+        )?));
+    }
+    if let Some(xray) = &config.xray {
+        controls.push(Arc::new(XrayControl::new(xray.clone())));
+    }
+    match controls.len() {
+        0 => Ok(Arc::new(NoDataPlane)),
+        1 => Ok(controls.remove(0)),
+        _ => Ok(Arc::new(CompositeDataPlane { controls })),
     }
 }
 
@@ -63,18 +95,117 @@ impl DataPlaneControl for NoDataPlane {
         true
     }
 
+    async fn provision(&self, _session_id: &str) -> Result<(), DataPlaneError> {
+        Ok(())
+    }
+
+    async fn reconcile(&self, _session_ids: &[String]) -> Result<(), DataPlaneError> {
+        Ok(())
+    }
+
     async fn traffic(&self, _session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
-        Ok(SessionTraffic {
-            available: false,
-            bytes_sent: 0,
-            bytes_received: 0,
-            online_connections: 0,
-            observed_at_epoch_seconds: unix_time(),
-        })
+        Ok(unavailable_traffic())
     }
 
     async fn kick(&self, _session_ids: &[String]) -> Result<(), DataPlaneError> {
         Ok(())
+    }
+}
+
+struct CompositeDataPlane {
+    controls: Vec<Arc<dyn DataPlaneControl>>,
+}
+
+#[async_trait]
+impl DataPlaneControl for CompositeDataPlane {
+    async fn healthy(&self) -> bool {
+        for control in &self.controls {
+            if !control.healthy().await {
+                return false;
+            }
+        }
+        true
+    }
+
+    async fn provision(&self, session_id: &str) -> Result<(), DataPlaneError> {
+        let mut completed: Vec<Arc<dyn DataPlaneControl>> = Vec::new();
+        for control in &self.controls {
+            if let Err(error) = control.provision(session_id).await {
+                for provisioned in completed.into_iter().rev() {
+                    let _ = provisioned.kick(&[session_id.to_owned()]).await;
+                }
+                return Err(error);
+            }
+            completed.push(Arc::clone(control));
+        }
+        Ok(())
+    }
+
+    async fn reconcile(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
+        run_all(&self.controls, |control| control.reconcile(session_ids)).await
+    }
+
+    async fn traffic(&self, session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
+        let mut aggregate = unavailable_traffic();
+        let mut failures = Vec::new();
+        for control in &self.controls {
+            match control.traffic(session_id).await {
+                Ok(traffic) => {
+                    aggregate.available |= traffic.available;
+                    aggregate.bytes_sent = aggregate.bytes_sent.saturating_add(traffic.bytes_sent);
+                    aggregate.bytes_received = aggregate
+                        .bytes_received
+                        .saturating_add(traffic.bytes_received);
+                    aggregate.online_connections = aggregate
+                        .online_connections
+                        .saturating_add(traffic.online_connections);
+                    aggregate.observed_at_epoch_seconds = aggregate
+                        .observed_at_epoch_seconds
+                        .max(traffic.observed_at_epoch_seconds);
+                }
+                Err(error) => failures.push(error.to_string()),
+            }
+        }
+        if aggregate.available || failures.is_empty() {
+            Ok(aggregate)
+        } else {
+            Err(DataPlaneError::Composite(failures.join("; ")))
+        }
+    }
+
+    async fn kick(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
+        run_all(&self.controls, |control| control.kick(session_ids)).await
+    }
+}
+
+async fn run_all<'a, F, Fut>(
+    controls: &'a [Arc<dyn DataPlaneControl>],
+    operation: F,
+) -> Result<(), DataPlaneError>
+where
+    F: Fn(&'a Arc<dyn DataPlaneControl>) -> Fut,
+    Fut: std::future::Future<Output = Result<(), DataPlaneError>>,
+{
+    let mut failures = Vec::new();
+    for control in controls {
+        if let Err(error) = operation(control).await {
+            failures.push(error.to_string());
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(DataPlaneError::Composite(failures.join("; ")))
+    }
+}
+
+fn unavailable_traffic() -> SessionTraffic {
+    SessionTraffic {
+        available: false,
+        bytes_sent: 0,
+        bytes_received: 0,
+        online_connections: 0,
+        observed_at_epoch_seconds: unix_time(),
     }
 }
 
@@ -152,6 +283,14 @@ impl DataPlaneControl for HysteriaControl {
             .is_ok()
     }
 
+    async fn provision(&self, _session_id: &str) -> Result<(), DataPlaneError> {
+        Ok(())
+    }
+
+    async fn reconcile(&self, _session_ids: &[String]) -> Result<(), DataPlaneError> {
+        Ok(())
+    }
+
     async fn traffic(&self, session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
         let (traffic, online) = tokio::join!(
             self.get_json::<BTreeMap<String, HysteriaTraffic>>("/traffic"),
@@ -187,5 +326,338 @@ impl DataPlaneControl for HysteriaControl {
             return Err(DataPlaneError::Status(response.status()));
         }
         Ok(())
+    }
+}
+
+struct XrayControl {
+    config: XrayConfig,
+}
+
+impl XrayControl {
+    fn new(config: XrayConfig) -> Self {
+        Self { config }
+    }
+
+    async fn run(&self, arguments: &[String]) -> Result<String, DataPlaneError> {
+        let mut command = Command::new(&self.config.binary_path);
+        command
+            .args(arguments)
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let output = tokio::time::timeout(XRAY_COMMAND_TIMEOUT, command.output())
+            .await
+            .map_err(|_| DataPlaneError::Timeout)??;
+        decode_command_output(output)
+    }
+
+    fn api_arguments(&self, operation: &str) -> Vec<String> {
+        vec![
+            "api".to_owned(),
+            operation.to_owned(),
+            format!("--server={}", self.config.api_server),
+            "--timeout=3".to_owned(),
+        ]
+    }
+
+    async fn add_user(&self, session_id: &str) -> Result<(), DataPlaneError> {
+        validate_session_id(session_id)?;
+        let path = user_config_path(session_id);
+        write_user_config(&path, &xray::user_document(&self.config, session_id)).await?;
+        let mut arguments = self.api_arguments("adu");
+        arguments.push(path.to_string_lossy().into_owned());
+        let result = self.run(&arguments).await;
+        let cleanup = tokio::fs::remove_file(&path).await;
+        let output = result?;
+        if let Err(error) = cleanup {
+            return Err(DataPlaneError::Io(error));
+        }
+        if !output.contains("Added 1 user(s) in total.") {
+            return Err(DataPlaneError::Command(
+                "Xray did not confirm one added user".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn remove_emails(&self, emails: &[String]) -> Result<(), DataPlaneError> {
+        for chunk in emails.chunks(100) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let mut arguments = self.api_arguments("rmu");
+            arguments.push(format!("-tag={}", self.config.inbound_tag));
+            arguments.extend(chunk.iter().cloned());
+            let output = self.run(&arguments).await?;
+            if !output.contains("Removed ") || !output.contains(" user(s) in total.") {
+                return Err(DataPlaneError::Command(
+                    "Xray did not confirm user removal".to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn managed_emails(&self) -> Result<Vec<String>, DataPlaneError> {
+        let mut arguments = self.api_arguments("inbounduser");
+        arguments.push(format!("-tag={}", self.config.inbound_tag));
+        let output = self.run(&arguments).await?;
+        let value: Value = serde_json::from_str(&output)?;
+        let mut emails = BTreeSet::new();
+        collect_emails(&value, &mut emails);
+        Ok(emails
+            .into_iter()
+            .filter(|email| email.starts_with("session-") && email.ends_with("@ket.invalid"))
+            .collect())
+    }
+}
+
+#[async_trait]
+impl DataPlaneControl for XrayControl {
+    async fn healthy(&self) -> bool {
+        let mut arguments = self.api_arguments("inboundusercount");
+        arguments.push(format!("-tag={}", self.config.inbound_tag));
+        self.run(&arguments).await.is_ok()
+    }
+
+    async fn provision(&self, session_id: &str) -> Result<(), DataPlaneError> {
+        self.add_user(session_id).await
+    }
+
+    async fn reconcile(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
+        let existing = self.managed_emails().await?;
+        self.remove_emails(&existing).await?;
+        for session_id in session_ids {
+            self.add_user(session_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn traffic(&self, session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
+        validate_session_id(session_id)?;
+        let email = xray::session_email(session_id);
+        let pattern = format!("user>>>{email}>>>traffic>>>");
+        let mut stats_arguments = self.api_arguments("statsquery");
+        stats_arguments.push(format!("-pattern={pattern}"));
+        let mut online_arguments = self.api_arguments("statsonline");
+        online_arguments.push(format!("-email={email}"));
+        let (stats, online) = tokio::join!(self.run(&stats_arguments), self.run(&online_arguments));
+        let (bytes_sent, bytes_received) = parse_xray_stats(&stats?)?;
+        let online_connections = parse_xray_online_result(online)?;
+        Ok(SessionTraffic {
+            available: true,
+            bytes_sent,
+            bytes_received,
+            online_connections,
+            observed_at_epoch_seconds: unix_time(),
+        })
+    }
+
+    async fn kick(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
+        let emails = session_ids
+            .iter()
+            .map(|session_id| {
+                validate_session_id(session_id)?;
+                Ok(xray::session_email(session_id))
+            })
+            .collect::<Result<Vec<_>, DataPlaneError>>()?;
+        self.remove_emails(&emails).await
+    }
+}
+
+fn decode_command_output(output: Output) -> Result<String, DataPlaneError> {
+    if output.stdout.len().saturating_add(output.stderr.len()) > MAX_COMMAND_OUTPUT_BYTES {
+        return Err(DataPlaneError::ResponseTooLarge);
+    }
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        let message = message.lines().last().unwrap_or("unknown Xray API error");
+        return Err(DataPlaneError::Command(message.chars().take(512).collect()));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|_| DataPlaneError::Command("Xray returned non-UTF-8 output".to_owned()))
+}
+
+fn validate_session_id(session_id: &str) -> Result<(), DataPlaneError> {
+    if session_id.len() != 12 || !session_id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(DataPlaneError::Command(
+            "session ID is invalid for Xray provisioning".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn user_config_path(session_id: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("ket-xray-user-{session_id}.json"))
+}
+
+async fn write_user_config(path: &Path, document: &Value) -> Result<(), DataPlaneError> {
+    let path = path.to_owned();
+    let encoded = serde_json::to_vec(document)?;
+    tokio::task::spawn_blocking(move || -> Result<(), std::io::Error> {
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path)?;
+        file.write_all(&encoded)?;
+        file.sync_all()
+    })
+    .await
+    .map_err(|error| DataPlaneError::Command(format!("Xray writer failed: {error}")))??;
+    Ok(())
+}
+
+fn collect_emails(value: &Value, emails: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(object) => {
+            if let Some(email) = object.get("email").and_then(Value::as_str) {
+                emails.insert(email.to_owned());
+            }
+            for nested in object.values() {
+                collect_emails(nested, emails);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                collect_emails(nested, emails);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_xray_stats(output: &str) -> Result<(u64, u64), DataPlaneError> {
+    let value: Value = serde_json::from_str(output)?;
+    let mut sent = 0_u64;
+    let mut received = 0_u64;
+    collect_stats(&value, &mut sent, &mut received);
+    Ok((sent, received))
+}
+
+fn collect_stats(value: &Value, sent: &mut u64, received: &mut u64) {
+    match value {
+        Value::Object(object) => {
+            if let (Some(name), Some(value)) = (
+                object.get("name").and_then(Value::as_str),
+                object.get("value").and_then(json_u64),
+            ) {
+                if name.ends_with(">>>uplink") {
+                    *sent = sent.saturating_add(value);
+                } else if name.ends_with(">>>downlink") {
+                    *received = received.saturating_add(value);
+                }
+            }
+            for nested in object.values() {
+                collect_stats(nested, sent, received);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                collect_stats(nested, sent, received);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_xray_online(output: &str) -> Result<u32, DataPlaneError> {
+    let value: Value = serde_json::from_str(output)?;
+    find_numeric_field(&value, &["value", "count", "online"])
+        .unwrap_or(0)
+        .try_into()
+        .map_err(|_| DataPlaneError::Command("Xray online count exceeds u32".to_owned()))
+}
+
+fn parse_xray_online_result(output: Result<String, DataPlaneError>) -> Result<u32, DataPlaneError> {
+    match output {
+        Ok(output) => parse_xray_online(&output),
+        Err(DataPlaneError::Command(message))
+            if message.contains("code = NotFound") && message.contains(">>>online not found") =>
+        {
+            Ok(0)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn find_numeric_field(value: &Value, names: &[&str]) -> Option<u64> {
+    match value {
+        Value::Object(object) => {
+            for name in names {
+                if let Some(value) = object.get(*name).and_then(json_u64) {
+                    return Some(value);
+                }
+            }
+            object
+                .values()
+                .find_map(|nested| find_numeric_field(nested, names))
+        }
+        Value::Array(values) => values
+            .iter()
+            .find_map(|nested| find_numeric_field(nested, names)),
+        _ => None,
+    }
+}
+
+fn json_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xray_stats_parser_accepts_proto_json_integer_strings() {
+        let (sent, received) = parse_xray_stats(
+            r#"{"stat":[{"name":"user>>>a>>>traffic>>>uplink","value":"42"},{"name":"user>>>a>>>traffic>>>downlink","value":19}]}"#,
+        )
+        .expect("stats should parse");
+        assert_eq!((sent, received), (42, 19));
+        assert_eq!(parse_xray_online(r#"{"value":"3"}"#).unwrap(), 3);
+        assert_eq!(
+            parse_xray_online_result(Err(DataPlaneError::Command(
+                "rpc error: code = NotFound desc = user>>>a>>>online not found".to_owned(),
+            )))
+            .unwrap(),
+            0
+        );
+        assert!(
+            parse_xray_online_result(Err(DataPlaneError::Command(
+                "rpc error: code = Unavailable".to_owned(),
+            )))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn managed_email_collector_ignores_unowned_users() {
+        let value = serde_json::json!({
+            "users": [
+                {"email": "session-AbCdEf123456@ket.invalid"},
+                {"email": "operator@example.com"}
+            ]
+        });
+        let mut emails = BTreeSet::new();
+        collect_emails(&value, &mut emails);
+        let managed: Vec<_> = emails
+            .into_iter()
+            .filter(|email| email.starts_with("session-") && email.ends_with("@ket.invalid"))
+            .collect();
+        assert_eq!(managed, ["session-AbCdEf123456@ket.invalid"]);
+    }
+
+    #[test]
+    fn session_ids_cannot_escape_the_temporary_directory() {
+        assert!(validate_session_id("AbCdEf123456").is_ok());
+        assert!(validate_session_id("../../etc/pass").is_err());
+        assert!(validate_session_id("too-short").is_err());
     }
 }
