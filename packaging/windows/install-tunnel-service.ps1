@@ -29,6 +29,15 @@ function Invoke-CheckedNative {
     }
 }
 
+function Copy-IfDifferent {
+    param([string]$Source, [string]$Destination)
+    $SourcePath = [System.IO.Path]::GetFullPath($Source)
+    $DestinationPath = [System.IO.Path]::GetFullPath($Destination)
+    if (-not $SourcePath.Equals($DestinationPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $SourcePath -Destination $DestinationPath -Force
+    }
+}
+
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($null -ne $existing) {
     if ($existing.Status -ne "Stopped") {
@@ -43,8 +52,8 @@ if ($null -ne $existing) {
 }
 
 New-Item -ItemType Directory -Force -Path $InstallDir, $DataDir, $RuntimeDir | Out-Null
-Copy-Item -LiteralPath $ServiceBinary -Destination $ServiceTarget -Force
-Copy-Item -LiteralPath $HysteriaBinary -Destination $HysteriaTarget -Force
+Copy-IfDifferent -Source $ServiceBinary -Destination $ServiceTarget
+Copy-IfDifferent -Source $HysteriaBinary -Destination $HysteriaTarget
 & $HysteriaTarget "version" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "The Hysteria engine failed its version check" }
 
