@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use ket_client_core::{
-    BrokerConfig, BrokerHysteriaAdapter, ClientIssue, ClientSnapshot, ControlEndpoint,
+    BrokerConfig, BrokerTransportAdapter, ClientIssue, ClientSnapshot, ControlEndpoint,
     HttpControlPlane, KetClient, MaintenanceTask, SelectionPolicy,
 };
 use serde::Serialize;
@@ -23,7 +23,7 @@ impl Drop for DesktopSession {
 }
 
 struct DesktopController {
-    adapter: BrokerHysteriaAdapter,
+    adapter: BrokerTransportAdapter,
     session: Mutex<Option<DesktopSession>>,
 }
 
@@ -46,7 +46,7 @@ struct DesktopState {
 impl DesktopController {
     fn new(config: BrokerConfig) -> Self {
         Self {
-            adapter: BrokerHysteriaAdapter::new(config),
+            adapter: BrokerTransportAdapter::new(config),
             session: Mutex::new(None),
         }
     }

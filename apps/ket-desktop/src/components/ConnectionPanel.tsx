@@ -67,7 +67,7 @@ export function ConnectionPanel({ snapshot, engine, busy, onConnect, onStop }: C
       ) : !engine.binary_available ? (
         <div className="engine-warning" role="status">
           <AlertTriangle size={17} aria-hidden="true" />
-          <span>Hysteria engine is not installed.</span>
+          <span>Transport engines are not installed.</span>
         </div>
       ) : null}
       {snapshot.issue ? (

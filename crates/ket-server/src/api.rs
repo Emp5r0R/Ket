@@ -1272,7 +1272,7 @@ mod tests {
             endpoint: xray.public_host.clone(),
             port: xray.public_port,
             network: Network::Tcp,
-            priority: 20,
+            priority: 5,
             tls_server_name: Some(xray.sni.clone()),
             options,
         });

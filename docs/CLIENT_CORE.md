@@ -1,6 +1,6 @@
 # Shared client core
 
-`ket-client-core` is the orchestration boundary shared by the Linux and Windows desktop shells. Android will consume the same contracts and state model while providing a `VpnService`-owned transport adapter instead of launching a desktop child process.
+`ket-client-core` is the orchestration boundary shared by the Linux and Windows desktop shells. Android consumes the same contracts while providing `VpnService`-owned transport adapters instead of launching desktop route-management processes.
 
 ## Implemented lifecycle
 
@@ -12,19 +12,21 @@
 6. `refresh`, `renew`, and the optional maintenance task update node health, capacity, traffic, expiry, and reconnect state. Authorization loss stops the tunnel and clears the in-memory session.
 7. `disconnect` stops the local tunnel before releasing the server lease. A failed release is safe because the bounded server lease still expires.
 
-## Hysteria2 service adapter
+## Desktop service adapters
 
-The privileged service adapter delegates protocol logic to the maintained Hysteria2 executable and uses its official [cross-platform TUN mode](https://v2.hysteria.network/docs/advanced/Full-Client-Config/#tun). It does not reimplement QUIC or cryptography. The desktop process uses `BrokerHysteriaAdapter`, which authenticates to that service over loopback and never launches the engine directly.
+The privileged service delegates protocol logic to maintained upstream engines. The desktop process uses `BrokerTransportAdapter`, which authenticates to that service over loopback and never launches engines directly.
+
+Hysteria2 uses its official [cross-platform TUN mode](https://v2.hysteria.network/docs/advanced/Full-Client-Config/#tun). VLESS + REALITY uses Xray-core with a loopback SOCKS inbound and `tun2proxy` for full-route TUN ownership. Ket does not reimplement QUIC, REALITY, or their cryptography.
 
 - TLS verification is mandatory and uses the server-provided SNI.
-- The adapter resolves and excludes every current server IP before adding full IPv4/IPv6 routes, preventing a tunnel routing loop.
-- Only known Hysteria options are accepted. Unknown fields, missing credentials, invalid Gecko bounds, and downgrade-shaped fields fail closed.
+- Each adapter resolves and excludes every current server IP before adding full IPv4/IPv6 routes, preventing a tunnel routing loop.
+- Only known transport options are accepted. Unknown fields, missing credentials, invalid Gecko bounds, invalid REALITY keys, unsupported flows, and downgrade-shaped fields fail closed.
 - BBR defaults are preserved; the client does not invent unsafe bandwidth values.
 - Configuration files are created in a private directory with mode `0600` on Unix, zeroed in the writer buffer, and removed after both connection and TUN readiness are observed.
 - Raw engine output is discarded after extracting an allowlisted diagnostic category, preventing share URIs or credentials from entering app logs.
 - The child process is supervised and killed on explicit disconnect, terminal failure, service shutdown, or desktop heartbeat expiry.
 
-The desktop package must bundle a verified Hysteria binary with the service installer. The GUI deliberately does not self-elevate. Hysteria TUN transports TCP and UDP but not ICMP, an upstream limitation that the UI diagnostics must state accurately.
+The desktop package bundles verified Hysteria, Xray, and `tun2proxy` binaries with the service installer. The GUI deliberately does not self-elevate. Hysteria TUN transports TCP and UDP but not ICMP, an upstream limitation that the UI diagnostics must state accurately.
 
 ## Integration sketch
 
@@ -32,7 +34,7 @@ The desktop package must bundle a verified Hysteria binary with the service inst
 use std::{sync::Arc, time::Duration};
 
 use ket_client_core::{
-    BrokerConfig, BrokerHysteriaAdapter, ControlEndpoint, HttpControlPlane, KetClient,
+    BrokerConfig, BrokerTransportAdapter, ControlEndpoint, HttpControlPlane, KetClient,
     SelectionPolicy,
 };
 
@@ -41,7 +43,7 @@ let client = KetClient::new(
     ControlEndpoint::parse("https://ket.example.com")?,
     "Aadhish's workstation",
     Arc::new(HttpControlPlane::new()?),
-    vec![Arc::new(BrokerHysteriaAdapter::new(BrokerConfig::from_env()?))],
+    vec![Arc::new(BrokerTransportAdapter::new(BrokerConfig::from_env()?))],
     SelectionPolicy::default(),
 )?;
 

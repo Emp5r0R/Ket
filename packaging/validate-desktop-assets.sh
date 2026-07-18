@@ -7,10 +7,15 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 case "$platform" in
   linux)
     engine="$repo_root/apps/ket-desktop/src-tauri/binaries/hysteria"
+    xray="$repo_root/apps/ket-desktop/src-tauri/binaries/xray"
+    bridge="$repo_root/apps/ket-desktop/src-tauri/binaries/tun2proxy"
     service="$repo_root/target/release/ket-tunnel-service"
     ;;
   windows)
     engine="$repo_root/apps/ket-desktop/src-tauri/binaries/hysteria.exe"
+    xray="$repo_root/apps/ket-desktop/src-tauri/binaries/xray.exe"
+    bridge="$repo_root/apps/ket-desktop/src-tauri/binaries/tun2proxy.exe"
+    wintun="$repo_root/apps/ket-desktop/src-tauri/binaries/wintun.dll"
     service="$repo_root/target/release/ket-tunnel-service.exe"
     installer="$repo_root/packaging/windows/install-tunnel-service.ps1"
     hooks="$repo_root/apps/ket-desktop/src-tauri/windows/hooks.nsh"
@@ -21,7 +26,7 @@ case "$platform" in
     ;;
 esac
 
-for asset in "$engine" "$service"; do
+for asset in "$engine" "$xray" "$bridge" "$service"; do
   if [[ ! -f "$asset" ]]; then
     printf 'Missing desktop bundle asset: %s\n' "$asset" >&2
     exit 1
@@ -33,7 +38,7 @@ for asset in "$engine" "$service"; do
 done
 
 if [[ "$platform" == windows ]]; then
-  for asset in "$installer" "$hooks"; do
+  for asset in "$wintun" "$installer" "$hooks"; do
     if [[ ! -s "$asset" ]]; then
       printf 'Missing Windows installer asset: %s\n' "$asset" >&2
       exit 1
@@ -41,9 +46,13 @@ if [[ "$platform" == windows ]]; then
   done
 fi
 
-if [[ "$platform" == linux && ! -x "$service" ]]; then
-  printf 'Linux tunnel service is not executable: %s\n' "$service" >&2
-  exit 1
+if [[ "$platform" == linux ]]; then
+  for asset in "$service" "$engine" "$xray" "$bridge"; do
+    if [[ ! -x "$asset" ]]; then
+      printf 'Linux tunnel asset is not executable: %s\n' "$asset" >&2
+      exit 1
+    fi
+  done
 fi
 
 printf 'Desktop assets ready for %s packaging.\n' "$platform"

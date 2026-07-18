@@ -13,11 +13,11 @@ This separation keeps the API and user experience consistent while allowing a no
 | `ket-core` | Shared API models, protocol identifiers, secret primitives | Rust | Implemented |
 | `ket-server` | Control API, access grants, sessions, telemetry | Rust/Axum | Implemented |
 | Data-plane control | Scoped credentials, engine configuration, auth, traffic, health, kicks | Rust | Hysteria2 and VLESS + REALITY implemented |
-| Transport engines | VLESS Reality, Hysteria2, Shadowsocks 2022, OpenVPN/stunnel, IKEv2 | Maintained upstream engines | Hysteria2 2.10 and Xray-core 26.3.27 integrated server-side |
-| Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Implemented for Hysteria2 |
+| Transport engines | VLESS Reality, Hysteria2, Shadowsocks 2022, OpenVPN/stunnel, IKEv2 | Maintained upstream engines | Hysteria2 2.10 and Xray-core 26.3.27 integrated server/client-side |
+| Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Hysteria2 and VLESS + REALITY implemented |
 | Desktop privilege broker | Authenticated TUN/route ownership and engine supervision | Rust system service | Implemented for Linux/Windows |
 | Linux/Windows desktop | Map-first connection UI and native packaging | Tauri 2 plus shared Rust core | UI and service installers implemented; signed bundles pending |
-| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Hysteria2, hev-socks5-tunnel | Multi-ABI Hysteria2 data plane implemented; physical-device verification pending |
+| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Hysteria2, Xray, hev-socks5-tunnel | Ranked REALITY/Hysteria fallback implemented; physical packet-flow verification pending |
 
 ## Control flow
 
@@ -27,8 +27,8 @@ This separation keeps the API and user experience consistent while allowing a no
 4. The client receives a short-lived control bearer, node location/health, and configured transport profiles. Implemented transports also include a separate data-plane credential.
 5. Hysteria2 submits its scoped credential to Ket's HTTP authentication backend. VLESS + REALITY instead receives a deterministic lease-scoped UUID that Ket installs through Xray's private Handler API before returning the manifest.
 6. Clients renew the lease while connected and release it on disconnect. Release, grant revocation, and the expiry reaper reject future authentication and remove or kick the session in every configured data plane. Ket reconciles persisted active leases with Xray at startup.
-7. On desktop, the unprivileged Tauri process sends validated transport requests to a loopback-only system service. The service authenticates each connection before it owns the Hysteria process, TUN interface, and routes.
-8. On Android, `VpnService` starts Hysteria in local SOCKS5 mode, protects its QUIC descriptor through Hysteria's FD-control protocol, and attaches hev-socks5-tunnel to the Android-owned TUN only after transport readiness.
+7. On desktop, the unprivileged Tauri process sends validated transport requests to a loopback-only system service. The service authenticates each connection before it owns Hysteria TUN mode or the Xray/`tun2proxy` process pair and their routes.
+8. On Android, `VpnService` attempts ranked transports. It either protects Hysteria's QUIC descriptor or excludes Xray's resolved server route, then attaches hev-socks5-tunnel to the Android-owned TUN only after a SOCKS path check succeeds.
 
 ## Security invariants
 
@@ -46,9 +46,9 @@ This separation keeps the API and user experience consistent while allowing a no
 - Hysteria2 rejects loopback, link-local, private, multicast, carrier-grade NAT, and outbound SMTP destinations to reduce lateral-movement, metadata-service, and spam abuse.
 - Xray rejects private, loopback, link-local, multicast, carrier-grade NAT, BitTorrent, and outbound SMTP destinations for the same abuse boundary.
 - The client accepts plaintext control HTTP only on loopback by default, refuses redirects and system proxies, requires TLS 1.2 or newer for HTTPS, caps response bodies, and sanitizes server errors before UI delivery.
-- Desktop Hysteria credentials exist only in memory and an ephemeral mode-`0600` configuration that is deleted after the engine reports both server connection and TUN readiness.
-- Android rejects unknown Hysteria profile options and downgrade-shaped TLS fields, resolves the server before routing traffic, protects only the QUIC socket from the VPN, and deletes its mode-`0600` engine configuration after SOCKS readiness.
-- Android native inputs are reproducible: Hysteria executables and the complete hev source archive are version- and checksum-pinned, and CI verifies all three native payloads for four ABIs.
+- Desktop transport credentials exist only in memory and an ephemeral mode-`0600` configuration that is deleted after engine and route readiness.
+- Android rejects unknown transport options and downgrade-shaped TLS fields, resolves the server before routing traffic, protects only Hysteria's QUIC socket or excludes Xray's exact server route, and deletes its mode-`0600` engine configuration after SOCKS readiness.
+- Android native inputs are reproducible: Hysteria and Xray executables plus the complete hev source archive are version- and checksum-pinned, and CI verifies the expected payload matrix.
 - Desktop broker connections require a fresh challenge response using a 256-bit per-installation token. Protocol frames are bounded, credential buffers are zeroized, and debug output redacts proofs and tunnel IDs.
 - The privileged broker allows one full-route tunnel and stops orphaned engine processes when the desktop heartbeat lease expires.
 
@@ -60,4 +60,4 @@ Clients use a policy engine rather than a hard-coded default. The implemented se
 
 ## Client parity
 
-Desktop and Android consume the same versioned control contract. The Rust desktop core implements probing, bounded fallback, reconnecting, and the full lifecycle snapshot. Android currently implements disconnected, enrolling, connecting, connected, stopping, and failed states with node, capacity, handshake latency, and local traffic metrics. Android automatic multi-transport fallback and reconnect policy remain pending behind its platform adapter.
+Desktop and Android consume the same versioned control contract. The Rust desktop core implements probing, bounded fallback, reconnecting, and the full lifecycle snapshot. Android implements disconnected, enrolling, connecting, connected, stopping, and failed states with ranked multi-transport startup fallback, node, capacity, handshake latency, selected protocol, and local traffic metrics. Android runtime reconnect after an already-connected engine fails remains pending.

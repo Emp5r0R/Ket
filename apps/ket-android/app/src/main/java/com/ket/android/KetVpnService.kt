@@ -8,6 +8,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.content.pm.PackageManager
+import android.net.IpPrefix
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -16,6 +17,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import hev.htproxy.TProxyService
 import java.io.File
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -28,7 +31,7 @@ class KetVpnService : VpnService() {
     private val active = AtomicBoolean()
     private val stopping = AtomicBoolean()
     private val bridge = TProxyService()
-    private var engine: AndroidHysteriaEngine? = null
+    private var engine: AndroidTransportEngine? = null
     private var tun: ParcelFileDescriptor? = null
     private var bridgeConfig: File? = null
     private var launchSpec: TunnelLaunchSpec? = null
@@ -74,40 +77,61 @@ class KetVpnService : VpnService() {
 
     private fun startTunnel(spec: TunnelLaunchSpec) {
         try {
-            val startedEngine = AndroidHysteriaEngine(this, spec.transport)
-            engine = startedEngine
-            val started = startedEngine.start()
+            var startedEngine: AndroidTransportEngine? = null
+            var started: AndroidEngineStarted? = null
+            val failures = mutableListOf<String>()
+            for (transport in spec.transports) {
+                val candidate = when (transport) {
+                    is HysteriaTransport -> AndroidHysteriaEngine(this, transport)
+                    is RealityTransport -> AndroidXrayEngine(this, transport)
+                    else -> continue
+                }
+                try {
+                    started = candidate.start()
+                    startedEngine = candidate
+                    break
+                } catch (error: Exception) {
+                    candidate.close()
+                    failures += "${transport.displayName}: ${error.message ?: "startup failed"}"
+                }
+            }
+            val selectedEngine = startedEngine
+                ?: throw IllegalStateException(failures.joinToString("; ").ifBlank { "No supported transport could start" })
+            val selected = requireNotNull(started)
+            engine = selectedEngine
             if (stopping.get()) return
 
-            val established = Builder()
+            val builder = Builder()
                 .setSession("Ket - ${spec.node}")
                 .setMtu(TUN_MTU)
                 .setBlocking(false)
                 .addAddress(TUN_IPV4, 32)
                 .addAddress(TUN_IPV6, 128)
-                .addRoute("0.0.0.0", 0)
-                .addRoute("::", 0)
                 .addDnsServer("1.1.1.1")
                 .addDnsServer("2606:4700:4700::1111")
                 .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setMetered(false) }
-                .establish()
+            addVpnRoutes(builder, selected.bypassAddress)
+            val established = builder.establish()
                 ?: throw IllegalStateException("Android could not establish the VPN interface")
             tun = established
-            bridgeConfig = writeBridgeConfig(EngineConfig.tunToSocks(started.socksPort))
+            bridgeConfig = writeBridgeConfig(EngineConfig.tunToSocks(selected.socksPort))
             bridge.start(bridgeConfig!!.absolutePath, established.fd)
             Thread.sleep(250)
-            if (!startedEngine.isAlive()) throw IllegalStateException("Hysteria2 stopped while attaching the VPN interface")
+            if (!selectedEngine.isAlive()) {
+                throw IllegalStateException("${selectedEngine.displayName} stopped while attaching the VPN interface")
+            }
 
             KetTunnelRuntime.publish(
                 TunnelSnapshot(
                     phase = TunnelPhase.Connected,
                     node = spec.node,
                     country = spec.country,
-                    message = "Protected with Hysteria 2",
-                    handshakeLatencyMs = started.handshakeLatencyMs,
+                    message = "Protected with ${selectedEngine.displayName}",
+                    handshakeLatencyMs = selected.handshakeLatencyMs,
+                    transportName = selectedEngine.displayName,
                 ),
             )
-            updateForegroundNotification("Protected with Hysteria 2")
+            updateForegroundNotification("Protected with ${selectedEngine.displayName}")
             scheduleHealthChecks()
             scheduleTelemetry(spec)
         } catch (error: Exception) {
@@ -119,7 +143,7 @@ class KetVpnService : VpnService() {
         healthTask = scheduler.scheduleWithFixedDelay(
             {
                 if (!stopping.get() && engine?.isAlive() != true) {
-                    requestStop("Hysteria2 stopped unexpectedly")
+                    requestStop("${engine?.displayName ?: "Transport"} stopped unexpectedly")
                 }
             },
             2,
@@ -205,6 +229,31 @@ class KetVpnService : VpnService() {
         }
     }
 
+    private fun addVpnRoutes(builder: Builder, bypassAddress: InetAddress?) {
+        if (bypassAddress == null) {
+            builder.addRoute("0.0.0.0", 0)
+            builder.addRoute("::", 0)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            builder.addRoute("0.0.0.0", 0)
+            builder.addRoute("::", 0)
+            builder.excludeRoute(IpPrefix(bypassAddress, if (bypassAddress is Inet4Address) 32 else 128))
+            return
+        }
+        if (bypassAddress is Inet4Address) {
+            routesExcluding(bypassAddress).forEach {
+                builder.addRoute(requireNotNull(it.address.hostAddress), it.prefixLength)
+            }
+            builder.addRoute("::", 0)
+        } else {
+            builder.addRoute("0.0.0.0", 0)
+            routesExcluding(bypassAddress).forEach {
+                builder.addRoute(requireNotNull(it.address.hostAddress), it.prefixLength)
+            }
+        }
+    }
+
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             NOTIFICATION_CHANNEL,
@@ -267,5 +316,24 @@ class KetVpnService : VpnService() {
         private const val TUN_IPV4 = "198.18.0.1"
         private const val TUN_IPV6 = "fc00::1"
         private const val MAX_RENEWAL_FAILURES = 3
+    }
+}
+
+internal data class RoutePrefix(val address: InetAddress, val prefixLength: Int)
+
+internal fun routesExcluding(address: InetAddress): List<RoutePrefix> {
+    val source = address.address
+    val bitCount = source.size * 8
+    return (0 until bitCount).map { bit ->
+        val sibling = source.copyOf()
+        val byteIndex = bit / 8
+        val bitMask = 1 shl (7 - bit % 8)
+        sibling[byteIndex] = (sibling[byteIndex].toInt() xor bitMask).toByte()
+        for (remaining in bit + 1 until bitCount) {
+            val index = remaining / 8
+            val mask = 1 shl (7 - remaining % 8)
+            sibling[index] = (sibling[index].toInt() and mask.inv()).toByte()
+        }
+        RoutePrefix(InetAddress.getByAddress(sibling), bit + 1)
     }
 }

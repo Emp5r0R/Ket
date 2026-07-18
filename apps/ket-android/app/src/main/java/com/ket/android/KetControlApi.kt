@@ -8,10 +8,10 @@ class EnrollmentResult(
     val token: String,
     val node: String,
     val country: String,
-    val transport: HysteriaTransport,
+    val transports: List<AndroidTransport>,
 ) {
     override fun toString(): String =
-        "EnrollmentResult(token=[REDACTED], node=$node, country=$country, transport=$transport)"
+        "EnrollmentResult(token=[REDACTED], node=$node, country=$country, transports=$transports)"
 }
 data class SessionTelemetry(val node: String, val sent: Long, val received: Long, val online: Int, val capacity: Double)
 
@@ -70,7 +70,7 @@ object KetControlApi {
             token = json.getString("session_token").also { require(it.isNotBlank()) { "Session token is missing" } },
             node = node.getString("display_name"),
             country = node.getJSONObject("location").getString("country_name"),
-            transport = HysteriaTransport.select(json.getJSONArray("transports")),
+            transports = AndroidTransportSelector.parse(json.getJSONArray("transports")),
         )
     }
 

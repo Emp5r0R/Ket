@@ -1,9 +1,7 @@
 use std::{
     collections::BTreeSet,
-    fs::{self, OpenOptions},
-    io::Write,
     net::{IpAddr, SocketAddr},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Stdio,
     sync::Arc,
     time::{Duration, Instant},
@@ -11,7 +9,6 @@ use std::{
 
 use async_trait::async_trait;
 use ket_core::{Network, SecretString, SessionTransport, TransportProtocol};
-use rand::{Rng, distributions::Alphanumeric};
 use serde::Serialize;
 use tokio::{
     io::{AsyncBufReadExt, BufReader, Lines},
@@ -24,6 +21,7 @@ use zeroize::Zeroize;
 
 use crate::{
     ActiveTunnel, ClientError, ProbeReport, StartedTunnel, TransportAdapter, TunnelStatus,
+    runtime::EphemeralConfig,
 };
 
 const KNOWN_OPTIONS: &[&str] = &["obfs", "gecko_min_packet_size", "gecko_max_packet_size"];
@@ -169,7 +167,7 @@ impl TransportAdapter for Hysteria2Adapter {
         }
         let started = Instant::now();
         let document = render_client_config(transport, &probe.resolved_addresses, &self.tun)?;
-        let config = EphemeralConfig::create(&self.runtime_dir, document)
+        let config = EphemeralConfig::create(&self.runtime_dir, "hysteria", document)
             .await
             .map_err(|message| ClientError::transport(&transport.profile.id, message, false))?;
 
@@ -533,65 +531,6 @@ fn packet_size(transport: &SessionTransport, key: &str, default: u16) -> Result<
         .map(|value| value.unwrap_or(default))
 }
 
-struct EphemeralConfig {
-    path: PathBuf,
-}
-
-impl EphemeralConfig {
-    async fn create(runtime_dir: &Path, mut document: Vec<u8>) -> Result<Self, String> {
-        let runtime_dir = runtime_dir.to_owned();
-        tokio::task::spawn_blocking(move || {
-            let result = write_private_config(&runtime_dir, &document);
-            document.zeroize();
-            result.map(|path| Self { path })
-        })
-        .await
-        .map_err(|_| "configuration writer stopped unexpectedly".to_owned())?
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for EphemeralConfig {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn write_private_config(runtime_dir: &Path, document: &[u8]) -> Result<PathBuf, String> {
-    fs::create_dir_all(runtime_dir)
-        .map_err(|_| "failed to create the private runtime directory".to_owned())?;
-    #[cfg(unix)]
-    fs::set_permissions(
-        runtime_dir,
-        std::os::unix::fs::PermissionsExt::from_mode(0o700),
-    )
-    .map_err(|_| "failed to secure the private runtime directory".to_owned())?;
-    let suffix: String = rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(16)
-        .map(char::from)
-        .collect();
-    let path = runtime_dir.join(format!("hysteria-{suffix}.json"));
-    let mut options = OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(&path)
-        .map_err(|_| "failed to create the private transport configuration".to_owned())?;
-    if file.write_all(document).is_err() || file.sync_all().is_err() {
-        let _ = fs::remove_file(&path);
-        return Err("failed to write the private transport configuration".to_owned());
-    }
-    Ok(path)
-}
-
 async fn wait_until_ready(
     child: &mut Child,
     lines: &mut Lines<BufReader<ChildStderr>>,
@@ -753,9 +692,10 @@ impl ActiveTunnel for HysteriaTunnel {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, net::Ipv4Addr};
+    use std::{collections::BTreeMap, fs, net::Ipv4Addr};
 
     use ket_core::{TransportCredential, TransportProfile};
+    use rand::{Rng, distributions::Alphanumeric};
 
     use super::*;
 

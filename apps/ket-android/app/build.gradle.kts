@@ -16,7 +16,7 @@ android { namespace = "com.ket.android"; compileSdk = 34
     }
     externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
     sourceSets { named("main") { jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-engines/jniLibs")) } }
-    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/libhysteria.so" } }
+    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libxray.so") } }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.11" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -24,7 +24,11 @@ android { namespace = "com.ket.android"; compileSdk = 34
 val prepareAndroidEngines by tasks.registering(Exec::class) {
     val script = rootProject.layout.projectDirectory.dir("../..").file("packaging/prepare-android-engines.sh")
     commandLine(script.asFile.absolutePath, project.layout.projectDirectory.asFile.absolutePath)
-    inputs.files(script, rootProject.layout.projectDirectory.dir("../..").file("packaging/fetch-hysteria.sh"))
+    inputs.files(
+        script,
+        rootProject.layout.projectDirectory.dir("../..").file("packaging/fetch-hysteria.sh"),
+        rootProject.layout.projectDirectory.dir("../..").file("packaging/fetch-xray.sh"),
+    )
     outputs.dir(layout.buildDirectory.dir("generated/ket-engines"))
 }
 tasks.configureEach {
