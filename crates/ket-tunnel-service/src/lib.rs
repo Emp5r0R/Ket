@@ -8,7 +8,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use ket_client_core::{ActiveTunnel, Hysteria2Adapter, HysteriaTunSettings, TransportAdapter};
+use ket_client_core::{
+    ActiveTunnel, Hysteria2Adapter, HysteriaTunSettings, TransportAdapter, XrayRealityAdapter,
+};
 use ket_tunnel_protocol::{
     BrokerFault, BrokerRequest, BrokerResponse, BrokerToken, BrokerTunnelStatus, HandshakeProof,
     HandshakeResult, challenge, read_frame, write_frame,
@@ -28,7 +30,9 @@ const MAX_CONNECTIONS: usize = 8;
 pub struct ServiceConfig {
     pub address: SocketAddr,
     pub token_file: PathBuf,
-    pub engine_path: PathBuf,
+    pub hysteria_path: PathBuf,
+    pub xray_path: PathBuf,
+    pub bridge_path: PathBuf,
     pub runtime_dir: PathBuf,
     pub lease_ttl: Duration,
 }
@@ -45,16 +49,24 @@ impl ServiceConfig {
         let token_file = std::env::var_os("KET_BROKER_TOKEN_FILE")
             .map(PathBuf::from)
             .unwrap_or_else(default_token_file);
-        let engine_path = std::env::var_os("KET_HYSTERIA_BINARY")
+        let hysteria_path = std::env::var_os("KET_HYSTERIA_BINARY")
             .map(PathBuf::from)
-            .unwrap_or_else(default_engine_path);
+            .unwrap_or_else(default_hysteria_path);
+        let xray_path = std::env::var_os("KET_XRAY_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_xray_path);
+        let bridge_path = std::env::var_os("KET_TUN2PROXY_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_bridge_path);
         let runtime_dir = std::env::var_os("KET_BROKER_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(default_runtime_dir);
         Ok(Self {
             address,
             token_file,
-            engine_path,
+            hysteria_path,
+            xray_path,
+            bridge_path,
             runtime_dir,
             lease_ttl: Duration::from_secs(12),
         })
@@ -67,7 +79,7 @@ struct TunnelLease {
 }
 
 pub struct BrokerService {
-    adapter: Arc<dyn TransportAdapter>,
+    adapters: Vec<Arc<dyn TransportAdapter>>,
     engine_available: bool,
     lease_ttl: Duration,
     operation: Mutex<()>,
@@ -76,12 +88,12 @@ pub struct BrokerService {
 
 impl BrokerService {
     pub fn new(
-        adapter: Arc<dyn TransportAdapter>,
+        adapters: Vec<Arc<dyn TransportAdapter>>,
         engine_available: bool,
         lease_ttl: Duration,
     ) -> Arc<Self> {
         Arc::new(Self {
-            adapter,
+            adapters,
             engine_available,
             lease_ttl: lease_ttl.max(Duration::from_secs(6)),
             operation: Mutex::new(()),
@@ -95,10 +107,10 @@ impl BrokerService {
                 engine_available: self.engine_available,
             },
             BrokerRequest::Probe { transport } => {
-                if !self.adapter.supports(&transport) {
+                let Some(adapter) = self.adapter_for(&transport) else {
                     return fault("unsupported_transport", "transport is not supported", false);
-                }
-                match self.adapter.probe(&transport).await {
+                };
+                match adapter.probe(&transport).await {
                     Ok(report) => BrokerResponse::Probe {
                         resolved_addresses: report.resolved_addresses,
                         elapsed_ms: millis(report.elapsed),
@@ -110,9 +122,12 @@ impl BrokerService {
                 transport,
                 resolved_addresses,
             } => {
+                let Some(adapter) = self.adapter_for(&transport) else {
+                    return fault("unsupported_transport", "transport is not supported", false);
+                };
                 let _operation = self.operation.lock().await;
                 self.reap_expired().await;
-                if !self.adapter.supports(&transport) || resolved_addresses.is_empty() {
+                if resolved_addresses.is_empty() {
                     return fault("invalid_transport", "transport request is invalid", false);
                 }
                 if !self.tunnels.lock().await.is_empty() {
@@ -126,7 +141,7 @@ impl BrokerService {
                     resolved_addresses,
                     elapsed: Duration::ZERO,
                 };
-                match self.adapter.connect(&transport, &probe).await {
+                match adapter.connect(&transport, &probe).await {
                     Ok(started) => {
                         let tunnel_id = random_id();
                         self.tunnels.lock().await.insert(
@@ -187,6 +202,16 @@ impl BrokerService {
         }
     }
 
+    fn adapter_for(
+        &self,
+        transport: &ket_core::SessionTransport,
+    ) -> Option<Arc<dyn TransportAdapter>> {
+        self.adapters
+            .iter()
+            .find(|adapter| adapter.supports(transport))
+            .cloned()
+    }
+
     async fn reap_expired(&self) {
         let now = Instant::now();
         let expired = {
@@ -226,13 +251,23 @@ pub async fn serve_until(
         BrokerToken::load(&config.token_file)
             .context("failed to load the tunnel broker installation token")?,
     );
-    let engine_available = config.engine_path.is_file();
-    let adapter = Arc::new(Hysteria2Adapter::new(
-        &config.engine_path,
-        &config.runtime_dir,
-        HysteriaTunSettings::default(),
-    ));
-    let service = BrokerService::new(adapter, engine_available, config.lease_ttl);
+    let mut adapters: Vec<Arc<dyn TransportAdapter>> = Vec::with_capacity(2);
+    if config.hysteria_path.is_file() {
+        adapters.push(Arc::new(Hysteria2Adapter::new(
+            &config.hysteria_path,
+            &config.runtime_dir,
+            HysteriaTunSettings::default(),
+        )));
+    }
+    if config.xray_path.is_file() && config.bridge_path.is_file() {
+        adapters.push(Arc::new(XrayRealityAdapter::new(
+            &config.xray_path,
+            &config.bridge_path,
+            &config.runtime_dir,
+        )));
+    }
+    let engine_available = !adapters.is_empty();
+    let service = BrokerService::new(adapters, engine_available, config.lease_ttl);
     let listener = TcpListener::bind(config.address)
         .await
         .with_context(|| format!("failed to bind tunnel broker on {}", config.address))?;
@@ -356,7 +391,7 @@ fn default_token_file() -> PathBuf {
 }
 
 #[cfg(target_os = "windows")]
-fn default_engine_path() -> PathBuf {
+fn default_hysteria_path() -> PathBuf {
     std::env::var_os("PROGRAMFILES")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
@@ -365,8 +400,36 @@ fn default_engine_path() -> PathBuf {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn default_engine_path() -> PathBuf {
+fn default_hysteria_path() -> PathBuf {
     PathBuf::from("/usr/libexec/ket/hysteria")
+}
+
+#[cfg(target_os = "windows")]
+fn default_xray_path() -> PathBuf {
+    default_windows_install_dir().join("xray.exe")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_xray_path() -> PathBuf {
+    PathBuf::from("/usr/libexec/ket/xray")
+}
+
+#[cfg(target_os = "windows")]
+fn default_bridge_path() -> PathBuf {
+    default_windows_install_dir().join("tun2proxy.exe")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_bridge_path() -> PathBuf {
+    PathBuf::from("/usr/libexec/ket/tun2proxy")
+}
+
+#[cfg(target_os = "windows")]
+fn default_windows_install_dir() -> PathBuf {
+    std::env::var_os("PROGRAMFILES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
+        .join("Ket")
 }
 
 #[cfg(target_os = "windows")]
@@ -404,7 +467,7 @@ mod tests {
 
     use async_trait::async_trait;
     use ket_client_core::{
-        BrokerConfig, BrokerHysteriaAdapter, ClientError, ProbeReport, StartedTunnel, TunnelStatus,
+        BrokerConfig, BrokerTransportAdapter, ClientError, ProbeReport, StartedTunnel, TunnelStatus,
     };
     use ket_core::SessionTransport;
     use tokio::{net::TcpListener, sync::watch};
@@ -456,7 +519,7 @@ mod tests {
     #[tokio::test]
     async fn expired_leases_stop_privileged_tunnels() {
         let stopped = Arc::new(AtomicBool::new(false));
-        let service = BrokerService::new(Arc::new(MockAdapter), true, Duration::from_secs(6));
+        let service = BrokerService::new(vec![Arc::new(MockAdapter)], true, Duration::from_secs(6));
         let (_, status) = watch::channel(TunnelStatus::Connected);
         service.tunnels.lock().await.insert(
             "A".repeat(48),
@@ -480,7 +543,8 @@ mod tests {
         token.write_new(&token_path).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let service = BrokerService::new(Arc::new(MockAdapter), false, Duration::from_secs(12));
+        let service =
+            BrokerService::new(vec![Arc::new(MockAdapter)], false, Duration::from_secs(12));
         let server_token = Arc::clone(&token);
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -488,7 +552,7 @@ mod tests {
         });
 
         let config = BrokerConfig::new(address, &token_path).unwrap();
-        let readiness = BrokerHysteriaAdapter::new(config)
+        let readiness = BrokerTransportAdapter::new(config)
             .readiness()
             .await
             .unwrap();

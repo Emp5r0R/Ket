@@ -68,11 +68,11 @@ pub struct BrokerReadiness {
 }
 
 #[derive(Clone, Debug)]
-pub struct BrokerHysteriaAdapter {
+pub struct BrokerTransportAdapter {
     config: BrokerConfig,
 }
 
-impl BrokerHysteriaAdapter {
+impl BrokerTransportAdapter {
     pub fn new(config: BrokerConfig) -> Self {
         Self { config }
     }
@@ -92,9 +92,12 @@ impl BrokerHysteriaAdapter {
 }
 
 #[async_trait]
-impl TransportAdapter for BrokerHysteriaAdapter {
+impl TransportAdapter for BrokerTransportAdapter {
     fn supports(&self, transport: &SessionTransport) -> bool {
-        transport.profile.protocol == TransportProtocol::Hysteria2
+        matches!(
+            transport.profile.protocol,
+            TransportProtocol::Hysteria2 | TransportProtocol::VlessXtlsReality
+        )
     }
 
     async fn probe(&self, transport: &SessionTransport) -> Result<ProbeReport, ClientError> {
@@ -437,7 +440,7 @@ mod tests {
         let config = BrokerConfig::new(address, &token_path)
             .unwrap()
             .with_timing(Duration::from_secs(2), Duration::from_millis(50));
-        let readiness = BrokerHysteriaAdapter::new(config)
+        let readiness = BrokerTransportAdapter::new(config)
             .readiness()
             .await
             .unwrap();

@@ -68,6 +68,7 @@ class HysteriaTransportTest {
 
         assertEquals("Test node", result.node)
         assertEquals("Testland", result.country)
+        assertEquals("Hysteria 2", result.transports.single().displayName)
         assertFalse(result.toString().contains("control-token-value"))
     }
 
@@ -85,6 +86,7 @@ class HysteriaTransportTest {
             .put("endpoint", "vpn.example.test")
             .put("port", 443)
             .put("network", "udp")
+            .put("priority", 10)
             .put("tls_server_name", "vpn.example.test")
             .put("options", options)
             .put(

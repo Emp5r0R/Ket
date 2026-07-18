@@ -335,7 +335,7 @@ impl XrayConfig {
             endpoint: self.public_host.clone(),
             port: self.public_port,
             network: Network::Tcp,
-            priority: 20,
+            priority: 5,
             tls_server_name: Some(self.sni.clone()),
             options,
         }

@@ -7,13 +7,16 @@ private val knownOptions = setOf("obfs", "gecko_min_packet_size", "gecko_max_pac
 private val knownSecrets = setOf("obfs_password")
 
 class HysteriaTransport private constructor(
-    val id: String,
-    val endpoint: String,
-    val port: Int,
+    override val id: String,
+    override val endpoint: String,
+    override val port: Int,
+    override val priority: Int,
     val tlsServerName: String,
     val auth: String,
     val obfuscation: HysteriaObfuscation,
-) {
+) : AndroidTransport {
+    override val displayName: String = "Hysteria 2"
+
     override fun toString(): String =
         "HysteriaTransport(id=$id, endpoint=$endpoint, port=$port, tlsServerName=$tlsServerName, auth=[REDACTED], obfuscation=${obfuscation.redactedName})"
 
@@ -33,6 +36,7 @@ class HysteriaTransport private constructor(
             val id = json.getString("id").also { require(it.isNotBlank()) { "Transport ID is missing" } }
             val endpoint = validateHost(json.getString("endpoint"), "Transport endpoint")
             val port = json.getInt("port").also { require(it in 1..65535) { "Transport port is invalid" } }
+            val priority = json.optInt("priority", 100).also { require(it in 0..65535) { "Transport priority is invalid" } }
             val sni = validateHost(json.getString("tls_server_name"), "TLS server name")
             val options = json.optJSONObject("options") ?: JSONObject()
             rejectUnknownKeys(options, knownOptions, "transport option")
@@ -59,24 +63,15 @@ class HysteriaTransport private constructor(
                 }
                 else -> throw IllegalArgumentException("Unsupported Hysteria2 obfuscation mode: $mode")
             }
-            return HysteriaTransport(id, endpoint, port, sni, auth, obfs)
+            return HysteriaTransport(id, endpoint, port, priority, sni, auth, obfs)
         }
 
         private fun validateHost(value: String, label: String): String {
-            val host = value.trim()
-            require(
-                host.isNotEmpty() &&
-                    !host.contains("://") &&
-                    !host.contains('/') &&
-                    !host.contains('\\') &&
-                    host.none(Char::isWhitespace),
-            ) { "$label is invalid" }
-            return host
+            return validateTransportHost(value, label)
         }
 
         private fun rejectUnknownKeys(json: JSONObject, known: Set<String>, label: String) {
-            val unknown = json.keys().asSequence().firstOrNull { it !in known }
-            require(unknown == null) { "Unsupported $label: $unknown" }
+            com.ket.android.rejectUnknownKeys(json, known, label)
         }
 
         private fun requiredSecret(secrets: JSONObject): String =

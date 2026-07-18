@@ -17,6 +17,14 @@ for abi in armeabi-v7a arm64-v8a x86 x86_64; do
   done
 done
 
+for abi in arm64-v8a x86_64; do
+  entry="lib/$abi/libxray.so"
+  if ! unzip -Z1 "$apk" "$entry" | grep -Fxq "$entry"; then
+    printf 'APK is missing %s\n' "$entry" >&2
+    exit 1
+  fi
+done
+
 apksigner=${APKSIGNER:-}
 if [[ -z "$apksigner" ]] && command -v apksigner >/dev/null 2>&1; then
   apksigner=$(command -v apksigner)
@@ -25,4 +33,4 @@ if [[ -n "$apksigner" ]]; then
   "$apksigner" verify "$apk"
 fi
 
-printf 'Validated Android transport payloads for armeabi-v7a, arm64-v8a, x86, and x86_64.\n'
+printf 'Validated Android Hysteria payloads for four ABIs and Xray payloads for arm64-v8a and x86_64.\n'

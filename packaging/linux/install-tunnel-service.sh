@@ -2,11 +2,11 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: sudo %s <ket-tunnel-service> <hysteria> [desktop-user]\n' "$0" >&2
+  printf 'Usage: sudo %s <ket-tunnel-service> <hysteria> <xray> <tun2proxy> [desktop-user]\n' "$0" >&2
   exit 2
 }
 
-[[ $# -ge 2 && $# -le 3 ]] || usage
+[[ $# -ge 4 && $# -le 5 ]] || usage
 [[ ${EUID} -eq 0 ]] || {
   printf 'This installer must run as root.\n' >&2
   exit 1
@@ -14,7 +14,9 @@ usage() {
 
 service_source=$1
 engine_source=$2
-desktop_user=${3:-${SUDO_USER:-}}
+xray_source=$3
+bridge_source=$4
+desktop_user=${5:-${SUDO_USER:-}}
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 [[ -f ${service_source} && -x ${service_source} ]] || {
@@ -23,6 +25,14 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 }
 [[ -f ${engine_source} && -x ${engine_source} ]] || {
   printf 'Hysteria is not an executable file: %s\n' "${engine_source}" >&2
+  exit 1
+}
+[[ -f ${xray_source} && -x ${xray_source} ]] || {
+  printf 'Xray is not an executable file: %s\n' "${xray_source}" >&2
+  exit 1
+}
+[[ -f ${bridge_source} && -x ${bridge_source} ]] || {
+  printf 'tun2proxy is not an executable file: %s\n' "${bridge_source}" >&2
   exit 1
 }
 [[ -f ${script_dir}/ket-tunnel.service ]] || {
@@ -46,6 +56,8 @@ install -d -o root -g root -m 0755 /usr/libexec/ket
 install -d -o root -g ket -m 0750 /etc/ket
 install -o root -g root -m 0755 "${service_source}" /usr/libexec/ket/ket-tunnel-service
 install -o root -g root -m 0755 "${engine_source}" /usr/libexec/ket/hysteria
+install -o root -g root -m 0755 "${xray_source}" /usr/libexec/ket/xray
+install -o root -g root -m 0755 "${bridge_source}" /usr/libexec/ket/tun2proxy
 install -o root -g root -m 0644 "${script_dir}/ket-tunnel.service" /etc/systemd/system/ket-tunnel.service
 
 token_file=/etc/ket/tunnel.token

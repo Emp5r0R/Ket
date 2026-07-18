@@ -5,9 +5,9 @@
 | Artifact | Build path | Current status |
 | --- | --- | --- |
 | Rust control plane image | `docker build --pull -t ket-control-plane:<tag> .` | Verified on Oracle ARM64 host |
-| Linux desktop `.deb` | CI job `linux-package` | Built by Tauri with the pinned Hysteria engine |
-| Windows desktop NSIS installer | CI job `windows-package` | Built by Tauri with the pinned Hysteria engine |
-| Android debug APK | `./packaging/build-android.sh` | Multi-ABI data plane built, linted, payload-validated, signature-verified, and startup-tested on arm64 Android 16; live packet flow pending trusted test ingress |
+| Linux desktop `.deb` | CI job `linux-package` | Bundles pinned Hysteria, Xray, and `tun2proxy` engines |
+| Windows desktop NSIS installer | CI job `windows-package` | Bundles pinned Hysteria, Xray, `tun2proxy`, and Wintun payloads |
+| Android debug APK | `./packaging/build-android.sh` | Multi-ABI Hysteria and 64-bit Xray payloads built and validated; physical dual-transport packet flow pending |
 
 ## Required checks
 
@@ -30,7 +30,7 @@ For a production server, source `.env`, run `./packaging/validate-env.sh`, and v
 
 The Android debug artifact is only for testing. Production Android, Linux, and Windows artifacts must be signed by the release owner and their checksums published alongside the files. Ket does not store signing keys in this repository.
 
-The maintained server data planes are Hysteria2 and Xray-core VLESS + REALITY. Shipped desktop and Android clients currently activate Hysteria2; REALITY must not be advertised as client-ready until the pinned platform adapters are integrated and tested. Other protocol identifiers remain contract-level extension points.
+The maintained server and client data planes are Hysteria2 and Xray-core VLESS + REALITY. Desktop REALITY has a full-route Docker integration test; Android REALITY remains pre-release until physical-device packet flow and fallback are verified. Other protocol identifiers remain contract-level extension points.
 
 ## Multi-architecture image
 

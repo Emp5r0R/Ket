@@ -7,7 +7,11 @@ fi
 
 install -d -o root -g root -m 0755 /usr/libexec/ket
 install -d -o root -g ket -m 0750 /etc/ket
-chmod 0755 /usr/libexec/ket/ket-tunnel-service /usr/libexec/ket/hysteria
+chmod 0755 \
+  /usr/libexec/ket/ket-tunnel-service \
+  /usr/libexec/ket/hysteria \
+  /usr/libexec/ket/xray \
+  /usr/libexec/ket/tun2proxy
 chmod 0644 /usr/lib/systemd/system/ket-tunnel.service
 
 token_file=/etc/ket/tunnel.token

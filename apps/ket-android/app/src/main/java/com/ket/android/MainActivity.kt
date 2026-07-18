@@ -194,7 +194,7 @@ private fun KetApp(
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Hysteria 2", color = Muted)
+            Text(snapshot.transportName, color = Muted)
             Text(snapshot.handshakeLatencyMs?.let { "$it ms" } ?: "-- ms", color = Muted)
         }
         if (connected) {

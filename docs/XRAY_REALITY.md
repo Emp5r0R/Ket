@@ -12,6 +12,12 @@ Ket uses the maintained Xray-core engine for the VLESS + REALITY data plane. The
 
 TCP `443` can coexist with Hysteria2 UDP `443` on the same server and hostname because they use different network protocols.
 
+## Client path
+
+Linux and Windows packages bundle checksum-pinned Xray and `tun2proxy` executables. The privileged Ket service renders a strict loopback SOCKS configuration, proves a REALITY handshake through that endpoint, then starts the full-route bridge while excluding every resolved server IP.
+
+Android bundles official Xray payloads for `arm64-v8a` and `x86_64`. Its `VpnService` proves the SOCKS/REALITY path before establishing routes, excludes the selected server address, and falls back to a valid Hysteria2 profile when Xray is unavailable or startup fails. The two 32-bit Android ABIs remain Hysteria-only because upstream does not publish corresponding Xray Android archives.
+
 ## Generate secrets
 
 Generate the REALITY X25519 keypair with the exact pinned engine:

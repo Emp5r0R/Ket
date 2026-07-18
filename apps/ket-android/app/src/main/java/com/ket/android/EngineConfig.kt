@@ -3,6 +3,76 @@ package com.ket.android
 import org.json.JSONObject
 
 internal object EngineConfig {
+    fun xray(transport: RealityTransport, resolvedAddress: String, socksPort: Int): String {
+        require(socksPort in 1..65535) { "SOCKS port is invalid" }
+        require(resolvedAddress.isNotBlank()) { "Resolved server address is missing" }
+        val document = JSONObject()
+            .put("log", JSONObject().put("loglevel", "warning"))
+            .put(
+                "inbounds",
+                org.json.JSONArray().put(
+                    JSONObject()
+                        .put("tag", "ket-socks")
+                        .put("listen", "127.0.0.1")
+                        .put("port", socksPort)
+                        .put("protocol", "socks")
+                        .put("settings", JSONObject().put("auth", "noauth").put("udp", true))
+                        .put(
+                            "sniffing",
+                            JSONObject()
+                                .put("enabled", true)
+                                .put("destOverride", org.json.JSONArray(listOf("http", "tls", "quic")))
+                                .put("routeOnly", true),
+                        ),
+                ),
+            )
+            .put(
+                "outbounds",
+                org.json.JSONArray().put(
+                    JSONObject()
+                        .put("tag", "ket-reality")
+                        .put("protocol", "vless")
+                        .put(
+                            "settings",
+                            JSONObject().put(
+                                "vnext",
+                                org.json.JSONArray().put(
+                                    JSONObject()
+                                        .put("address", resolvedAddress)
+                                        .put("port", transport.port)
+                                        .put(
+                                            "users",
+                                            org.json.JSONArray().put(
+                                                JSONObject()
+                                                    .put("id", transport.userId)
+                                                    .put("encryption", "none")
+                                                    .put("flow", "xtls-rprx-vision"),
+                                            ),
+                                        ),
+                                ),
+                            ),
+                        )
+                        .put(
+                            "streamSettings",
+                            JSONObject()
+                                .put("network", "raw")
+                                .put("security", "reality")
+                                .put(
+                                    "realitySettings",
+                                    JSONObject()
+                                        .put("show", false)
+                                        .put("fingerprint", transport.fingerprint)
+                                        .put("serverName", transport.tlsServerName)
+                                        .put("password", transport.password)
+                                        .put("shortId", transport.shortId)
+                                        .put("spiderX", "/"),
+                                ),
+                        ),
+                ),
+            )
+        return document.toString(2)
+    }
+
     fun hysteria(
         transport: HysteriaTransport,
         resolvedAddress: String,

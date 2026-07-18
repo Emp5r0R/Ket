@@ -18,16 +18,16 @@ import kotlin.concurrent.thread
 internal class AndroidHysteriaEngine(
     private val service: KetVpnService,
     private val transport: HysteriaTransport,
-) : AutoCloseable {
+) : AndroidTransportEngine {
     private var process: Process? = null
     private var protector: FdProtectionServer? = null
     private var configFile: File? = null
     private val diagnostic = AtomicReference<String?>()
     private val connected = AtomicBoolean()
 
-    data class Started(val socksPort: Int, val handshakeLatencyMs: Long)
+    override val displayName: String = transport.displayName
 
-    fun start(): Started {
+    override fun start(): AndroidEngineStarted {
         val startedAt = System.nanoTime()
         val engine = File(service.applicationInfo.nativeLibraryDir, "libhysteria.so")
         require(engine.isFile && engine.canExecute()) { "Hysteria2 engine is not installed for this device" }
@@ -61,14 +61,18 @@ internal class AndroidHysteriaEngine(
             if (connected.get() && socksReady(socksPort)) {
                 configFile?.delete()
                 configFile = null
-                return Started(socksPort, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt))
+                return AndroidEngineStarted(
+                    socksPort,
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
+                    null,
+                )
             }
             Thread.sleep(100)
         }
         throw IllegalStateException(diagnostic.get() ?: "Hysteria2 connection timed out")
     }
 
-    fun isAlive(): Boolean = process?.isAlive == true
+    override fun isAlive(): Boolean = process?.isAlive == true
 
     override fun close() {
         configFile?.delete()

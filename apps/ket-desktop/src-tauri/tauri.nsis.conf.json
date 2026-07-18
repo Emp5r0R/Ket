@@ -4,6 +4,9 @@
     "resources": {
       "../../../target/release/ket-tunnel-service.exe": "ket-tunnel-service.exe",
       "binaries/hysteria.exe": "hysteria.exe",
+      "binaries/xray.exe": "xray.exe",
+      "binaries/tun2proxy.exe": "tun2proxy.exe",
+      "binaries/wintun.dll": "wintun.dll",
       "../../../packaging/windows/install-tunnel-service.ps1": "install-tunnel-service.ps1"
     },
     "windows": {

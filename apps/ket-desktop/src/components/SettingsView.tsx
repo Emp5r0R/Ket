@@ -14,7 +14,7 @@ export function SettingsView({ state, serverUrl, deviceName, busy, onForget }: S
   const rows = [
     { icon: Server, label: "Control server", value: serverUrl ? endpointHost(serverUrl) : "Not configured" },
     { icon: Laptop, label: "Device", value: deviceName || "Ket desktop" },
-    { icon: Binary, label: "Hysteria engine", value: state.engine.binary_available ? "Available" : "Not installed" },
+    { icon: Binary, label: "Transport engines", value: state.engine.binary_available ? "Available" : "Not installed" },
     { icon: ShieldCheck, label: "Tunnel service", value: state.engine.broker_available ? "Ready" : "Pending installation" },
   ];
 
@@ -65,4 +65,3 @@ export function SettingsView({ state, serverUrl, deviceName, busy, onForget }: S
     </div>
   );
 }
-

@@ -27,6 +27,7 @@ data class TunnelSnapshot(
     val onlineConnections: Int = 0,
     val capacityPercent: Double = 0.0,
     val handshakeLatencyMs: Long? = null,
+    val transportName: String = "Auto",
 )
 
 internal class TunnelLaunchSpec(
@@ -34,10 +35,10 @@ internal class TunnelLaunchSpec(
     val sessionToken: String,
     val node: String,
     val country: String,
-    val transport: HysteriaTransport,
+    val transports: List<AndroidTransport>,
 ) {
     override fun toString(): String =
-        "TunnelLaunchSpec(controlEndpoint=$controlEndpoint, sessionToken=[REDACTED], node=$node, country=$country, transport=$transport)"
+        "TunnelLaunchSpec(controlEndpoint=$controlEndpoint, sessionToken=[REDACTED], node=$node, country=$country, transports=$transports)"
 }
 
 object KetTunnelRuntime {
@@ -89,7 +90,7 @@ object KetTunnelController {
                     runCatching { KetControlApi.release(serverUrl, result.token) }
                     return@execute
                 }
-                val spec = TunnelLaunchSpec(serverUrl, result.token, result.node, result.country, result.transport)
+                val spec = TunnelLaunchSpec(serverUrl, result.token, result.node, result.country, result.transports)
                 KetTunnelRuntime.offer(spec)
                 KetTunnelRuntime.publish(
                     TunnelSnapshot(
