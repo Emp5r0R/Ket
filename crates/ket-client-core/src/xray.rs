@@ -10,7 +10,6 @@ use async_trait::async_trait;
 use ket_core::{Network, SessionTransport, TransportProtocol};
 use serde_json::json;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, lookup_host},
     process::{Child, Command},
     sync::{mpsc, watch},
@@ -532,51 +531,38 @@ async fn verify_reality_path(
     startup_timeout: Duration,
     transport_id: &str,
 ) -> Result<(), ClientError> {
-    timeout(startup_timeout, async {
-        let mut stream = TcpStream::connect(("127.0.0.1", port)).await?;
-        stream.write_all(&[5, 1, 0]).await?;
-        let mut greeting = [0_u8; 2];
-        stream.read_exact(&mut greeting).await?;
-        if greeting != [5, 0] {
-            return Err(std::io::Error::other("SOCKS authentication failed"));
-        }
-        let target = target.as_bytes();
-        if target.len() > u8::MAX as usize {
-            return Err(std::io::Error::other("SOCKS target is too long"));
-        }
-        let mut request = Vec::with_capacity(target.len() + 7);
-        request.extend_from_slice(&[5, 1, 0, 3, target.len() as u8]);
-        request.extend_from_slice(target);
-        request.extend_from_slice(&443_u16.to_be_bytes());
-        stream.write_all(&request).await?;
-        let mut response = [0_u8; 4];
-        stream.read_exact(&mut response).await?;
-        if response[0] != 5 || response[1] != 0 {
-            return Err(std::io::Error::other("SOCKS connection was rejected"));
-        }
-        let address_length = match response[3] {
-            1 => 4,
-            3 => {
-                let mut length = [0_u8; 1];
-                stream.read_exact(&mut length).await?;
-                usize::from(length[0])
-            }
-            4 => 16,
-            _ => return Err(std::io::Error::other("SOCKS response is invalid")),
-        };
-        let mut remaining = vec![0_u8; address_length + 2];
-        stream.read_exact(&mut remaining).await?;
-        Ok::<(), std::io::Error>(())
-    })
-    .await
-    .map_err(|_| ClientError::transport(transport_id, "VLESS + REALITY handshake timed out", true))?
-    .map_err(|_| {
+    let proxy = reqwest::Proxy::all(format!("socks5h://127.0.0.1:{port}")).map_err(|_| {
         ClientError::transport(
             transport_id,
-            "the VLESS + REALITY server did not accept a connection",
-            true,
+            "failed to configure the local REALITY verification proxy",
+            false,
         )
-    })
+    })?;
+    let client = reqwest::Client::builder()
+        .proxy(proxy)
+        .redirect(reqwest::redirect::Policy::none())
+        .https_only(true)
+        .timeout(startup_timeout)
+        .build()
+        .map_err(|_| {
+            ClientError::transport(
+                transport_id,
+                "failed to initialize certificate verification",
+                false,
+            )
+        })?;
+    client
+        .get(format!("https://{target}/"))
+        .send()
+        .await
+        .map(|_| ())
+        .map_err(|_| {
+            ClientError::transport(
+                transport_id,
+                "the VLESS + REALITY path failed certificate-verified TLS",
+                true,
+            )
+        })
 }
 
 async fn wait_for_bridge(
