@@ -59,6 +59,35 @@ jobs:
         working-directory: apps/ket-desktop
       - run: cargo check --locked -p ket-desktop
 
+  linux-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            libxdo-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/ket-desktop/package-lock.json
+      - run: npm ci
+        working-directory: apps/ket-desktop
+      - run: ./packaging/fetch-hysteria.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/hysteria
+      - run: npm exec tauri build -- --bundles deb
+        working-directory: apps/ket-desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ket-linux-deb
+          path: target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
   desktop-windows:
     runs-on: windows-2022
     steps:
