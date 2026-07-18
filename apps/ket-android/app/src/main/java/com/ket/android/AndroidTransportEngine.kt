@@ -4,6 +4,8 @@ import java.io.InputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 internal data class AndroidEngineStarted(
     val socksPort: Int,
@@ -41,6 +43,14 @@ internal fun verifySocksTunnel(port: Int, target: String) {
             else -> throw IllegalStateException("Local SOCKS response is invalid")
         }
         readExact(input, 2)
+        val tlsFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+        val tls = tlsFactory.createSocket(socket, target, 443, true) as SSLSocket
+        tls.use {
+            it.sslParameters = it.sslParameters.apply {
+                endpointIdentificationAlgorithm = "HTTPS"
+            }
+            it.startHandshake()
+        }
     }
 }
 
