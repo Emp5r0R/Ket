@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server can carry authenticated traffic through Hysteria2 and report per-session traffic. The Rust client core, map-first Tauri desktop shell, authenticated privilege broker, and Linux/Windows service installers are implemented. Signed desktop bundles with a verified engine payload and the Android `VpnService` client are still required before this is a complete end-user VPN.
+> **Current state:** the Docker server can carry authenticated traffic through Hysteria2 and report per-session traffic. Linux/Windows packages and a multi-ABI Android APK now bundle checksum-pinned Hysteria data planes. Production signing, physical-device Android packet-flow testing, installer upgrade tests, and additional protocol engines are still required before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -20,13 +20,13 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Per-grant connection limits, global capacity, expiry, renewal, release, and revocation.
 - Lease-scoped Hysteria2 credentials, HTTP authentication, traffic counters, online state, and connection kicks.
 - Generated Hysteria2 2.10 server configuration with TLS, HTTP/3 masquerading, optional Salamander/Gecko obfuscation, and abuse-resistant ACLs.
-- Android Compose client scaffold with the same map-first connection surface and an isolated `VpnService` TUN lifecycle boundary.
+- Android Compose client with HTTPS enrollment, strict Hysteria2 profile validation, foreground `VpnService` ownership, protected QUIC sockets, maintained hev TUN-to-SOCKS forwarding, lease renewal, local traffic metrics, and fail-closed engine supervision.
 - Typed discovery for Hysteria2, IKEv2, OpenVPN/stunnel, Shadowsocks 2022, VLESS XTLS Reality, WireGuard, stealth, and XOR-wrapped adapters.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
 - Atomic persistent state and graceful shutdown.
 - Rootless, capability-free Docker control-plane image with a read-only root filesystem.
 
-The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and the first data-plane deployment in [the Hysteria2 guide](docs/HYSTERIA2.md).
+The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and the first data-plane deployment in [the Hysteria2 guide](docs/HYSTERIA2.md).
 
 ## Run with Docker
 
@@ -85,22 +85,22 @@ cargo clippy --workspace --exclude ket-desktop --all-targets --all-features -- -
 cargo build --release --package ket-server
 ```
 
-For the upcoming Android project, `/media/n_emperor/Aadhish/gradle-home` is a Gradle user-home cache, not a Gradle executable. Use it as follows once the repository has a wrapper:
+`/media/n_emperor/Aadhish/gradle-home` is a Gradle user-home cache, not a Gradle executable. Use it with the repository wrapper:
 
 ```bash
 GRADLE_USER_HOME=/media/n_emperor/Aadhish/gradle-home ./gradlew build
 ```
 
-The Android project is under `apps/ket-android`. It provides the end-user shell, HTTPS enrollment against `POST /v1/sessions`, Android VPN permission flow, and TUN ownership boundary; binding the Rust client core and transport engine is the next integration step.
+The Android project is under `apps/ket-android`. It consumes the same control contract as desktop and carries TCP/UDP packets through a local Hysteria2 SOCKS endpoint and the maintained hev TUN bridge. Android uses a platform-specific lifecycle adapter instead of embedding desktop route-management code.
 
-For a local Android build, install Android SDK Platform 34 and Build Tools 34, then run `./packaging/build-android.sh`. It auto-detects the SDK used by Abyssal when present; set `KET_ANDROID_SDK` to override it. The generated APK is under `apps/ket-android/app/build/outputs/apk/debug/`.
+For a local Android build, install Android SDK Platform 34 and Build Tools 34, then run `./packaging/build-android.sh`. It auto-detects the SDK used by Abyssal when present; set `KET_ANDROID_SDK` to override it. Gradle installs pinned NDK r27d when needed, while the build downloads and verifies Hysteria 2.10 plus hev-socks5-tunnel 2.14.0. The generated APK is under `apps/ket-android/app/build/outputs/apk/debug/`.
 
 Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting/tests/lints, desktop UI tests/build, Android debug packaging, and the control-plane container build run on every push and pull request.
 
 ## Delivery order
 
-1. Bundle the pinned Hysteria engine into the implemented Linux/Windows desktop and service packages, then sign and exercise upgrade paths for each artifact.
-2. Ship the Android `VpnService` adapter with Compose UI and parity for enrollment, metrics, fallback, and diagnostics.
+1. Sign the implemented Linux/Windows packages and exercise clean-install, upgrade, service-start, and uninstall paths on target machines.
+2. Exercise the Android Hysteria2 data plane on physical API 26 and current devices, then add release signing and network-change/Doze tests.
 3. Integrate the next maintained transport engine behind the existing data-plane boundary.
 4. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.
 

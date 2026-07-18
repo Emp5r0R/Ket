@@ -13,8 +13,10 @@ if [[ -z "$sdk" || ! -d "$sdk/platforms" ]]; then
 fi
 
 printf 'sdk.dir=%s\n' "$sdk" > "$project_dir/local.properties"
+"$repo_root/packaging/prepare-android-engines.sh" "$project_dir/app"
 gradle_home=${GRADLE_USER_HOME:-/media/n_emperor/Aadhish/gradle-home}
 (cd "$project_dir" && GRADLE_USER_HOME="$gradle_home" ./gradlew --no-daemon :app:assembleDebug)
 apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
+APKSIGNER="$sdk/build-tools/34.0.0/apksigner" "$repo_root/packaging/validate-android-apk.sh" "$apk"
 printf 'APK: %s\n' "$apk"
 sha256sum "$apk"

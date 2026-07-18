@@ -7,6 +7,7 @@
 /.env
 /apps/ket-android/local.properties
 /apps/ket-android/app/build/
+/apps/ket-android/app/.cxx/
 /build-outputs/
 /data/
 /secrets/

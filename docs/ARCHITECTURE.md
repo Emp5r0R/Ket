@@ -17,7 +17,7 @@ This separation keeps the API and user experience consistent while allowing a no
 | Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Implemented for Hysteria2 |
 | Desktop privilege broker | Authenticated TUN/route ownership and engine supervision | Rust system service | Implemented for Linux/Windows |
 | Linux/Windows desktop | Map-first connection UI and native packaging | Tauri 2 plus shared Rust core | UI and service installers implemented; signed bundles pending |
-| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose plus Rust core where practical | Compose shell and VPN lifecycle scaffolded; Rust enrollment/engine binding pending |
+| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Hysteria2, hev-socks5-tunnel | Multi-ABI Hysteria2 data plane implemented; physical-device verification pending |
 
 ## Control flow
 
@@ -28,6 +28,7 @@ This separation keeps the API and user experience consistent while allowing a no
 5. Hysteria2 submits that scoped credential to Ket's HTTP authentication backend. Ket returns the session ID used by Hysteria's traffic and online APIs.
 6. Clients renew the lease while connected and release it on disconnect. Release, grant revocation, and the expiry reaper reject future authentication and ask Hysteria to kick the active session ID.
 7. On desktop, the unprivileged Tauri process sends validated transport requests to a loopback-only system service. The service authenticates each connection before it owns the Hysteria process, TUN interface, and routes.
+8. On Android, `VpnService` starts Hysteria in local SOCKS5 mode, protects its QUIC descriptor through Hysteria's FD-control protocol, and attaches hev-socks5-tunnel to the Android-owned TUN only after transport readiness.
 
 ## Security invariants
 
@@ -44,6 +45,8 @@ This separation keeps the API and user experience consistent while allowing a no
 - Hysteria2 rejects loopback, link-local, private, multicast, carrier-grade NAT, and outbound SMTP destinations to reduce lateral-movement, metadata-service, and spam abuse.
 - The client accepts plaintext control HTTP only on loopback by default, refuses redirects and system proxies, requires TLS 1.2 or newer for HTTPS, caps response bodies, and sanitizes server errors before UI delivery.
 - Desktop Hysteria credentials exist only in memory and an ephemeral mode-`0600` configuration that is deleted after the engine reports both server connection and TUN readiness.
+- Android rejects unknown Hysteria profile options and downgrade-shaped TLS fields, resolves the server before routing traffic, protects only the QUIC socket from the VPN, and deletes its mode-`0600` engine configuration after SOCKS readiness.
+- Android native inputs are reproducible: Hysteria executables and the complete hev source archive are version- and checksum-pinned, and CI verifies all three native payloads for four ABIs.
 - Desktop broker connections require a fresh challenge response using a 256-bit per-installation token. Protocol frames are bounded, credential buffers are zeroized, and debug output redacts proofs and tunnel IDs.
 - The privileged broker allows one full-route tunnel and stops orphaned engine processes when the desktop heartbeat lease expires.
 
@@ -55,4 +58,4 @@ Clients use a policy engine rather than a hard-coded default. The implemented se
 
 ## Client parity
 
-Desktop and Android consume the same versioned control contract and share these implemented product states: enrolled, disconnected, probing, connecting, connected, reconnecting, disconnecting, and error. `ket-client-core` publishes a watchable, serializable snapshot containing node location, active transport, health, capacity, handshake latency, bytes sent/received, session timing, and bounded failure details. Platform-specific tunnel adapters remain behind the shared client-core boundary.
+Desktop and Android consume the same versioned control contract. The Rust desktop core implements probing, bounded fallback, reconnecting, and the full lifecycle snapshot. Android currently implements disconnected, enrolling, connecting, connected, stopping, and failed states with node, capacity, handshake latency, and local traffic metrics. Android automatic multi-transport fallback and reconnect policy remain pending behind its platform adapter.

@@ -7,7 +7,7 @@
 | Rust control plane image | `docker build --pull -t ket-control-plane:<tag> .` | Verified on Oracle ARM64 host |
 | Linux desktop `.deb` | CI job `linux-package` | Built by Tauri with the pinned Hysteria engine |
 | Windows desktop NSIS installer | CI job `windows-package` | Built by Tauri with the pinned Hysteria engine |
-| Android debug APK | `./packaging/build-android.sh` | Locally built and APK signature verified |
+| Android debug APK | `./packaging/build-android.sh` | Multi-ABI data plane built, linted, payload-validated, signature-verified, and startup-tested on arm64 Android 16; live packet flow pending trusted test ingress |
 
 ## Required checks
 
@@ -19,6 +19,9 @@ cargo test --locked --workspace --exclude ket-desktop
 cargo clippy --locked --workspace --exclude ket-desktop --all-targets --all-features -- -D warnings
 npm --prefix apps/ket-desktop test -- --run
 npm --prefix apps/ket-desktop run build
+./packaging/prepare-android-engines.sh apps/ket-android/app
+(cd apps/ket-android && ./gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug)
+./packaging/validate-android-apk.sh apps/ket-android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 For a production server, source `.env`, run `./packaging/validate-env.sh`, and validate both Compose files with `docker compose config --quiet`. Hysteria2 requires a DNS-only UDP hostname or a compatible Layer 4 proxy; ordinary Cloudflare HTTP proxying does not carry its UDP data plane.
