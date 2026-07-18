@@ -1,0 +1,48 @@
+[Unit]
+Description=Ket privileged tunnel broker
+Documentation=https://github.com/Emp5r0R/Ket
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=root
+Group=root
+ExecStartPre=/usr/libexec/ket/hysteria version
+ExecStart=/usr/libexec/ket/ket-tunnel-service
+Restart=on-failure
+RestartSec=3s
+TimeoutStartSec=20s
+TimeoutStopSec=20s
+RuntimeDirectory=ket
+RuntimeDirectoryMode=0700
+UMask=0077
+
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+DeviceAllow=/dev/net/tun rw
+DevicePolicy=closed
+LockPersonality=true
+MemoryDenyWriteExecute=true
+NoNewPrivileges=true
+PrivateDevices=false
+PrivateMounts=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+RemoveIPC=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

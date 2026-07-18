@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Ket</title>
+  <desc id="desc">A wave function forming the Ket mark</desc>
+  <path d="M8 48C17 19 29 19 38 48C47 77 59 77 68 48C75 26 83 22 88 34" fill="none" stroke="#13A884" stroke-width="8" stroke-linecap="round"/>
+  <path d="M8 48C17 77 29 77 38 48C47 19 59 19 68 48C75 70 83 74 88 62" fill="none" stroke="#2867D6" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="48" cy="48" r="5" fill="#F25F4C"/>
+</svg>
+

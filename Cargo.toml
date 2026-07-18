@@ -1,0 +1,47 @@
+[workspace]
+members = [
+    "apps/ket-desktop/src-tauri",
+    "crates/ket-client-core",
+    "crates/ket-core",
+    "crates/ket-server",
+    "crates/ket-tunnel-protocol",
+    "crates/ket-tunnel-service",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.85"
+version = "0.1.0"
+
+[workspace.dependencies]
+anyhow = "1.0.103"
+argon2 = "0.5.3"
+async-trait = "0.1.89"
+axum = { version = "0.7.9", features = ["http1", "json", "tokio"] }
+blake2 = "0.10.6"
+bytes = "1.12.1"
+http-body-util = "0.1.4"
+hyper = { version = "1.10.1", features = ["client", "http1"] }
+hyper-util = { version = "0.1.20", features = ["client", "client-legacy", "http1", "tokio"] }
+hmac = "0.13.0"
+libc = "0.2.186"
+rand = "0.8.7"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "0.11.0"
+subtle = "2.6.1"
+thiserror = "1.0.69"
+tokio = { version = "1.53.0", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.5.2", features = ["catch-panic", "limit", "timeout", "trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+zeroize = "1.9.0"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true

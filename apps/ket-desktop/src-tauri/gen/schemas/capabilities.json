@@ -1,0 +1,1 @@
+{"main-window":{"identifier":"main-window","description":"Local Ket desktop window","local":true,"windows":["main"],"permissions":["core:default","core:event:allow-listen","core:event:allow-unlisten"]}}

@@ -1,0 +1,29 @@
+name: ket
+
+services:
+  control-plane:
+    build:
+      context: .
+    image: ket-control-plane:local
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      KET_BIND: 0.0.0.0:8787
+      KET_STATE_PATH: /var/lib/ket/state.json
+    ports:
+      - "${KET_PUBLISH_ADDRESS:-127.0.0.1}:${KET_CONTROL_PORT:-8787}:8787"
+    volumes:
+      - ket-state:/var/lib/ket
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  ket-state:
+

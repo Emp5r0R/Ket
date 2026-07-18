@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1.7
+FROM rust:1.88-bookworm AS rust-toolchain
+
+FROM node:24-bookworm AS builder
+ARG TARGETARCH
+
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+ENV PATH=/usr/local/cargo/bin:${PATH}
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+      curl \
+      file \
+      libayatana-appindicator3-dev \
+      librsvg2-dev \
+      libssl-dev \
+      libwebkit2gtk-4.1-dev \
+      libxdo-dev \
+      patchelf \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /source
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY apps/ket-desktop ./apps/ket-desktop
+COPY packaging ./packaging
+
+RUN npm --prefix apps/ket-desktop ci
+RUN cargo build --locked --release --package ket-tunnel-service
+RUN packaging/fetch-hysteria.sh "linux-${TARGETARCH}" \
+    apps/ket-desktop/src-tauri/binaries/hysteria
+RUN chmod 0644 packaging/linux/ket-tunnel.service \
+    && chmod 0755 packaging/linux/postinst packaging/linux/prerm packaging/linux/postrm
+
+WORKDIR /source/apps/ket-desktop
+RUN npm exec tauri build -- --bundles deb
+
+FROM scratch AS artifacts
+COPY --from=builder /source/target/release/bundle/deb/ /

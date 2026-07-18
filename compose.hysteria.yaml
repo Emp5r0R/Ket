@@ -1,0 +1,34 @@
+services:
+  control-plane:
+    environment:
+      KET_HYSTERIA_CONFIG_PATH: /var/lib/ket-dataplane/hysteria.json
+    volumes:
+      - ket-dataplane:/var/lib/ket-dataplane
+
+  hysteria2:
+    image: tobyxdd/hysteria:v2.10.0@sha256:97a8deb6c57765a72d4251420481dc8124222590d8e1b5af564e0858859cfe09
+    user: "10001:10001"
+    command: ["server", "-c", "/var/lib/ket-dataplane/hysteria.json"]
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      HYSTERIA_DISABLE_UPDATE_CHECK: "1"
+      HYSTERIA_LOG_LEVEL: info
+      HYSTERIA_LOG_FORMAT: json
+    ports:
+      - "${KET_HYSTERIA_BIND_ADDRESS:-0.0.0.0}:${KET_HYSTERIA_PUBLIC_PORT:-443}:8443/udp"
+    volumes:
+      - ket-dataplane:/var/lib/ket-dataplane:ro
+      - "${KET_HYSTERIA_TLS_DIR:-./secrets/tls}:/etc/hysteria/tls:ro"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  ket-dataplane:

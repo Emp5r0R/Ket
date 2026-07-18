@@ -1,0 +1,20 @@
+# Keep local build output, VCS metadata, and secrets out of the image context.
+target/
+.git/
+.gitignore
+.env
+.env.*
+secrets/
+*.key
+*.pem
+*.p12
+
+# Frontend and local tooling artifacts are not needed by the server image.
+apps/ket-desktop/node_modules/
+apps/ket-desktop/dist/
+.agents/
+.codex/
+
+# Editor and operating-system noise.
+.DS_Store
+*.swp

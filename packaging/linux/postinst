@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+if ! getent group ket >/dev/null; then
+  groupadd --system ket
+fi
+
+install -d -o root -g root -m 0755 /usr/libexec/ket
+install -d -o root -g ket -m 0750 /etc/ket
+chmod 0755 /usr/libexec/ket/ket-tunnel-service /usr/libexec/ket/hysteria
+chmod 0644 /usr/lib/systemd/system/ket-tunnel.service
+
+token_file=/etc/ket/tunnel.token
+if [ -L "${token_file}" ]; then
+  printf 'Refusing to use a symbolic-link Ket broker token.\n' >&2
+  exit 1
+fi
+if [ ! -e "${token_file}" ]; then
+  /usr/libexec/ket/ket-tunnel-service --init-token
+fi
+if [ ! -f "${token_file}" ] || [ "$(stat -c '%s' "${token_file}")" -ne 32 ]; then
+  printf 'The existing Ket broker token is invalid; it was not overwritten.\n' >&2
+  exit 1
+fi
+chown root:ket "${token_file}"
+chmod 0640 "${token_file}"
+
+desktop_user=${SUDO_USER:-}
+if [ -n "${desktop_user}" ] && [ "${desktop_user}" != root ] && id "${desktop_user}" >/dev/null 2>&1; then
+  usermod --append --groups ket "${desktop_user}"
+fi
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload
+  systemctl enable ket-tunnel.service
+  systemctl restart ket-tunnel.service
+fi
+
+exit 0
