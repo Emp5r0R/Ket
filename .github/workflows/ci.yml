@@ -158,6 +158,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash -n packaging/validate-env.sh
+      - run: bash -n packaging/build-multiarch.sh
       - run: KET_ADMIN_TOKEN=01234567890123456789012345678901 KET_SESSION_TTL_SECONDS=1800 KET_MAX_SESSIONS=100 KET_COUNTRY_CODE=US ./packaging/validate-env.sh
       - run: docker build --pull --tag ket-control-plane:ci .
       - run: docker image inspect ket-control-plane:ci
