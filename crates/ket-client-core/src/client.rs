@@ -148,12 +148,12 @@ impl KetClient {
                 )
             })
         };
-        if let Some((transport_id, status)) = tunnel_status {
-            if !matches!(status, TunnelStatus::Connected) {
-                self.runtime.lock().await.tunnel = None;
-                self.record_failure(&transport_id).await;
-                return self.connect_locked(true).await;
-            }
+        if let Some((transport_id, status)) = tunnel_status
+            && !matches!(status, TunnelStatus::Connected)
+        {
+            self.runtime.lock().await.tunnel = None;
+            self.record_failure(&transport_id).await;
+            return self.connect_locked(true).await;
         }
         let expires_at = self
             .runtime
