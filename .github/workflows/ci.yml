@@ -145,8 +145,10 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: android-actions/setup-android@v3
-      - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-      - run: ./gradlew --no-daemon assembleDebug
+      - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;27.3.13750724"
+      - run: ../../packaging/prepare-android-engines.sh app
+      - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug
+      - run: ../../packaging/validate-android-apk.sh app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
           name: ket-android-debug
