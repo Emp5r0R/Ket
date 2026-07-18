@@ -55,6 +55,7 @@ Protocol metadata under `options` is non-secret. Protocol-specific passwords or 
 | --- | --- | --- |
 | `POST` | `/v1/admin/access-grants` | Create a grant and return its code once |
 | `GET` | `/v1/admin/access-grants` | List grants and active lease counts |
+| `POST` | `/v1/admin/access-grants/batch` | Create 1-100 grants in one authenticated request |
 | `DELETE` | `/v1/admin/access-grants/{id}` | Revoke a grant and all of its sessions |
 
 Create a grant:
@@ -72,6 +73,8 @@ The plaintext `access_code` is available only in the creation response. Store it
 ## Data-plane endpoint
 
 `POST /internal/v1/hysteria2/auth` implements Hysteria2's HTTP authentication contract. It always returns HTTP `200` with `{"ok":true,"id":"session-id"}` or `{"ok":false,"id":""}`. The protocol container reaches it over the private Compose network. It is not a client API, and an ingress or reverse proxy must reject the entire `/internal/` namespace.
+
+The batch request uses `label_prefix`, `count`, `max_connections`, and optional `expires_at_epoch_seconds`. Labels receive `-1` through `-N` suffixes. Each response contains a distinct 32-character code, returned only once and never persisted in plaintext.
 
 ## Errors
 
