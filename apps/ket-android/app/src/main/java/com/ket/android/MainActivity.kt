@@ -121,13 +121,19 @@ private fun KetTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = Teal,
+            onPrimary = Ink,
             background = Ink,
             surface = Color(0xFF101D21),
             onBackground = Color.White,
             onSurface = Color.White,
         ),
-        content = content,
-    )
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+            content = content,
+        )
+    }
 }
 
 @Composable

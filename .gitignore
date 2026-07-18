@@ -1,5 +1,6 @@
 /target/
 /.gradle/
+/.gradle-local/
 /apps/ket-android/.gradle/
 /apps/ket-desktop/dist/
 /apps/ket-desktop/node_modules/
