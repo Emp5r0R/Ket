@@ -1,9 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
 use ket_core::{
-    AccessGrantSummary, CreateAccessGrantRequest, CreateAccessGrantResponse, SecretString,
-    generate_access_code, generate_scoped_token, generate_session_token, hash_secret,
-    hash_token_secret, split_access_code, split_session_token, verify_secret, verify_token_secret,
+    AccessGrantSummary, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
+    CreateAccessGrantResponse, SecretString, generate_access_code, generate_scoped_token,
+    generate_session_token, hash_secret, hash_token_secret, split_access_code, split_session_token,
+    verify_secret, verify_token_secret,
 };
 use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
@@ -154,6 +155,30 @@ impl AccessService {
             expires_at_epoch_seconds: request.expires_at_epoch_seconds,
             created_at_epoch_seconds: now,
         })
+    }
+
+    pub async fn create_grant_batch(
+        &self,
+        request: CreateAccessGrantBatchRequest,
+    ) -> Result<Vec<CreateAccessGrantResponse>, ServiceError> {
+        if request.count == 0 || request.count > 100 {
+            return Err(ServiceError::InvalidInput(
+                "count must be between 1 and 100".to_owned(),
+            ));
+        }
+        let label_prefix = validate_text(request.label_prefix, "label_prefix", MAX_LABEL_LENGTH)?;
+        let mut grants = Vec::with_capacity(request.count as usize);
+        for index in 1..=request.count {
+            grants.push(
+                self.create_grant(CreateAccessGrantRequest {
+                    label: format!("{label_prefix}-{index}"),
+                    max_connections: request.max_connections,
+                    expires_at_epoch_seconds: request.expires_at_epoch_seconds,
+                })
+                .await?,
+            );
+        }
+        Ok(grants)
     }
 
     pub async fn list_grants(&self) -> Vec<AccessGrantSummary> {

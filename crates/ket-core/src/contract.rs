@@ -99,6 +99,14 @@ pub struct CreateAccessGrantRequest {
     pub expires_at_epoch_seconds: Option<u64>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct CreateAccessGrantBatchRequest {
+    pub label_prefix: String,
+    pub count: u16,
+    pub max_connections: u32,
+    pub expires_at_epoch_seconds: Option<u64>,
+}
+
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 pub struct CreateAccessGrantResponse {
     pub id: String,

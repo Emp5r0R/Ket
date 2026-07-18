@@ -15,9 +15,10 @@ use axum::{
     routing::{delete, get, post},
 };
 use ket_core::{
-    AccessGrantSummary, CreateAccessGrantRequest, CreateAccessGrantResponse, CreateSessionRequest,
-    ErrorResponse, HealthState, NodeStatus, SecretString, SessionManifest, SessionStatus,
-    SessionTraffic, SessionTransport, TransportCredential,
+    AccessGrantSummary, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
+    CreateAccessGrantResponse, CreateSessionRequest, ErrorResponse, HealthState, NodeStatus,
+    SecretString, SessionManifest, SessionStatus, SessionTraffic, SessionTransport,
+    TransportCredential,
 };
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -93,6 +94,7 @@ pub fn build_router(state: AppState) -> Router {
             "/v1/admin/access-grants",
             post(create_grant).get(list_grants),
         )
+        .route("/v1/admin/access-grants/batch", post(create_grant_batch))
         .route("/v1/admin/access-grants/:id", delete(revoke_grant))
         .route("/v1/sessions", post(create_session))
         .route(
@@ -134,6 +136,16 @@ async fn create_grant(
 ) -> Result<(StatusCode, Json<CreateAccessGrantResponse>), ApiError> {
     authorize_admin(&state, &headers)?;
     let response = state.access.create_grant(request).await?;
+    Ok((StatusCode::CREATED, Json(response)))
+}
+
+async fn create_grant_batch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateAccessGrantBatchRequest>,
+) -> Result<(StatusCode, Json<Vec<CreateAccessGrantResponse>>), ApiError> {
+    authorize_admin(&state, &headers)?;
+    let response = state.access.create_grant_batch(request).await?;
     Ok((StatusCode::CREATED, Json(response)))
 }
 
@@ -585,6 +597,27 @@ mod tests {
                 .encoded_state()
                 .contains(grant.access_code.expose_secret())
         );
+
+        let batch_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants/batch",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({
+                    "label_prefix": "Fleet",
+                    "count": 2,
+                    "max_connections": 1,
+                    "expires_at_epoch_seconds": null
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(batch_response.status(), StatusCode::CREATED);
+        let batch: Vec<CreateAccessGrantResponse> = response_json(batch_response).await;
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch[0].access_code.len(), ket_core::ACCESS_CODE_LENGTH);
+        assert_ne!(batch[0].access_code, batch[1].access_code);
 
         let session_response = app
             .clone()
