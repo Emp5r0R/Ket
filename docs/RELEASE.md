@@ -28,3 +28,13 @@ For a production server, source `.env`, run `./packaging/validate-env.sh`, and v
 The Android debug artifact is only for testing. Production Android, Linux, and Windows artifacts must be signed by the release owner and their checksums published alongside the files. Ket does not store signing keys in this repository.
 
 The current maintained data-plane integration is Hysteria2. Other protocol identifiers are contract-level extension points and must not be advertised as active until their maintained upstream engines and platform adapters are integrated and tested.
+
+## Multi-architecture image
+
+Publish one manifest for both supported server architectures with an authenticated registry login:
+
+```bash
+./packaging/build-multiarch.sh ghcr.io/your-org/ket-control-plane:<tag>
+```
+
+The script publishes `linux/amd64` and `linux/arm64`. Docker selects the matching image on the host, so the same tag works on Oracle Ampere and AMD64 servers. The command requires Buildx and registry push permission; it does not alter the local Docker daemon image store.
