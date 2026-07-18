@@ -1,0 +1,3 @@
+# Copy to local.properties and set the Android SDK installation path.
+# This file is intentionally not committed as local.properties.
+sdk.dir=/absolute/path/to/Android/Sdk

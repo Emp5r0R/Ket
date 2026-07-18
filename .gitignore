@@ -1,0 +1,13 @@
+/target/
+/.gradle/
+/apps/ket-android/.gradle/
+/apps/ket-desktop/dist/
+/apps/ket-desktop/node_modules/
+/apps/ket-desktop/src-tauri/binaries/
+/.env
+/apps/ket-android/local.properties
+/apps/ket-android/app/build/
+/build-outputs/
+/data/
+/secrets/
+*.log

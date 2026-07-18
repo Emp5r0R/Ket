@@ -1,0 +1,23 @@
+[package]
+name = "ket-tunnel-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+ket-client-core = { path = "../ket-client-core" }
+ket-tunnel-protocol = { path = "../ket-tunnel-protocol" }
+libc.workspace = true
+rand.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+ket-core = { path = "../ket-core" }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8.1"

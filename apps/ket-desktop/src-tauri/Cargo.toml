@@ -1,0 +1,25 @@
+[package]
+name = "ket-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version = "1.88"
+build = "build.rs"
+
+[lib]
+name = "ket_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "ket-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = "2.6.3"
+
+[dependencies]
+ket-client-core = { path = "../../../crates/ket-client-core" }
+serde.workspace = true
+tauri = "2.11.5"
+tokio.workspace = true
+tracing.workspace = true

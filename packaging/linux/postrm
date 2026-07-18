@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload
+fi
+
+if [ "${1:-}" = purge ]; then
+  rm -f /etc/ket/tunnel.token
+  rmdir /etc/ket 2>/dev/null || true
+fi
+
+exit 0

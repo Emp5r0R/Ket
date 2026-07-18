@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() { printf 'Ket configuration error: %s\n' "$1" >&2; exit 1; }
+required() { [[ -n "${!1:-}" ]] || fail "$1 is required"; }
+
+required KET_ADMIN_TOKEN
+(( ${#KET_ADMIN_TOKEN} >= 32 )) || fail 'KET_ADMIN_TOKEN must contain at least 32 characters'
+[[ "${KET_SESSION_TTL_SECONDS:-1800}" =~ ^[0-9]+$ ]] || fail 'KET_SESSION_TTL_SECONDS must be numeric'
+(( KET_SESSION_TTL_SECONDS >= 60 && KET_SESSION_TTL_SECONDS <= 86400 )) || fail 'KET_SESSION_TTL_SECONDS must be between 60 and 86400'
+[[ "${KET_MAX_SESSIONS:-1000}" =~ ^[1-9][0-9]*$ ]] || fail 'KET_MAX_SESSIONS must be a positive integer'
+[[ "${KET_COUNTRY_CODE:-ZZ}" =~ ^[A-Z]{2}$ ]] || fail 'KET_COUNTRY_CODE must be two uppercase letters'
+
+if [[ "${KET_HYSTERIA_ENABLED:-false}" == true ]]; then
+  required KET_HYSTERIA_PUBLIC_HOST
+  required KET_HYSTERIA_STATS_SECRET
+  (( ${#KET_HYSTERIA_STATS_SECRET} >= 32 )) || fail 'KET_HYSTERIA_STATS_SECRET must contain at least 32 characters'
+  required KET_HYSTERIA_MASQUERADE_URL
+  [[ "$KET_HYSTERIA_MASQUERADE_URL" == https://* ]] || fail 'KET_HYSTERIA_MASQUERADE_URL must use HTTPS'
+  cert_dir=${KET_HYSTERIA_TLS_DIR:-./secrets/tls}
+  [[ -r "$cert_dir/fullchain.pem" ]] || fail "missing readable $cert_dir/fullchain.pem"
+  [[ -r "$cert_dir/privkey.pem" ]] || fail "missing readable $cert_dir/privkey.pem"
+  if [[ "${KET_HYSTERIA_OBFS:-none}" != none ]]; then
+    required KET_HYSTERIA_OBFS_PASSWORD
+    (( ${#KET_HYSTERIA_OBFS_PASSWORD} >= 32 )) || fail 'KET_HYSTERIA_OBFS_PASSWORD must contain at least 32 characters'
+  fi
+fi
+
+printf 'Ket configuration preflight passed.\n'

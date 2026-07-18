@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Ket",
+  "version": "0.1.0",
+  "identifier": "dev.ket.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Ket",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 780,
+        "minHeight": 620,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'",
+      "freezePrototype": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "nsis", "msi"],
+    "category": "Utility",
+    "shortDescription": "Ket private network client",
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/libexec/ket/ket-tunnel-service": "../../../target/release/ket-tunnel-service",
+          "/usr/libexec/ket/hysteria": "binaries/hysteria",
+          "/usr/lib/systemd/system/ket-tunnel.service": "../../../packaging/linux/ket-tunnel.service"
+        },
+        "postInstallScript": "../../../packaging/linux/postinst",
+        "preRemoveScript": "../../../packaging/linux/prerm",
+        "postRemoveScript": "../../../packaging/linux/postrm"
+      }
+    }
+  }
+}
