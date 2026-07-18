@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -30,8 +30,8 @@ use tower_http::{
 use crate::{
     config::{HysteriaObfuscation, ServerConfig},
     data_plane::{self, DataPlaneControl},
-    service::{AccessService, ServiceError, unix_time},
-    system,
+    service::{AccessService, CreatedSession, ServiceError, unix_time},
+    system, xray,
 };
 
 #[derive(Default)]
@@ -47,16 +47,19 @@ pub struct AppState {
     config: Arc<ServerConfig>,
     access: Arc<AccessService>,
     data_plane: Arc<dyn DataPlaneControl>,
+    data_plane_ready: Arc<AtomicBool>,
     metrics: Arc<AppMetrics>,
 }
 
 impl AppState {
     pub fn new(config: ServerConfig, access: AccessService) -> anyhow::Result<Self> {
         let data_plane = data_plane::from_config(&config)?;
+        let data_plane_ready = config.xray.is_none();
         Ok(Self {
             config: Arc::new(config),
             access: Arc::new(access),
             data_plane,
+            data_plane_ready: Arc::new(AtomicBool::new(data_plane_ready)),
             metrics: Arc::new(AppMetrics::default()),
         })
     }
@@ -74,6 +77,31 @@ impl AppState {
                 }
             }
         });
+    }
+
+    pub async fn reconcile_data_planes(&self) -> anyhow::Result<()> {
+        self.data_plane_ready.store(false, Ordering::Release);
+        let session_ids = self.access.active_session_ids().await;
+        let mut delay = Duration::from_millis(250);
+        for attempt in 1..=20 {
+            match self.data_plane.reconcile(&session_ids).await {
+                Ok(()) => {
+                    self.data_plane_ready.store(true, Ordering::Release);
+                    tracing::info!(
+                        sessions = session_ids.len(),
+                        "data-plane sessions reconciled"
+                    );
+                    return Ok(());
+                }
+                Err(error) if attempt < 20 => {
+                    tracing::warn!(%error, attempt, "data-plane reconciliation is not ready");
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(Duration::from_secs(2));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        unreachable!("bounded reconciliation loop always returns")
     }
 
     async fn kick_sessions(&self, session_ids: &[String]) {
@@ -115,7 +143,7 @@ async fn health() -> StatusCode {
 }
 
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
-    if state.data_plane.healthy().await {
+    if state.data_plane_ready.load(Ordering::Acquire) && state.data_plane.healthy().await {
         (StatusCode::OK, Json(serde_json::json!({"status": "ready"})))
     } else {
         (
@@ -172,18 +200,15 @@ async fn create_session(
     State(state): State<AppState>,
     Json(request): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<SessionManifest>), ApiError> {
+    if !state.data_plane_ready.load(Ordering::Acquire) {
+        return Err(ApiError::data_plane_not_ready());
+    }
     let created = match state
         .access
         .create_session(request.access_code.expose_secret(), request.client_name)
         .await
     {
-        Ok(created) => {
-            state
-                .metrics
-                .accepted_sessions
-                .fetch_add(1, Ordering::Relaxed);
-            created
-        }
+        Ok(created) => created,
         Err(error) => {
             state
                 .metrics
@@ -192,11 +217,33 @@ async fn create_session(
             return Err(error.into());
         }
     };
+    if let Err(error) = state.data_plane.provision(&created.id).await {
+        state
+            .metrics
+            .rejected_sessions
+            .fetch_add(1, Ordering::Relaxed);
+        match state
+            .access
+            .release_session(created.token.expose_secret())
+            .await
+        {
+            Ok(session_id) => state.kick_sessions(&[session_id]).await,
+            Err(rollback_error) => {
+                tracing::error!(%rollback_error, session_id = %created.id, "failed to roll back unprovisioned session")
+            }
+        }
+        return Err(ApiError::data_plane_unavailable(error));
+    }
+    state
+        .metrics
+        .accepted_sessions
+        .fetch_add(1, Ordering::Relaxed);
+    let transports = session_transports(&state, &created);
     let response = SessionManifest {
         session_token: created.token,
         session_expires_at_epoch_seconds: created.expires_at_epoch_seconds,
         node: build_node_status(&state).await,
-        transports: session_transports(&state, created.data_plane_token.expose_secret()),
+        transports,
     };
     Ok((StatusCode::CREATED, Json(response)))
 }
@@ -309,19 +356,19 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], body)
 }
 
-fn session_transports(state: &AppState, data_plane_token: &str) -> Vec<SessionTransport> {
-    let credential_transport = state
-        .config
-        .hysteria
-        .as_ref()
-        .map(|config| config.transport_id.as_str());
+fn session_transports(state: &AppState, created: &CreatedSession) -> Vec<SessionTransport> {
     state
         .config
         .transports
         .iter()
         .cloned()
         .map(|profile| {
-            let credential = (credential_transport == Some(profile.id.as_str())).then(|| {
+            let credential = if state
+                .config
+                .hysteria
+                .as_ref()
+                .is_some_and(|config| config.transport_id == profile.id)
+            {
                 let mut secrets = BTreeMap::new();
                 if let Some(hysteria) = &state.config.hysteria {
                     match &hysteria.obfuscation {
@@ -332,11 +379,18 @@ fn session_transports(state: &AppState, data_plane_token: &str) -> Vec<SessionTr
                         }
                     }
                 }
-                TransportCredential {
-                    auth: data_plane_token.into(),
+                Some(TransportCredential {
+                    auth: created.data_plane_token.clone(),
                     secrets,
-                }
-            });
+                })
+            } else {
+                state
+                    .config
+                    .xray
+                    .as_ref()
+                    .filter(|config| config.transport_id == profile.id)
+                    .map(|config| xray::session_credential(config, &created.id))
+            };
             SessionTransport {
                 credential,
                 profile,
@@ -375,7 +429,8 @@ async fn build_node_status(state: &AppState) -> NodeStatus {
     let active_sessions = state.access.active_session_count().await;
     let capacity_percent = active_sessions as f32 / state.config.max_sessions as f32 * 100.0;
     let system = system::snapshot();
-    let data_plane_healthy = state.data_plane.healthy().await;
+    let data_plane_healthy =
+        state.data_plane_ready.load(Ordering::Acquire) && state.data_plane.healthy().await;
     let memory_percent = match (system.memory_used_bytes, system.memory_total_bytes) {
         (Some(used), Some(total)) if total > 0 => used as f64 / total as f64 * 100.0,
         _ => 0.0,
@@ -440,6 +495,23 @@ impl ApiError {
             status: StatusCode::UNAUTHORIZED,
             code: "unauthorized",
             message: "credentials are invalid".to_owned(),
+        }
+    }
+
+    fn data_plane_unavailable(error: data_plane::DataPlaneError) -> Self {
+        tracing::error!(%error, "session data-plane provisioning failed");
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "data_plane_unavailable",
+            message: "the node data plane is temporarily unavailable".to_owned(),
+        }
+    }
+
+    fn data_plane_not_ready() -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "data_plane_unavailable",
+            message: "the node data plane is temporarily unavailable".to_owned(),
         }
     }
 }
@@ -520,7 +592,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::{HysteriaConfig, HysteriaObfuscation},
+        config::{HysteriaConfig, HysteriaObfuscation, XrayConfig},
+        data_plane::DataPlaneError,
         model::PersistedState,
         repository::{RepositoryError, StateRepository},
     };
@@ -547,6 +620,54 @@ mod tests {
 
         async fn store(&self, state: &PersistedState) -> Result<(), RepositoryError> {
             *self.state.lock().expect("state lock") = state.clone();
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDataPlane {
+        fail_provision: bool,
+        provision_attempts: Mutex<Vec<String>>,
+        kicked_sessions: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl DataPlaneControl for RecordingDataPlane {
+        async fn healthy(&self) -> bool {
+            true
+        }
+
+        async fn provision(&self, session_id: &str) -> Result<(), DataPlaneError> {
+            self.provision_attempts
+                .lock()
+                .expect("provision attempts lock")
+                .push(session_id.to_owned());
+            if self.fail_provision {
+                Err(DataPlaneError::Command("injected failure".to_owned()))
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn reconcile(&self, _session_ids: &[String]) -> Result<(), DataPlaneError> {
+            Ok(())
+        }
+
+        async fn traffic(&self, _session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
+            Ok(SessionTraffic {
+                available: true,
+                bytes_sent: 0,
+                bytes_received: 0,
+                online_connections: 0,
+                observed_at_epoch_seconds: unix_time(),
+            })
+        }
+
+        async fn kick(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
+            self.kicked_sessions
+                .lock()
+                .expect("kicked sessions lock")
+                .extend_from_slice(session_ids);
             Ok(())
         }
     }
@@ -838,6 +959,228 @@ mod tests {
         assert!(!rejected.ok);
     }
 
+    #[tokio::test]
+    async fn xray_readiness_blocks_session_exchange_until_reconciliation() {
+        let repository = Arc::new(MemoryRepository::default());
+        let service = AccessService::load(repository, Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let state = AppState::new(xray_test_config(), service).expect("app state");
+        let app = build_router(state.clone());
+
+        let readiness = app
+            .clone()
+            .oneshot(empty_request("GET", "/readyz", None))
+            .await
+            .expect("request should complete");
+        assert_eq!(readiness.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let grant_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({
+                    "label": "Startup gate test",
+                    "max_connections": 1,
+                    "expires_at_epoch_seconds": null
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        let grant: CreateAccessGrantResponse = response_json(grant_response).await;
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/v1/sessions",
+                None,
+                serde_json::json!({
+                    "access_code": grant.access_code,
+                    "client_name": "Early client"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let error: ErrorResponse = response_json(response).await;
+        assert_eq!(error.code, "data_plane_unavailable");
+        assert_eq!(state.access.active_session_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn xray_session_provisions_and_revokes_a_reality_user() {
+        let repository = Arc::new(MemoryRepository::default());
+        let service = AccessService::load(repository, Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let data_plane = Arc::new(RecordingDataPlane::default());
+        let state = AppState {
+            config: Arc::new(xray_test_config()),
+            access: Arc::new(service),
+            data_plane: data_plane.clone(),
+            data_plane_ready: Arc::new(AtomicBool::new(true)),
+            metrics: Arc::new(AppMetrics::default()),
+        };
+        let app = build_router(state);
+
+        let grant_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({
+                    "label": "REALITY test",
+                    "max_connections": 1,
+                    "expires_at_epoch_seconds": null
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        let grant: CreateAccessGrantResponse = response_json(grant_response).await;
+
+        let session_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/sessions",
+                None,
+                serde_json::json!({
+                    "access_code": grant.access_code,
+                    "client_name": "REALITY client"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(session_response.status(), StatusCode::CREATED);
+        let session: SessionManifest = response_json(session_response).await;
+        let session_id = session.session_token.expose_secret()[..12].to_owned();
+        let transport = session.transports.first().expect("REALITY transport");
+        let credential = transport.credential.as_ref().expect("REALITY credential");
+        let uuid = credential.auth.expose_secret();
+        assert_eq!(uuid.len(), 36);
+        assert_eq!(uuid.as_bytes()[14], b'4');
+        assert_eq!(
+            uuid.split('-').map(str::len).collect::<Vec<_>>(),
+            [8, 4, 4, 4, 12]
+        );
+        assert_eq!(
+            credential
+                .secrets
+                .get("reality_password")
+                .expect("REALITY public key")
+                .expose_secret(),
+            "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        );
+        assert_eq!(
+            credential
+                .secrets
+                .get("reality_short_id")
+                .expect("REALITY short ID")
+                .expose_secret(),
+            "0123456789abcdef"
+        );
+        assert_eq!(
+            data_plane
+                .provision_attempts
+                .lock()
+                .expect("provision attempts lock")
+                .as_slice(),
+            [session_id.as_str()]
+        );
+
+        let release = app
+            .oneshot(empty_request(
+                "DELETE",
+                "/v1/sessions/current",
+                Some(session.session_token.expose_secret()),
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(release.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            data_plane
+                .kicked_sessions
+                .lock()
+                .expect("kicked sessions lock")
+                .as_slice(),
+            [session_id.as_str()]
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_data_plane_provision_rolls_back_the_session() {
+        let repository = Arc::new(MemoryRepository::default());
+        let service = AccessService::load(repository, Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let data_plane = Arc::new(RecordingDataPlane {
+            fail_provision: true,
+            ..RecordingDataPlane::default()
+        });
+        let state = AppState {
+            config: Arc::new(xray_test_config()),
+            access: Arc::new(service),
+            data_plane: data_plane.clone(),
+            data_plane_ready: Arc::new(AtomicBool::new(true)),
+            metrics: Arc::new(AppMetrics::default()),
+        };
+        let app = build_router(state.clone());
+
+        let grant_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({
+                    "label": "Provision failure test",
+                    "max_connections": 1,
+                    "expires_at_epoch_seconds": null
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        let grant: CreateAccessGrantResponse = response_json(grant_response).await;
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/v1/sessions",
+                None,
+                serde_json::json!({
+                    "access_code": grant.access_code,
+                    "client_name": "Unavailable client"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let error: ErrorResponse = response_json(response).await;
+        assert_eq!(error.code, "data_plane_unavailable");
+        assert_eq!(state.access.active_session_count().await, 0);
+        assert_eq!(
+            data_plane
+                .provision_attempts
+                .lock()
+                .expect("provision attempts lock")
+                .len(),
+            1
+        );
+        assert_eq!(
+            data_plane
+                .kicked_sessions
+                .lock()
+                .expect("kicked sessions lock")
+                .len(),
+            1
+        );
+        assert_eq!(state.metrics.accepted_sessions.load(Ordering::Relaxed), 0);
+        assert_eq!(state.metrics.rejected_sessions.load(Ordering::Relaxed), 1);
+    }
+
     fn test_config() -> ServerConfig {
         ServerConfig {
             bind_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8787),
@@ -857,6 +1200,7 @@ mod tests {
             session_ttl: Duration::from_secs(300),
             transports: Vec::new(),
             hysteria: None,
+            xray: None,
         }
     }
 
@@ -889,6 +1233,50 @@ mod tests {
             options: Default::default(),
         });
         config.hysteria = Some(hysteria);
+        config
+    }
+
+    fn xray_test_config() -> ServerConfig {
+        let xray = XrayConfig {
+            transport_id: "vless-reality-primary".to_owned(),
+            runtime_config_path: PathBuf::from("unused-xray-test.json"),
+            binary_path: PathBuf::from("unused-xray-test-binary"),
+            api_server: "127.0.0.1:10085".to_owned(),
+            api_listen: "127.0.0.1".to_owned(),
+            api_port: 10085,
+            inbound_tag: "vless-reality".to_owned(),
+            listen_host: "0.0.0.0".to_owned(),
+            listen_port: 8444,
+            public_host: "vpn.example.test".to_owned(),
+            public_port: 443,
+            sni: "www.example.com".to_owned(),
+            server_names: vec!["www.example.com".to_owned()],
+            reality_target: "www.example.com:443".to_owned(),
+            private_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+            public_key: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB".to_owned(),
+            short_id: "0123456789abcdef".to_owned(),
+            credential_key: "test-credential-key-with-at-least-32-characters".to_owned(),
+            fingerprint: "chrome".to_owned(),
+        };
+        let options = BTreeMap::from([
+            ("encryption".to_owned(), "none".to_owned()),
+            ("fingerprint".to_owned(), xray.fingerprint.clone()),
+            ("flow".to_owned(), "xtls-rprx-vision".to_owned()),
+            ("transport".to_owned(), "raw".to_owned()),
+        ]);
+        let mut config = test_config();
+        config.transports.push(TransportProfile {
+            id: xray.transport_id.clone(),
+            display_name: "VLESS + REALITY".to_owned(),
+            protocol: TransportProtocol::VlessXtlsReality,
+            endpoint: xray.public_host.clone(),
+            port: xray.public_port,
+            network: Network::Tcp,
+            priority: 20,
+            tls_server_name: Some(xray.sni.clone()),
+            options,
+        });
+        config.xray = Some(xray);
         config
     }
 

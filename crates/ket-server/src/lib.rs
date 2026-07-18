@@ -6,6 +6,7 @@ mod model;
 pub mod repository;
 pub mod service;
 mod system;
+pub mod xray;
 
 pub use api::{AppState, build_router};
 pub use config::ServerConfig;

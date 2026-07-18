@@ -41,6 +41,8 @@ The response contains a bearer `session_token`, its expiry, the complete node st
 
 Protocol metadata under `options` is non-secret. Protocol-specific passwords or keys are returned under `credential.secrets` and receive the same lifecycle and redaction treatment as `credential.auth`. For example, an obfuscated Hysteria2 profile uses `options.obfs` for the mode and `credential.secrets.obfs_password` for its password.
 
+A VLESS + REALITY profile uses `credential.auth` for its lease-scoped UUID, `credential.secrets.reality_password` for Xray's REALITY public key, and `credential.secrets.reality_short_id` for the short ID. Its non-secret options declare `flow=xtls-rprx-vision`, `transport=raw`, `encryption=none`, and the selected TLS fingerprint. The server installs this UUID in Xray before returning `201`; provisioning failure rolls back the lease and returns `data_plane_unavailable`.
+
 ## Session endpoints
 
 | Method | Path | Purpose |
@@ -87,4 +89,4 @@ Errors use a stable machine code and a user-safe message:
 }
 ```
 
-Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_capacity_reached`, `node_capacity_reached`, `not_found`, and `internal_error`.
+Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_capacity_reached`, `node_capacity_reached`, `data_plane_unavailable`, `not_found`, and `internal_error`.

@@ -162,5 +162,26 @@ jobs:
       - run: bash -n packaging/validate-env.sh
       - run: bash -n packaging/build-multiarch.sh
       - run: KET_ADMIN_TOKEN=01234567890123456789012345678901 KET_SESSION_TTL_SECONDS=1800 KET_MAX_SESSIONS=100 KET_COUNTRY_CODE=US ./packaging/validate-env.sh
+      - name: Validate VLESS + REALITY environment
+        run: >-
+          KET_ADMIN_TOKEN=01234567890123456789012345678901
+          KET_SESSION_TTL_SECONDS=1800
+          KET_MAX_SESSIONS=100
+          KET_COUNTRY_CODE=US
+          KET_XRAY_ENABLED=true
+          KET_XRAY_PUBLIC_HOST=vpn.example.test
+          KET_XRAY_PUBLIC_PORT=443
+          KET_XRAY_SNI=www.cloudflare.com
+          KET_XRAY_SERVER_NAMES=www.cloudflare.com
+          KET_XRAY_REALITY_TARGET=www.cloudflare.com:443
+          KET_XRAY_PRIVATE_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          KET_XRAY_PUBLIC_KEY=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+          KET_XRAY_SHORT_ID=0123456789abcdef
+          KET_XRAY_CREDENTIAL_KEY=credential-key-with-at-least-32-characters
+          ./packaging/validate-env.sh
+      - run: cp .env.example .env
+      - run: docker compose -f compose.yaml -f compose.hysteria.yaml config --quiet
+      - run: docker compose -f compose.yaml -f compose.xray.yaml config --quiet
       - run: docker build --pull --tag ket-control-plane:ci .
+      - run: docker run --rm --entrypoint /usr/local/bin/xray ket-control-plane:ci version
       - run: docker image inspect ket-control-plane:ci

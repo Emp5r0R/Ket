@@ -1,3 +1,5 @@
+use std::future::IntoFuture;
+
 use anyhow::{Context, Result};
 use ket_server::{AccessService, AppState, ServerConfig, build_router};
 use tokio::net::TcpListener;
@@ -12,6 +14,11 @@ async fn main() -> Result<()> {
             .await
             .context("failed to render Hysteria2 configuration")?;
     }
+    if let Some(xray) = &config.xray {
+        ket_server::xray::write_runtime_config(xray)
+            .await
+            .context("failed to render Xray REALITY configuration")?;
+    }
     let access = AccessService::load_from_file(
         config.state_path.clone(),
         config.session_ttl,
@@ -22,17 +29,26 @@ async fn main() -> Result<()> {
     let bind_address = config.bind_address;
     let public_url = config.public_url.clone();
     let state = AppState::new(config, access).context("failed to initialize data-plane control")?;
-    state.start_background_tasks();
-    let app = build_router(state);
     let listener = TcpListener::bind(bind_address)
         .await
         .with_context(|| format!("failed to bind {bind_address}"))?;
+    let app = build_router(state.clone());
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .into_future();
+    tokio::pin!(server);
+
+    tracing::info!(%bind_address, "Ket control plane is listening");
+    tokio::select! {
+        result = &mut server => return result.context("server stopped unexpectedly"),
+        result = state.reconcile_data_planes() => {
+            result.context("failed to reconcile data-plane sessions")?;
+        }
+    }
+    state.start_background_tasks();
 
     tracing::info!(%bind_address, %public_url, "Ket control plane is ready");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("server stopped unexpectedly")
+    server.await.context("server stopped unexpectedly")
 }
 
 fn initialize_logging() {

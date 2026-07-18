@@ -429,6 +429,18 @@ impl AccessService {
             .count() as u32
     }
 
+    pub async fn active_session_ids(&self) -> Vec<String> {
+        let now = unix_time();
+        self.state
+            .lock()
+            .await
+            .sessions
+            .iter()
+            .filter(|session| session.expires_at_epoch_seconds > now)
+            .map(|session| session.id.clone())
+            .collect()
+    }
+
     async fn authenticate(
         &self,
         token: &str,
