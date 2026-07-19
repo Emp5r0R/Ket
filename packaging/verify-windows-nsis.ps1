@@ -31,6 +31,7 @@ $ServiceName = "KetTunnel"
 $InstallDir = Join-Path $env:ProgramFiles "Ket"
 $DataDir = Join-Path $env:ProgramData "Ket"
 $TokenFile = Join-Path $DataDir "tunnel.token"
+$InstallLog = Join-Path $DataDir "install-service.log"
 $RequiredFiles = @(
     (Join-Path $InstallDir "ket-desktop.exe"),
     (Join-Path $InstallDir "ket-tunnel-service.exe"),
@@ -51,10 +52,23 @@ function Invoke-CheckedProcess {
         -FilePath $FilePath `
         -ArgumentList $Arguments `
         -PassThru `
-        -Wait `
         -WindowStyle Hidden
+    if (-not $Process.WaitForExit(150000)) {
+        Write-KetInstallLog
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        Fail "$FilePath did not exit within 150 seconds"
+    }
     if ($Process.ExitCode -ne 0) {
+        Write-KetInstallLog
         Fail "$FilePath failed with exit code $($Process.ExitCode)"
+    }
+}
+
+function Write-KetInstallLog {
+    if (Test-Path -LiteralPath $InstallLog -PathType Leaf) {
+        Write-Host "--- Ket service installer log ---"
+        Get-Content -LiteralPath $InstallLog | ForEach-Object { Write-Host $_ }
+        Write-Host "--- end Ket service installer log ---"
     }
 }
 
