@@ -106,7 +106,8 @@ jobs:
           cache-dependency-path: apps/ket-desktop/package-lock.json
       - run: npm ci
         working-directory: apps/ket-desktop
-      - run: cargo check --locked -p ket-desktop
+      - name: Test optimized Linux desktop and patched glib iterator
+        run: cargo test --locked --release -p ket-desktop --lib
 
   linux-package:
     needs: changes

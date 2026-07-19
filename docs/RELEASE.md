@@ -18,6 +18,7 @@ Run these before publishing a release:
 cargo fmt --all -- --check
 cargo test --locked --workspace --exclude ket-desktop
 cargo clippy --locked --workspace --exclude ket-desktop --all-targets --all-features -- -D warnings
+cargo test --locked --release -p ket-desktop --lib
 npm --prefix apps/ket-desktop test -- --run
 npm --prefix apps/ket-desktop run build
 ./packaging/prepare-android-engines.sh apps/ket-android/app

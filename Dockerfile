@@ -7,6 +7,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY apps/ket-desktop/src-tauri ./apps/ket-desktop/src-tauri
 COPY crates ./crates
+COPY vendor ./vendor
 RUN cargo build --locked --release --package ket-server
 
 FROM debian:bookworm-slim AS runtime

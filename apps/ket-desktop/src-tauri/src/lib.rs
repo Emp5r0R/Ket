@@ -201,3 +201,23 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("failed to run Ket desktop");
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod security_regression_tests {
+    use glib::{Variant, prelude::*};
+
+    #[test]
+    fn patched_glib_variant_str_iterator_handles_forward_and_reverse() {
+        let variant = Variant::array_from_iter::<String>([
+            "alpha".to_variant(),
+            "beta".to_variant(),
+            "gamma".to_variant(),
+        ]);
+        let mut values = variant.array_iter_str().expect("string array variant");
+
+        assert_eq!(values.next(), Some("alpha"));
+        assert_eq!(values.next_back(), Some("gamma"));
+        assert_eq!(values.next(), Some("beta"));
+        assert_eq!(values.next(), None);
+    }
+}
