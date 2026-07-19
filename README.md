@@ -21,7 +21,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Lease-scoped Hysteria2 credentials, HTTP authentication, traffic counters, online state, and connection kicks.
 - Generated Hysteria2 2.10 server configuration with TLS, HTTP/3 masquerading, optional Salamander/Gecko obfuscation, and abuse-resistant ACLs.
 - Generated Xray-core 26.3.27 VLESS + REALITY configuration with Vision, deterministic lease-scoped UUIDs, dynamic user reconciliation/revocation, traffic statistics, and abuse-resistant routing rules.
-- Android Compose client with HTTPS enrollment, ranked VLESS + REALITY/Hysteria2 startup fallback, bounded post-connect recovery, foreground `VpnService` ownership, protected Hysteria QUIC sockets, server-route exclusion for Xray, maintained hev TUN-to-SOCKS forwarding, independent lease renewal, local traffic metrics, and fail-closed engine supervision.
+- Android Compose client with HTTPS enrollment, ranked VLESS + REALITY/Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, protected Hysteria QUIC sockets, server-route exclusion for Xray, maintained hev TUN-to-SOCKS forwarding, independent lease renewal, local traffic metrics, and fail-closed engine supervision.
 - Fail-closed Android release signing with operator-supplied version metadata and signer-certificate pinning; CI exercises the complete release path with a disposable identity that is never published as a trusted release.
 - Typed discovery for Hysteria2, IKEv2, OpenVPN/stunnel, Shadowsocks 2022, VLESS XTLS Reality, WireGuard, stealth, and XOR-wrapped adapters.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
