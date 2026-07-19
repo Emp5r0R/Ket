@@ -31,4 +31,8 @@ GRADLE_USER_HOME=/media/n_emperor/Aadhish/gradle-home \
   apps/ket-android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The debug APK is build evidence, not a production release. Unit tests cover strict parsing for both transports, IPv4/IPv6 route exclusion, and deterministic recovery ranking/cooldown. The arm64 payload has been installed on a current Android 16 device for lifecycle checks. End-to-end TCP, UDP, DNS, startup fallback, post-connect recovery, network switching, Doze, revoke, and disconnect remain physical-device release gates. Repeat the matrix on a physical API 26 device. Release signing material is intentionally not stored in this repository.
+The debug APK is build evidence, not a production release. Unit tests cover strict parsing for both transports, IPv4/IPv6 route exclusion, deterministic recovery ranking/cooldown, cooperative startup cancellation, and process-output shutdown races.
+
+On 2026-07-19, the arm64 payload was exercised on a physical Android 16/API 36 device against the dual-transport Oracle ARM deployment. Both Hysteria2 and VLESS + REALITY established protected routes and reported nonzero bidirectional traffic. The device also proved automatic startup fallback, recovery after forcibly terminating the active Xray child while retaining its lease, cancellation with both data planes unreachable, lease release, and repeated crash-free disconnects. Temporary server firewall rules used for the unreachable-path test were removed and readiness was rechecked afterward.
+
+Repeat this matrix on a physical API 26 device. Network switching, Doze, VPN permission revoke, explicit DNS leak checks, and signed-release installation remain physical-device release gates. Release signing material is intentionally not stored in this repository.

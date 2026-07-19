@@ -8,7 +8,7 @@
 | Server data planes | Dual Compose overlays | Live-tested VLESS + REALITY over TCP and Salamander-obfuscated Hysteria2 over UDP on Oracle ARM64 |
 | Linux desktop `.deb` | CI job `linux-package` | Bundles pinned engines; clean install, reinstall, remove, and purge are CI-gated |
 | Windows desktop NSIS installer | CI job `windows-package` | Bundles pinned engines and Wintun; install, reinstall, service, and uninstall are CI-gated |
-| Android debug APK | `./packaging/build-android.sh` | Multi-ABI Hysteria and 64-bit Xray payloads built and validated; physical dual-transport packet flow pending |
+| Android debug APK | `./packaging/build-android.sh` | Multi-ABI Hysteria and 64-bit Xray payloads validated; dual-transport packet flow, fallback, recovery, cancellation, and disconnect verified on current arm64 hardware |
 
 ## Required checks
 
@@ -41,7 +41,7 @@ For a production server, source `.env`, run `./packaging/validate-env.sh`, and v
 
 The Android debug artifact is only for testing. Production Android, Linux, and Windows artifacts must be signed by the release owner and their checksums published alongside the files. Ket does not store signing keys in this repository.
 
-The maintained server and client data planes are Hysteria2 and Xray-core VLESS + REALITY. Desktop REALITY has a full-route Docker integration test; Android REALITY remains pre-release until physical-device packet flow and fallback are verified. Other protocol identifiers remain contract-level extension points.
+The maintained server and client data planes are Hysteria2 and Xray-core VLESS + REALITY. Desktop REALITY has a full-route Docker integration test. Android Hysteria2 and REALITY packet flow, startup fallback, engine-exit recovery, cancellation, and disconnect have been verified on a physical current arm64 device; API 26, network-change, Doze/revoke, and signed-release testing remain. Other protocol identifiers remain contract-level extension points.
 
 ## Multi-architecture image
 
