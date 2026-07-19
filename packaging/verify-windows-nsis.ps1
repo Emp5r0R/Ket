@@ -92,7 +92,10 @@ function Get-KetUninstallEntries {
 
     foreach ($RegistryRoot in $RegistryRoots) {
         Get-ItemProperty -Path $RegistryRoot -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -eq "Ket" }
+            Where-Object {
+                $null -ne $_.PSObject.Properties["DisplayName"] -and
+                    $_.DisplayName -eq "Ket"
+            }
     }
 }
 
@@ -287,7 +290,12 @@ try {
 }
 finally {
     if ($CleanupRequired) {
-        Remove-KetTestState
+        try {
+            Remove-KetTestState
+        }
+        catch {
+            Write-Warning "Ket lifecycle cleanup failed: $($_.Exception.Message)"
+        }
     }
 }
 
