@@ -72,6 +72,16 @@ docker compose -f compose.yaml -f compose.xray.yaml up --build -d
 
 This publishes raw TCP `443` by default. Its hostname must resolve directly to the server through a DNS-only record; an ordinary Cloudflare Tunnel or orange-cloud HTTP proxy does not forward unmodified VLESS + REALITY traffic. The pinned Xray image is a multi-architecture manifest, so Docker selects the native `linux/amd64` or `linux/arm64` image for the host.
 
+Hysteria2 and REALITY can share port `443` because they use UDP and TCP respectively. To run the maintained dual-transport deployment, enable both sets of environment values and include both overlays:
+
+```bash
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml config --quiet
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml up --build -d
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml ps
+```
+
+The control hostname may remain behind Cloudflare Tunnel, but each session manifest must advertise a direct server IP or DNS-only hostname for the raw data planes. Open stateful TCP `443` and UDP `443` in both the cloud network policy and host firewall; keep the control port closed publicly.
+
 Create an access grant:
 
 ```bash
