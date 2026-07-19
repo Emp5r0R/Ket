@@ -127,18 +127,19 @@ Invoke-CheckedNative "icacls.exe" @(
 )
 
 Write-InstallStage "Registering the Ket tunnel service."
-$service = New-Service `
+New-Service `
     -Name $ServiceName `
     -BinaryPathName ('"' + $ServiceTarget + '"') `
     -DisplayName "Ket Tunnel Service" `
     -Description "Authenticated privileged tunnel broker for the Ket desktop client" `
-    -StartupType Automatic
+    -StartupType Automatic | Out-Null
 Invoke-CheckedNative "sc.exe" @(
     "failure", $ServiceName, "reset=", "86400", "actions=", "restart/5000/restart/15000/none/0"
 )
 Invoke-CheckedNative "sc.exe" @("failureflag", $ServiceName, "1")
 Write-InstallStage "Starting the Ket tunnel service."
 Start-Service -Name $ServiceName
+$service = Get-Service -Name $ServiceName
 $service.WaitForStatus("Running", [TimeSpan]::FromSeconds(20))
 
 Write-InstallStage "Ket tunnel service installation completed."
