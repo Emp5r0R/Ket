@@ -41,6 +41,10 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 zeroize = "1.9.0"
 
+[patch.crates-io]
+# Tauri's GTK3 stack still requires glib 0.18; see vendor/glib/KET-PATCH.md.
+glib = { path = "vendor/glib" }
+
 [profile.release]
 codegen-units = 1
 lto = "thin"
