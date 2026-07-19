@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. The Android client has carried both transports on a physical current arm64 device, including ranked startup fallback, session-preserving recovery, responsive cancellation, and clean disconnect. Production signing plus the API 26, network-change, Doze, and revoke matrix remain before this is a complete end-user VPN.
+> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. The Android client has carried both transports on a physical current arm64 device, including ranked startup fallback, session-preserving recovery, bidirectional Wi-Fi/cellular recovery, responsive cancellation, and clean disconnect. An API 36 fail-closed handover retest plus the API 26, Doze, revoke, DNS-leak, and owner-signing matrix remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -21,7 +21,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Lease-scoped Hysteria2 credentials, HTTP authentication, traffic counters, online state, and connection kicks.
 - Generated Hysteria2 2.10 server configuration with TLS, HTTP/3 masquerading, optional Salamander/Gecko obfuscation, and abuse-resistant ACLs.
 - Generated Xray-core 26.3.27 VLESS + REALITY configuration with Vision, deterministic lease-scoped UUIDs, dynamic user reconciliation/revocation, traffic statistics, and abuse-resistant routing rules.
-- Android Compose client with HTTPS enrollment, ranked VLESS + REALITY/Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, protected Hysteria QUIC sockets, server-route exclusion for Xray, maintained hev TUN-to-SOCKS forwarding, independent lease renewal, local traffic metrics, and fail-closed engine supervision.
+- Android Compose client with HTTPS enrollment, ranked VLESS + REALITY/Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, a fail-closed replacement-route guard, protected Hysteria QUIC sockets, server-route exclusion for Xray, maintained hev TUN-to-SOCKS forwarding, independent lease renewal, local traffic metrics, and engine supervision.
 - Fail-closed Android release signing with operator-supplied version metadata and signer-certificate pinning; CI exercises the complete release path with a disposable identity that is never published as a trusted release.
 - Typed discovery for Hysteria2, IKEv2, OpenVPN/stunnel, Shadowsocks 2022, VLESS XTLS Reality, WireGuard, stealth, and XOR-wrapped adapters.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
@@ -121,7 +121,7 @@ Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting
 ## Delivery order
 
 1. Sign the implemented Linux/Windows packages and exercise their signed artifacts on target machines; the unsigned Linux and Windows installer, service, reinstall, and removal lifecycles are CI-gated.
-2. Repeat the completed current-device Android packet-flow, fallback, recovery, cancellation, and disconnect checks on physical API 26, then add release signing and network-change/Doze/revoke tests.
+2. Retest fail-closed network handover on the current API 36 device, repeat the Android matrix on physical API 26, then complete Doze, revoke, DNS-leak, and owner-signed installation tests.
 3. Evaluate the next maintained transport only after the shipped dual-transport paths pass the release matrix.
 4. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.
 

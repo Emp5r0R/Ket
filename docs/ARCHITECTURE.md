@@ -28,7 +28,7 @@ This separation keeps the API and user experience consistent while allowing a no
 5. Hysteria2 submits its scoped credential to Ket's HTTP authentication backend. VLESS + REALITY instead receives a deterministic lease-scoped UUID that Ket installs through Xray's private Handler API before returning the manifest.
 6. Clients renew the lease while connected and release it on disconnect. Release, grant revocation, and the expiry reaper reject future authentication and remove or kick the session in every configured data plane. Ket reconciles persisted active leases with Xray at startup.
 7. On desktop, the unprivileged Tauri process sends validated transport requests to a loopback-only system service. The service authenticates each connection before it owns Hysteria TUN mode or the Xray/`tun2proxy` process pair and their routes.
-8. On Android, `VpnService` attempts ranked transports. It either protects Hysteria's QUIC descriptor or excludes Xray's resolved server route, then attaches hev-socks5-tunnel to the Android-owned TUN only after a SOCKS path check succeeds. If an established engine exits or repeated HTTPS renewal proves the routed path unhealthy, Android retains the lease while it rebuilds the TUN against ranked alternatives with bounded cooldown and retries.
+8. On Android, `VpnService` resolves and excludes every advertised data-plane endpoint before it attempts ranked transports, and Hysteria additionally protects its QUIC descriptor. Ket attaches hev-socks5-tunnel to the Android-owned TUN only after a SOCKS path check succeeds. If an established engine exits, repeated HTTPS renewal proves the routed path unhealthy, or the underlying network changes, Android retains the lease and a fail-closed TUN guard while it rebuilds the route against ranked alternatives with bounded cooldown and retries.
 
 ## Security invariants
 
@@ -47,7 +47,7 @@ This separation keeps the API and user experience consistent while allowing a no
 - Xray rejects private, loopback, link-local, multicast, carrier-grade NAT, BitTorrent, and outbound SMTP destinations for the same abuse boundary.
 - The client accepts plaintext control HTTP only on loopback by default, refuses redirects and system proxies, requires TLS 1.2 or newer for HTTPS, caps response bodies, and sanitizes server errors before UI delivery.
 - Desktop transport credentials exist only in memory and an ephemeral mode-`0600` configuration that is deleted after engine and route readiness.
-- Android rejects unknown transport options and downgrade-shaped TLS fields, resolves the server before routing traffic, protects only Hysteria's QUIC socket or excludes Xray's exact server route, and deletes its mode-`0600` engine configuration after SOCKS readiness.
+- Android rejects unknown transport options and downgrade-shaped TLS fields, resolves and excludes every data-plane endpoint before routing traffic, additionally protects Hysteria's QUIC socket, and deletes its mode-`0600` engine configuration after SOCKS readiness.
 - Android native inputs are reproducible: Hysteria and Xray executables plus the complete hev source archive are version- and checksum-pinned, and CI verifies the expected payload matrix.
 - Desktop broker connections require a fresh challenge response using a 256-bit per-installation token. Protocol frames are bounded, credential buffers are zeroized, and debug output redacts proofs and tunnel IDs.
 - The privileged broker allows one full-route tunnel and stops orphaned engine processes when the desktop heartbeat lease expires.

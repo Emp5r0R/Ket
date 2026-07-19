@@ -54,10 +54,11 @@ class KetVpnService : VpnService() {
     private var engine: AndroidTransportEngine? = null
     @Volatile
     private var activeTransportId: String? = null
-    private var tun: ParcelFileDescriptor? = null
+    private val vpnRoute = FailClosedVpnRouteGuard<ParcelFileDescriptor>()
     private var bridgeConfig: File? = null
     @Volatile
     private var launchSpec: TunnelLaunchSpec? = null
+    private var transportAddresses: Map<String, InetAddress> = emptyMap()
     private var healthTask: ScheduledFuture<*>? = null
     private var telemetryTask: ScheduledFuture<*>? = null
     private var networkChangeTask: ScheduledFuture<*>? = null
@@ -116,6 +117,7 @@ class KetVpnService : VpnService() {
 
     private fun startTunnel(spec: TunnelLaunchSpec) {
         try {
+            transportAddresses = resolveTransportAddresses(spec.transports)
             val selected = startLocalRoute(spec, reconnectAttempt = 0)
             if (stopping.get()) return
             publishConnected(spec, selected)
@@ -143,7 +145,12 @@ class KetVpnService : VpnService() {
                     reconnectAttempt = reconnectAttempt,
                 )
             }
-            val candidate = engineFor(transport) ?: continue
+            val candidate = engineFor(transport)
+            if (candidate == null) {
+                transportHistory.recordFailure(transport.id, SystemClock.elapsedRealtime())
+                failures += "${transport.displayName}: endpoint did not resolve before VPN routing"
+                continue
+            }
             try {
                 val started = candidate.start(stopping::get)
                 if (stopping.get()) throw IllegalStateException("Tunnel stop was requested")
@@ -154,7 +161,7 @@ class KetVpnService : VpnService() {
                 return SelectedTransport(candidate, started)
             } catch (error: Exception) {
                 if (engine === candidate) {
-                    cleanupLocal()
+                    stopTransportAndBridge()
                 } else {
                     runCatching { candidate.close() }
                 }
@@ -170,7 +177,9 @@ class KetVpnService : VpnService() {
 
     private fun engineFor(transport: AndroidTransport): AndroidTransportEngine? = when (transport) {
         is HysteriaTransport -> AndroidHysteriaEngine(this, transport)
-        is RealityTransport -> AndroidXrayEngine(this, transport)
+        is RealityTransport -> transportAddresses[transport.id]?.let {
+            AndroidXrayEngine(this, transport, it)
+        }
         else -> null
     }
 
@@ -188,10 +197,13 @@ class KetVpnService : VpnService() {
             .addDnsServer("1.1.1.1")
             .addDnsServer("2606:4700:4700::1111")
             .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setMetered(false) }
-        addVpnRoutes(builder, selected.bypassAddress)
+        addVpnRoutes(
+            builder,
+            (transportAddresses.values + listOfNotNull(selected.bypassAddress)).distinct(),
+        )
         val established = builder.establish()
             ?: throw IllegalStateException("Android could not establish the VPN interface")
-        tun = established
+        vpnRoute.replace(established)
         bridgeConfig = writeBridgeConfig(EngineConfig.tunToSocks(selected.socksPort))
         bridge.start(bridgeConfig!!.absolutePath, established.fd)
         Thread.sleep(BRIDGE_SETTLE_MILLIS)
@@ -239,7 +251,7 @@ class KetVpnService : VpnService() {
         if (failedTransportId != null) {
             transportHistory.recordFailure(failedTransportId, SystemClock.elapsedRealtime())
         }
-        cleanupLocal()
+        stopTransportAndBridge()
         var lastFailure = failureReason
         for (attempt in 1..recoveryPolicy.maximumReconnectRounds) {
             if (stopping.get()) {
@@ -391,16 +403,26 @@ class KetVpnService : VpnService() {
     }
 
     @Synchronized
-    private fun cleanupLocal() {
+    private fun stopTransportAndBridge() {
         runCatching { bridge.stop() }
-        runCatching { tun?.close() }
-        tun = null
         runCatching { engine?.close() }
         engine = null
         activeTransportId = null
         bridgeConfig?.delete()
         bridgeConfig = null
     }
+
+    @Synchronized
+    private fun cleanupLocal() {
+        stopTransportAndBridge()
+        vpnRoute.close()
+        transportAddresses = emptyMap()
+    }
+
+    private fun resolveTransportAddresses(transports: List<AndroidTransport>): Map<String, InetAddress> =
+        transports.mapNotNull { transport ->
+            runCatching { transport.id to resolveTransportAddress(transport.endpoint) }.getOrNull()
+        }.toMap()
 
     private fun writeBridgeConfig(document: String): File {
         return File.createTempFile("tun-to-socks-", ".yml", cacheDir).also {
@@ -409,26 +431,29 @@ class KetVpnService : VpnService() {
         }
     }
 
-    private fun addVpnRoutes(builder: Builder, bypassAddress: InetAddress?) {
-        if (bypassAddress == null) {
-            builder.addRoute("0.0.0.0", 0)
-            builder.addRoute("::", 0)
-            return
-        }
+    private fun addVpnRoutes(builder: Builder, bypassAddresses: Collection<InetAddress>) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             builder.addRoute("0.0.0.0", 0)
             builder.addRoute("::", 0)
-            builder.excludeRoute(IpPrefix(bypassAddress, if (bypassAddress is Inet4Address) 32 else 128))
+            bypassAddresses.forEach { address ->
+                builder.excludeRoute(IpPrefix(address, if (address is Inet4Address) 32 else 128))
+            }
             return
         }
-        if (bypassAddress is Inet4Address) {
-            routesExcluding(bypassAddress).forEach {
+
+        val ipv4 = bypassAddresses.filterIsInstance<Inet4Address>()
+        if (ipv4.isEmpty()) {
+            builder.addRoute("0.0.0.0", 0)
+        } else {
+            routesExcluding(ipv4).forEach {
                 builder.addRoute(requireNotNull(it.address.hostAddress), it.prefixLength)
             }
+        }
+        val ipv6 = bypassAddresses.filterNot { it is Inet4Address }
+        if (ipv6.isEmpty()) {
             builder.addRoute("::", 0)
         } else {
-            builder.addRoute("0.0.0.0", 0)
-            routesExcluding(bypassAddress).forEach {
+            routesExcluding(ipv6).forEach {
                 builder.addRoute(requireNotNull(it.address.hostAddress), it.prefixLength)
             }
         }
@@ -508,19 +533,33 @@ private data class SelectedTransport(
 
 internal data class RoutePrefix(val address: InetAddress, val prefixLength: Int)
 
-internal fun routesExcluding(address: InetAddress): List<RoutePrefix> {
-    val source = address.address
-    val bitCount = source.size * 8
-    return (0 until bitCount).map { bit ->
-        val sibling = source.copyOf()
-        val byteIndex = bit / 8
-        val bitMask = 1 shl (7 - bit % 8)
-        sibling[byteIndex] = (sibling[byteIndex].toInt() xor bitMask).toByte()
-        for (remaining in bit + 1 until bitCount) {
-            val index = remaining / 8
-            val mask = 1 shl (7 - remaining % 8)
-            sibling[index] = (sibling[index].toInt() and mask.inv()).toByte()
+internal fun routesExcluding(address: InetAddress): List<RoutePrefix> = routesExcluding(listOf(address))
+
+internal fun routesExcluding(addresses: Collection<InetAddress>): List<RoutePrefix> {
+    require(addresses.isNotEmpty()) { "At least one excluded address is required" }
+    val excluded = addresses.distinct().map(InetAddress::getAddress)
+    val addressSize = excluded.first().size
+    require(excluded.all { it.size == addressSize }) { "Excluded addresses must use one IP family" }
+    val routes = mutableListOf<RoutePrefix>()
+
+    fun visit(prefix: ByteArray, prefixLength: Int, matches: List<ByteArray>) {
+        if (prefixLength == addressSize * 8) return
+        val byteIndex = prefixLength / 8
+        val bitMask = 1 shl (7 - prefixLength % 8)
+        for (setBit in listOf(false, true)) {
+            val child = prefix.copyOf()
+            if (setBit) child[byteIndex] = (child[byteIndex].toInt() or bitMask).toByte()
+            val childMatches = matches.filter { address ->
+                ((address[byteIndex].toInt() and bitMask) != 0) == setBit
+            }
+            if (childMatches.isEmpty()) {
+                routes += RoutePrefix(InetAddress.getByAddress(child), prefixLength + 1)
+            } else {
+                visit(child, prefixLength + 1, childMatches)
+            }
         }
-        RoutePrefix(InetAddress.getByAddress(sibling), bit + 1)
     }
+
+    visit(ByteArray(addressSize), 0, excluded)
+    return routes
 }

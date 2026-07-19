@@ -8,7 +8,7 @@
 | Server data planes | Dual Compose overlays | Live-tested VLESS + REALITY over TCP and Salamander-obfuscated Hysteria2 over UDP on Oracle ARM64 |
 | Linux desktop `.deb` | CI job `linux-package` | Bundles pinned engines; clean install, reinstall, remove, and purge are CI-gated |
 | Windows desktop NSIS installer | CI job `windows-package` | Bundles pinned engines and Wintun; install, reinstall, service, and uninstall are CI-gated |
-| Android debug APK | `./packaging/build-android.sh` | Multi-ABI Hysteria and 64-bit Xray payloads validated; dual-transport packet flow, fallback, recovery, cancellation, and disconnect verified on current arm64 hardware |
+| Android debug APK | `./packaging/build-android.sh` | Multi-ABI Hysteria and 64-bit Xray payloads validated; dual-transport packet flow, fallback, recovery, Wi-Fi/cellular switching, cancellation, and disconnect exercised on current arm64 hardware; fail-closed handover retest pending |
 | Android release APK | `./packaging/build-android.sh release` | Fail-closed signing and signer pinning are CI-gated with a disposable identity; owner-signed installation remains pending |
 
 ## Required checks
@@ -44,7 +44,7 @@ The Android debug artifact is only for testing. Production Android, Linux, and W
 
 Android release tasks require `KET_ANDROID_KEYSTORE`, `KET_ANDROID_KEYSTORE_PASSWORD`, `KET_ANDROID_KEY_ALIAS`, and `KET_ANDROID_KEY_PASSWORD`. `packaging/build-android.sh release` additionally requires `KET_ANDROID_CERT_SHA256` and refuses an APK whose signer differs from that pinned certificate. Set `KET_ANDROID_VERSION_CODE` and `KET_ANDROID_VERSION_NAME` for each release; they default to the development values `1` and `0.1.0` only when omitted. The CI Android job builds the release variant with an ephemeral key and validates its fingerprint, then deliberately uploads only the debug APK.
 
-The maintained server and client data planes are Hysteria2 and Xray-core VLESS + REALITY. Desktop REALITY has a full-route Docker integration test. Android Hysteria2 and REALITY packet flow, startup fallback, engine-exit recovery, cancellation, and disconnect have been verified on a physical current arm64 device; API 26, network-change, Doze/revoke, and signed-release testing remain. Other protocol identifiers remain contract-level extension points.
+The maintained server and client data planes are Hysteria2 and Xray-core VLESS + REALITY. Desktop REALITY has a full-route Docker integration test. Android Hysteria2 and REALITY packet flow, startup fallback, engine-exit recovery, bidirectional Wi-Fi/cellular recovery, cancellation, and disconnect have been exercised on a physical current arm64 device. The fail-closed handover correction needs a physical API 36 repeat; API 26, Doze/revoke, DNS-leak, and owner-signed release testing also remain. Other protocol identifiers remain contract-level extension points.
 
 ## Multi-architecture image
 
