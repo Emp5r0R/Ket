@@ -2,6 +2,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Container })]
+    [string]$InstallDir,
+
+    [Parameter(Mandatory = $true)]
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$ServiceBinary,
 
@@ -26,7 +30,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ServiceName = "KetTunnel"
-$InstallDir = Join-Path $env:ProgramFiles "Ket"
 $DataDir = Join-Path $env:ProgramData "Ket"
 $RuntimeDir = Join-Path $DataDir "runtime"
 $ServiceTarget = Join-Path $InstallDir "ket-tunnel-service.exe"

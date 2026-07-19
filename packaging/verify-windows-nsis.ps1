@@ -28,7 +28,13 @@ if (-not $CurrentPrincipal.IsInRole($AdministratorRole)) {
 
 $InstallerPath = (Resolve-Path -LiteralPath $Installer).Path
 $ServiceName = "KetTunnel"
-$InstallDir = Join-Path $env:ProgramFiles "Ket"
+$NativeProgramFiles = if ([string]::IsNullOrWhiteSpace($env:ProgramW6432)) {
+    $env:ProgramFiles
+}
+else {
+    $env:ProgramW6432
+}
+$InstallDir = Join-Path $NativeProgramFiles "Ket"
 $DataDir = Join-Path $env:ProgramData "Ket"
 $TokenFile = Join-Path $DataDir "tunnel.token"
 $InstallLog = Join-Path $DataDir "install-service.log"

@@ -426,10 +426,16 @@ fn default_bridge_path() -> PathBuf {
 
 #[cfg(target_os = "windows")]
 fn default_windows_install_dir() -> PathBuf {
-    std::env::var_os("PROGRAMFILES")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
-        .join("Ket")
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| {
+            std::env::var_os("ProgramW6432")
+                .or_else(|| std::env::var_os("PROGRAMFILES"))
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
+                .join("Ket")
+        })
 }
 
 #[cfg(target_os = "windows")]
