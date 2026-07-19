@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. The Android client includes ranked startup fallback and session-preserving post-connect recovery on supported 64-bit ABIs. Production signing, Android physical-device packet-flow tests, and installer upgrade tests remain before this is a complete end-user VPN.
+> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. The Android client includes ranked startup fallback and session-preserving post-connect recovery on supported 64-bit ABIs. Production signing, Android physical-device packet-flow tests, and Windows installer upgrade tests remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -119,7 +119,7 @@ Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting
 
 ## Delivery order
 
-1. Sign the implemented Linux/Windows packages and exercise clean-install, upgrade, service-start, and uninstall paths on target machines.
+1. Sign the implemented Linux/Windows packages and exercise their signed artifacts on target machines; the unsigned Linux clean-install, reinstall, service-start, remove, and purge lifecycle is CI-gated.
 2. Exercise both Android data planes, startup fallback, and post-connect recovery on physical API 26 and current devices, then add release signing and network-change/Doze tests.
 3. Evaluate the next maintained transport only after the shipped dual-transport paths pass the release matrix.
 4. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.

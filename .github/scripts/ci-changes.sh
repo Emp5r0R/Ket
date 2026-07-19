@@ -74,6 +74,9 @@ classify() {
     packaging/fetch-tun2proxy.sh | packaging/validate-desktop-assets.sh)
       enable linux_package windows_package
       ;;
+    packaging/verify-linux-deb.sh)
+      enable linux_package
+      ;;
     packaging/linux/*)
       enable linux_package
       ;;

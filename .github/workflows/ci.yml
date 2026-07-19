@@ -139,6 +139,13 @@ jobs:
       - run: ./packaging/validate-desktop-assets.sh linux
       - run: npm exec tauri build -- --bundles deb
         working-directory: apps/ket-desktop
+      - name: Verify clean install, reinstall, removal, and purge
+        run: >-
+          sudo env
+          KET_PACKAGE_TEST_ALLOW_HOST_MUTATION=1
+          KET_PACKAGE_TEST_USER="$USER"
+          ./packaging/verify-linux-deb.sh
+          target/release/bundle/deb/*.deb
       - uses: actions/upload-artifact@v4
         with:
           name: ket-linux-deb

@@ -20,11 +20,13 @@ RUN apt-get update \
       libwebkit2gtk-4.1-dev \
       libxdo-dev \
       patchelf \
+      unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY vendor ./vendor
 COPY apps/ket-desktop ./apps/ket-desktop
 COPY packaging ./packaging
 
@@ -32,6 +34,11 @@ RUN npm --prefix apps/ket-desktop ci
 RUN cargo build --locked --release --package ket-tunnel-service
 RUN packaging/fetch-hysteria.sh "linux-${TARGETARCH}" \
     apps/ket-desktop/src-tauri/binaries/hysteria
+RUN packaging/fetch-xray.sh "linux-${TARGETARCH}" \
+    apps/ket-desktop/src-tauri/binaries/xray
+RUN packaging/fetch-tun2proxy.sh "linux-${TARGETARCH}" \
+    apps/ket-desktop/src-tauri/binaries/tun2proxy
+RUN packaging/validate-desktop-assets.sh linux
 RUN chmod 0644 packaging/linux/ket-tunnel.service \
     && chmod 0755 packaging/linux/postinst packaging/linux/prerm packaging/linux/postrm
 
