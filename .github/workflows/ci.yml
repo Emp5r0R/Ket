@@ -199,6 +199,14 @@ jobs:
         run: ./packaging/validate-desktop-assets.sh windows
       - run: npm exec tauri build -- --bundles nsis --config src-tauri/tauri.nsis.conf.json
         working-directory: apps/ket-desktop
+      - name: Verify install, reinstall, service, and uninstall
+        shell: powershell
+        env:
+          KET_PACKAGE_TEST_ALLOW_HOST_MUTATION: "1"
+        run: |
+          $installer = Get-ChildItem target/release/bundle/nsis/*.exe -File
+          if ($installer.Count -ne 1) { throw "Expected exactly one NSIS installer" }
+          ./packaging/verify-windows-nsis.ps1 -Installer $installer.FullName
       - uses: actions/upload-artifact@v4
         with:
           name: ket-windows-nsis
