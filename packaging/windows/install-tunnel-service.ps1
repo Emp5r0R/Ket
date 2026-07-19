@@ -105,6 +105,10 @@ Invoke-CheckedNative "icacls.exe" @(
     "/grant:r", "SYSTEM:(F)", "BUILTIN\Administrators:(F)", "${DesktopUser}:(RX)"
 )
 Invoke-CheckedNative "icacls.exe" @(
+    $InstallLog, "/inheritance:r",
+    "/grant:r", "SYSTEM:(F)", "BUILTIN\Administrators:(F)", "${DesktopUser}:(R)"
+)
+Invoke-CheckedNative "icacls.exe" @(
     $RuntimeDir, "/inheritance:r",
     "/grant:r", "SYSTEM:(OI)(CI)(F)", "BUILTIN\Administrators:(OI)(CI)(F)"
 )

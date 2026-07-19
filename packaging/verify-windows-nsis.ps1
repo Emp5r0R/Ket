@@ -67,7 +67,12 @@ function Invoke-CheckedProcess {
 function Write-KetInstallLog {
     if (Test-Path -LiteralPath $InstallLog -PathType Leaf) {
         Write-Host "--- Ket service installer log ---"
-        Get-Content -LiteralPath $InstallLog | ForEach-Object { Write-Host $_ }
+        try {
+            Get-Content -LiteralPath $InstallLog | ForEach-Object { Write-Host $_ }
+        }
+        catch {
+            Write-Warning "Ket service installer log could not be read: $($_.Exception.Message)"
+        }
         Write-Host "--- end Ket service installer log ---"
     }
 }
