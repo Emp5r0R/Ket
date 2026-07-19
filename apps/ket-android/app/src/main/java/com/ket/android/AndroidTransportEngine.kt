@@ -15,15 +15,19 @@ internal data class AndroidEngineStarted(
 
 internal interface AndroidTransportEngine : AutoCloseable {
     val displayName: String
-    fun start(): AndroidEngineStarted
+    fun start(cancelled: () -> Boolean = { false }): AndroidEngineStarted
     fun isAlive(): Boolean
+}
+
+internal fun ensureEngineStartActive(cancelled: () -> Boolean) {
+    if (cancelled()) throw InterruptedException("Tunnel start was cancelled")
 }
 
 internal fun verifySocksTunnel(port: Int, target: String) {
     val targetBytes = target.toByteArray(Charsets.US_ASCII)
     require(targetBytes.size <= 255) { "SOCKS target is too long" }
     Socket().use { socket ->
-        socket.soTimeout = 10_000
+        socket.soTimeout = 3_000
         socket.connect(InetSocketAddress("127.0.0.1", port), 2_000)
         val output = socket.getOutputStream()
         val input = socket.getInputStream()

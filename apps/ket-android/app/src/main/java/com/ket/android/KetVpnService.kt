@@ -114,7 +114,7 @@ class KetVpnService : VpnService() {
             }
             val candidate = engineFor(transport) ?: continue
             try {
-                val started = candidate.start()
+                val started = candidate.start(stopping::get)
                 if (stopping.get()) throw IllegalStateException("Tunnel stop was requested")
                 engine = candidate
                 activeTransportId = transport.id

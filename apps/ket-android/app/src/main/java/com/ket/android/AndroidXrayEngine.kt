@@ -21,8 +21,9 @@ internal class AndroidXrayEngine(
 
     override val displayName: String = transport.displayName
 
-    override fun start(): AndroidEngineStarted {
+    override fun start(cancelled: () -> Boolean): AndroidEngineStarted {
         val startedAt = System.nanoTime()
+        ensureEngineStartActive(cancelled)
         val engine = File(service.applicationInfo.nativeLibraryDir, "libxray.so")
         require(engine.isFile && engine.canExecute()) { "Xray is not installed for this device architecture" }
         val resolved = resolveServer(transport.endpoint)
@@ -36,6 +37,7 @@ internal class AndroidXrayEngine(
             throw IllegalStateException("Xray configuration validation timed out")
         }
         require(check.exitValue() == 0) { "Xray rejected the Reality configuration" }
+        ensureEngineStartActive(cancelled)
 
         val child = ProcessBuilder(engine.absolutePath, "run", "-c", configFile!!.absolutePath)
             .redirectErrorStream(true)
@@ -48,6 +50,7 @@ internal class AndroidXrayEngine(
         }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
         while (System.nanoTime() < deadline) {
+            ensureEngineStartActive(cancelled)
             if (!child.isAlive) throw IllegalStateException(diagnostic.get() ?: "Xray exited during startup")
             if (socksReady(socksPort)) {
                 try {
