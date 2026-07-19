@@ -12,6 +12,7 @@ enum class TunnelPhase {
     Disconnected,
     Enrolling,
     Connecting,
+    Reconnecting,
     Connected,
     Stopping,
     Failed,
@@ -28,6 +29,7 @@ data class TunnelSnapshot(
     val capacityPercent: Double = 0.0,
     val handshakeLatencyMs: Long? = null,
     val transportName: String = "Auto",
+    val reconnectAttempt: Int = 0,
 )
 
 internal class TunnelLaunchSpec(
@@ -128,7 +130,12 @@ object KetTunnelController {
             }
         }
         val phase = KetTunnelRuntime.snapshot().phase
-        if (phase == TunnelPhase.Connecting || phase == TunnelPhase.Connected || phase == TunnelPhase.Stopping) {
+        if (
+            phase == TunnelPhase.Connecting ||
+            phase == TunnelPhase.Reconnecting ||
+            phase == TunnelPhase.Connected ||
+            phase == TunnelPhase.Stopping
+        ) {
             KetTunnelRuntime.update { it.copy(phase = TunnelPhase.Stopping, message = "Stopping protected route...") }
             context.applicationContext.startService(
                 Intent(context.applicationContext, KetVpnService::class.java).setAction(KetVpnService.ACTION_STOP),
