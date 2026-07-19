@@ -8,7 +8,11 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
 import android.net.IpPrefix
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -34,7 +38,18 @@ class KetVpnService : VpnService() {
     private val reconnecting = AtomicBoolean()
     private val transportHistory = AndroidTransportHistory()
     private val recoveryPolicy = AndroidRecoveryPolicy()
+    private val underlyingNetworks = UnderlyingNetworkTracker<Network>()
     private val bridge = TProxyService()
+    private lateinit var connectivityManager: ConnectivityManager
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            scheduleNetworkChangeRecovery(underlyingNetworks.onAvailable(network))
+        }
+
+        override fun onLost(network: Network) {
+            scheduleNetworkChangeRecovery(underlyingNetworks.onLost(network))
+        }
+    }
     @Volatile
     private var engine: AndroidTransportEngine? = null
     @Volatile
@@ -45,11 +60,22 @@ class KetVpnService : VpnService() {
     private var launchSpec: TunnelLaunchSpec? = null
     private var healthTask: ScheduledFuture<*>? = null
     private var telemetryTask: ScheduledFuture<*>? = null
+    private var networkChangeTask: ScheduledFuture<*>? = null
+    private var networkCallbackRegistered = false
     private var renewalFailures = 0
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        connectivityManager = getSystemService(ConnectivityManager::class.java)
+        connectivityManager.registerNetworkCallback(
+            NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .build(),
+            networkCallback,
+        )
+        networkCallbackRegistered = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -77,6 +103,11 @@ class KetVpnService : VpnService() {
     override fun onDestroy() {
         healthTask?.cancel(true)
         telemetryTask?.cancel(true)
+        networkChangeTask?.cancel(true)
+        if (networkCallbackRegistered) {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+            networkCallbackRegistered = false
+        }
         cleanupLocal()
         scheduler.shutdownNow()
         worker.shutdownNow()
@@ -171,6 +202,7 @@ class KetVpnService : VpnService() {
 
     private fun publishConnected(spec: TunnelLaunchSpec, selected: SelectedTransport) {
         reconnecting.set(false)
+        underlyingNetworks.markConnected()
         KetTunnelRuntime.update {
             it.copy(
                 phase = TunnelPhase.Connected,
@@ -266,6 +298,21 @@ class KetVpnService : VpnService() {
         }
     }
 
+    @Synchronized
+    private fun scheduleNetworkChangeRecovery(networkSetChanged: Boolean) {
+        if (!networkSetChanged || !underlyingNetworks.isConnected() || scheduler.isShutdown) return
+        networkChangeTask?.cancel(false)
+        networkChangeTask = scheduler.schedule(
+            {
+                if (!stopping.get() && underlyingNetworks.consumeRecoveryRequired()) {
+                    requestRecovery("The underlying network changed")
+                }
+            },
+            NETWORK_CHANGE_DEBOUNCE_MILLIS,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
     private fun scheduleTelemetry(spec: TunnelLaunchSpec) {
         telemetryTask = scheduler.scheduleWithFixedDelay(
             {
@@ -320,6 +367,8 @@ class KetVpnService : VpnService() {
     private fun stopTunnel(failure: String?) {
         healthTask?.cancel(true)
         telemetryTask?.cancel(true)
+        networkChangeTask?.cancel(true)
+        underlyingNetworks.clearConnection()
         reconnecting.set(false)
         cleanupLocal()
         val spec = launchSpec
@@ -447,6 +496,7 @@ class KetVpnService : VpnService() {
         private const val TUN_IPV4 = "198.18.0.1"
         private const val TUN_IPV6 = "fc00::1"
         private const val RECONNECT_RETRY_MILLIS = 3_000L
+        private const val NETWORK_CHANGE_DEBOUNCE_MILLIS = 1_500L
         private const val BRIDGE_SETTLE_MILLIS = 250L
     }
 }
