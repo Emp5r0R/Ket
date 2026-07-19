@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Rust control plane image | `docker build --pull -t ket-control-plane:<tag> .` | Verified on Oracle ARM64 host |
 | Server data planes | Dual Compose overlays | Live-tested VLESS + REALITY over TCP and Salamander-obfuscated Hysteria2 over UDP on Oracle ARM64 |
-| Linux desktop `.deb` | CI job `linux-package` | Bundles pinned Hysteria, Xray, and `tun2proxy` engines |
+| Linux desktop `.deb` | CI job `linux-package` | Bundles pinned engines; clean install, reinstall, remove, and purge are CI-gated |
 | Windows desktop NSIS installer | CI job `windows-package` | Bundles pinned Hysteria, Xray, `tun2proxy`, and Wintun payloads |
 | Android debug APK | `./packaging/build-android.sh` | Multi-ABI Hysteria and 64-bit Xray payloads built and validated; physical dual-transport packet flow pending |
 
@@ -21,6 +21,7 @@ cargo clippy --locked --workspace --exclude ket-desktop --all-targets --all-feat
 cargo test --locked --release -p ket-desktop --lib
 npm --prefix apps/ket-desktop test -- --run
 npm --prefix apps/ket-desktop run build
+sudo env KET_PACKAGE_TEST_ALLOW_HOST_MUTATION=1 KET_PACKAGE_TEST_USER="$USER" ./packaging/verify-linux-deb.sh target/release/bundle/deb/*.deb
 ./packaging/prepare-android-engines.sh apps/ket-android/app
 (cd apps/ket-android && ./gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug)
 ./packaging/validate-android-apk.sh apps/ket-android/app/build/outputs/apk/debug/app-debug.apk
