@@ -42,8 +42,8 @@ internal class AndroidXrayEngine(
             .start()
         process = child
         thread(name = "ket-xray-log", isDaemon = true) {
-            child.inputStream.bufferedReader().useLines { lines ->
-                lines.forEach { line -> classifyDiagnostic(line)?.let { diagnostic.compareAndSet(null, it) } }
+            consumeProcessOutput(child.inputStream) { line ->
+                classifyDiagnostic(line)?.let { diagnostic.compareAndSet(null, it) }
             }
         }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)

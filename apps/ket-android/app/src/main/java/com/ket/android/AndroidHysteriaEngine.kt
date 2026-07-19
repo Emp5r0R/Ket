@@ -48,11 +48,9 @@ internal class AndroidHysteriaEngine(
             .start()
         process = child
         thread(name = "ket-hysteria-log", isDaemon = true) {
-            child.inputStream.bufferedReader().useLines { lines ->
-                lines.forEach { line ->
-                    if (line.contains("connected to server")) connected.set(true)
-                    classifyDiagnostic(line)?.let { diagnostic.compareAndSet(null, it) }
-                }
+            consumeProcessOutput(child.inputStream) { line ->
+                if (line.contains("connected to server")) connected.set(true)
+                classifyDiagnostic(line)?.let { diagnostic.compareAndSet(null, it) }
             }
         }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
