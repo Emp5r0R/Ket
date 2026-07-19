@@ -105,7 +105,7 @@ The Android project is under `apps/ket-android`. It consumes the same control co
 
 For a local Android build, install Android SDK Platform 34 and Build Tools 34, then run `./packaging/build-android.sh`. It auto-detects the SDK used by Abyssal when present; set `KET_ANDROID_SDK` to override it. Gradle installs pinned NDK r27d when needed, while the build downloads and verifies Hysteria 2.10, Xray-core 26.3.27, and hev-socks5-tunnel 2.14.0. Xray publishes official Android payloads for `arm64-v8a` and `x86_64`; 32-bit builds retain Hysteria2. The generated APK is under `apps/ket-android/app/build/outputs/apk/debug/`.
 
-Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting/tests/lints, desktop UI tests/build, Android debug packaging, and the control-plane container build run on every push and pull request.
+Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting/tests/lints, desktop UI tests/build, native packages, Android debug packaging, and the control-plane container build run when their inputs change. Workflow changes and manual runs execute the complete matrix, while documentation-only changes avoid unnecessary builds.
 
 ## Delivery order
 

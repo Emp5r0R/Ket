@@ -9,7 +9,52 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      rust: ${{ steps.classify.outputs.rust }}
+      desktop_ui: ${{ steps.classify.outputs.desktop_ui }}
+      desktop_native: ${{ steps.classify.outputs.desktop_native }}
+      linux_package: ${{ steps.classify.outputs.linux_package }}
+      desktop_windows: ${{ steps.classify.outputs.desktop_windows }}
+      windows_package: ${{ steps.classify.outputs.windows_package }}
+      android: ${{ steps.classify.outputs.android }}
+      container: ${{ steps.classify.outputs.container }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select affected jobs
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            .github/scripts/ci-changes.sh --all >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            base="$BASE_SHA"
+          else
+            base="$BEFORE_SHA"
+          fi
+
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}"; then
+            .github/scripts/ci-changes.sh --all >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git diff --name-only -z "$base" "$HEAD_SHA" \
+            | .github/scripts/ci-changes.sh --null >> "$GITHUB_OUTPUT"
+
   rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +67,8 @@ jobs:
       - run: cargo clippy --locked --workspace --exclude ket-desktop --all-targets --all-features -- -D warnings
 
   desktop-ui:
+    needs: changes
+    if: needs.changes.outputs.desktop_ui == 'true'
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -38,6 +85,8 @@ jobs:
       - run: npm run build
 
   desktop-native:
+    needs: changes
+    if: needs.changes.outputs.desktop_native == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +109,8 @@ jobs:
       - run: cargo check --locked -p ket-desktop
 
   linux-package:
+    needs: changes
+    if: needs.changes.outputs.linux_package == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -94,6 +145,8 @@ jobs:
           if-no-files-found: error
 
   desktop-windows:
+    needs: changes
+    if: needs.changes.outputs.desktop_windows == 'true'
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -110,6 +163,8 @@ jobs:
       - run: cargo check --locked -p ket-desktop
 
   windows-package:
+    needs: changes
+    if: needs.changes.outputs.windows_package == 'true'
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -143,6 +198,8 @@ jobs:
           if-no-files-found: error
 
   android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -153,6 +210,8 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+          cache: gradle
+          cache-dependency-path: apps/ket-android/**/*.gradle*
       - uses: android-actions/setup-android@v3
       - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;27.3.13750724"
       - run: ../../packaging/prepare-android-engines.sh app
@@ -165,6 +224,8 @@ jobs:
           if-no-files-found: error
 
   container:
+    needs: changes
+    if: needs.changes.outputs.container == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
