@@ -5,7 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
@@ -16,6 +19,7 @@ import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.SystemClock
 import android.system.Os
 import androidx.core.app.NotificationCompat
@@ -36,11 +40,13 @@ class KetVpnService : VpnService() {
     private val active = AtomicBoolean()
     private val stopping = AtomicBoolean()
     private val reconnecting = AtomicBoolean()
+    private val leaseRefreshGate = AndroidLeaseRefreshGate()
     private val transportHistory = AndroidTransportHistory()
     private val recoveryPolicy = AndroidRecoveryPolicy()
     private val underlyingNetworks = UnderlyingNetworkTracker<Network>()
     private val bridge = TProxyService()
     private lateinit var connectivityManager: ConnectivityManager
+    private lateinit var powerManager: PowerManager
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             scheduleNetworkChangeRecovery(underlyingNetworks.onAvailable(network))
@@ -48,6 +54,16 @@ class KetVpnService : VpnService() {
 
         override fun onLost(network: Network) {
             scheduleNetworkChangeRecovery(underlyingNetworks.onLost(network))
+        }
+    }
+    private val idleModeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (
+                intent?.action == PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED &&
+                !powerManager.isDeviceIdleMode
+            ) {
+                requestImmediateTelemetryRefresh()
+            }
         }
     }
     @Volatile
@@ -63,12 +79,14 @@ class KetVpnService : VpnService() {
     private var telemetryTask: ScheduledFuture<*>? = null
     private var networkChangeTask: ScheduledFuture<*>? = null
     private var networkCallbackRegistered = false
+    private var idleModeReceiverRegistered = false
     private var renewalFailures = 0
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         connectivityManager = getSystemService(ConnectivityManager::class.java)
+        powerManager = getSystemService(PowerManager::class.java)
         connectivityManager.registerNetworkCallback(
             NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -77,6 +95,13 @@ class KetVpnService : VpnService() {
             networkCallback,
         )
         networkCallbackRegistered = true
+        ContextCompat.registerReceiver(
+            this,
+            idleModeReceiver,
+            IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        idleModeReceiverRegistered = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -97,8 +122,8 @@ class KetVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        // VpnService's default implementation stops immediately; our worker must release the lease first.
         requestStop("Android revoked VPN permission")
-        super.onRevoke()
     }
 
     override fun onDestroy() {
@@ -108,6 +133,10 @@ class KetVpnService : VpnService() {
         if (networkCallbackRegistered) {
             connectivityManager.unregisterNetworkCallback(networkCallback)
             networkCallbackRegistered = false
+        }
+        if (idleModeReceiverRegistered) {
+            unregisterReceiver(idleModeReceiver)
+            idleModeReceiverRegistered = false
         }
         cleanupLocal()
         scheduler.shutdownNow()
@@ -327,48 +356,68 @@ class KetVpnService : VpnService() {
 
     private fun scheduleTelemetry(spec: TunnelLaunchSpec) {
         telemetryTask = scheduler.scheduleWithFixedDelay(
-            {
-                if (stopping.get()) return@scheduleWithFixedDelay
-                try {
-                    KetControlApi.renew(spec.controlEndpoint, spec.sessionToken)
-                    renewalFailures = 0
-                } catch (_: Exception) {
-                    renewalFailures += 1
-                    when (recoveryPolicy.leaseFailureAction(renewalFailures)) {
-                        AndroidLeaseFailureAction.Wait -> Unit
-                        AndroidLeaseFailureAction.Recover -> requestRecovery(
-                            "The protected route stopped reaching the server",
-                        )
-                        AndroidLeaseFailureAction.Stop -> requestStop(
-                            "The server session could not be renewed after transport recovery",
-                        )
-                    }
-                    return@scheduleWithFixedDelay
-                }
-                val remote = runCatching {
-                    KetControlApi.status(spec.controlEndpoint, spec.sessionToken)
-                }.getOrNull()
-                val local = if (reconnecting.get()) {
-                    null
-                } else {
-                    runCatching { bridge.stats() }.getOrNull()
-                }
-                if (remote != null || local != null) {
-                    KetTunnelRuntime.update {
-                        it.copy(
-                            node = remote?.node ?: it.node,
-                            sentBytes = local?.getOrNull(1) ?: remote?.sent ?: it.sentBytes,
-                            receivedBytes = local?.getOrNull(3) ?: remote?.received ?: it.receivedBytes,
-                            onlineConnections = remote?.online ?: it.onlineConnections,
-                            capacityPercent = remote?.capacity ?: it.capacityPercent,
-                        )
-                    }
-                }
-            },
+            { refreshTelemetry(spec) },
             1,
             10,
             TimeUnit.SECONDS,
         )
+    }
+
+    private fun requestImmediateTelemetryRefresh() {
+        val spec = launchSpec ?: return
+        if (stopping.get() || scheduler.isShutdown) return
+        runCatching { scheduler.execute { refreshTelemetry(spec) } }
+    }
+
+    private fun refreshTelemetry(spec: TunnelLaunchSpec) {
+        if (!leaseRefreshGate.tryStart(stopping.get(), powerManager.isDeviceIdleMode)) return
+        try {
+            try {
+                KetControlApi.renew(spec.controlEndpoint, spec.sessionToken)
+                renewalFailures = 0
+            } catch (error: Exception) {
+                val authorizationLost = (error as? KetControlException)?.authorizationLost == true
+                if (!authorizationLost && powerManager.isDeviceIdleMode) return
+                renewalFailures += 1
+                when (recoveryPolicy.leaseFailureAction(renewalFailures, authorizationLost)) {
+                    AndroidLeaseFailureAction.Wait -> Unit
+                    AndroidLeaseFailureAction.Recover -> requestRecovery(
+                        "The protected route stopped reaching the server",
+                    )
+                    AndroidLeaseFailureAction.Stop -> requestStop(
+                        if (authorizationLost) {
+                            "The server session is no longer authorized"
+                        } else {
+                            "The server session could not be renewed after transport recovery"
+                        },
+                    )
+                }
+                return
+            }
+            if (stopping.get()) return
+            val remote = runCatching {
+                KetControlApi.status(spec.controlEndpoint, spec.sessionToken)
+            }.getOrNull()
+            val local = if (reconnecting.get()) {
+                null
+            } else {
+                runCatching { bridge.stats() }.getOrNull()
+            }
+            if (stopping.get()) return
+            if (remote != null || local != null) {
+                KetTunnelRuntime.update {
+                    it.copy(
+                        node = remote?.node ?: it.node,
+                        sentBytes = local?.getOrNull(1) ?: remote?.sent ?: it.sentBytes,
+                        receivedBytes = local?.getOrNull(3) ?: remote?.received ?: it.receivedBytes,
+                        onlineConnections = remote?.online ?: it.onlineConnections,
+                        capacityPercent = remote?.capacity ?: it.capacityPercent,
+                    )
+                }
+            }
+        } finally {
+            leaseRefreshGate.finish()
+        }
     }
 
     private fun requestStop(failure: String?) {

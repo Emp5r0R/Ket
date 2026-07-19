@@ -66,6 +66,16 @@ class AndroidTransportHistoryTest {
         assertEquals(AndroidLeaseFailureAction.Stop, policy.leaseFailureAction(8))
     }
 
+    @Test
+    fun `authorization loss stops without futile transport recovery`() {
+        val policy = AndroidRecoveryPolicy()
+
+        assertEquals(
+            AndroidLeaseFailureAction.Stop,
+            policy.leaseFailureAction(consecutiveFailures = 1, authorizationLost = true),
+        )
+    }
+
     private data class TestTransport(
         override val id: String,
         override val priority: Int,

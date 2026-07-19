@@ -83,7 +83,11 @@ internal class AndroidRecoveryPolicy(
         }
     }
 
-    fun leaseFailureAction(consecutiveFailures: Int): AndroidLeaseFailureAction = when {
+    fun leaseFailureAction(
+        consecutiveFailures: Int,
+        authorizationLost: Boolean = false,
+    ): AndroidLeaseFailureAction = when {
+        authorizationLost -> AndroidLeaseFailureAction.Stop
         consecutiveFailures >= stopAfterFailures -> AndroidLeaseFailureAction.Stop
         consecutiveFailures == recoverAfterFailures -> AndroidLeaseFailureAction.Recover
         else -> AndroidLeaseFailureAction.Wait
