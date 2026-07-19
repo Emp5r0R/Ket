@@ -12,6 +12,7 @@ import android.net.IpPrefix
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.system.Os
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -30,10 +31,17 @@ class KetVpnService : VpnService() {
     private val scheduler = Executors.newScheduledThreadPool(2)
     private val active = AtomicBoolean()
     private val stopping = AtomicBoolean()
+    private val reconnecting = AtomicBoolean()
+    private val transportHistory = AndroidTransportHistory()
+    private val recoveryPolicy = AndroidRecoveryPolicy()
     private val bridge = TProxyService()
+    @Volatile
     private var engine: AndroidTransportEngine? = null
+    @Volatile
+    private var activeTransportId: String? = null
     private var tun: ParcelFileDescriptor? = null
     private var bridgeConfig: File? = null
+    @Volatile
     private var launchSpec: TunnelLaunchSpec? = null
     private var healthTask: ScheduledFuture<*>? = null
     private var telemetryTask: ScheduledFuture<*>? = null
@@ -77,61 +85,9 @@ class KetVpnService : VpnService() {
 
     private fun startTunnel(spec: TunnelLaunchSpec) {
         try {
-            var startedEngine: AndroidTransportEngine? = null
-            var started: AndroidEngineStarted? = null
-            val failures = mutableListOf<String>()
-            for (transport in spec.transports) {
-                val candidate = when (transport) {
-                    is HysteriaTransport -> AndroidHysteriaEngine(this, transport)
-                    is RealityTransport -> AndroidXrayEngine(this, transport)
-                    else -> continue
-                }
-                try {
-                    started = candidate.start()
-                    startedEngine = candidate
-                    break
-                } catch (error: Exception) {
-                    candidate.close()
-                    failures += "${transport.displayName}: ${error.message ?: "startup failed"}"
-                }
-            }
-            val selectedEngine = startedEngine
-                ?: throw IllegalStateException(failures.joinToString("; ").ifBlank { "No supported transport could start" })
-            val selected = requireNotNull(started)
-            engine = selectedEngine
+            val selected = startLocalRoute(spec, reconnectAttempt = 0)
             if (stopping.get()) return
-
-            val builder = Builder()
-                .setSession("Ket - ${spec.node}")
-                .setMtu(TUN_MTU)
-                .setBlocking(false)
-                .addAddress(TUN_IPV4, 32)
-                .addAddress(TUN_IPV6, 128)
-                .addDnsServer("1.1.1.1")
-                .addDnsServer("2606:4700:4700::1111")
-                .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setMetered(false) }
-            addVpnRoutes(builder, selected.bypassAddress)
-            val established = builder.establish()
-                ?: throw IllegalStateException("Android could not establish the VPN interface")
-            tun = established
-            bridgeConfig = writeBridgeConfig(EngineConfig.tunToSocks(selected.socksPort))
-            bridge.start(bridgeConfig!!.absolutePath, established.fd)
-            Thread.sleep(250)
-            if (!selectedEngine.isAlive()) {
-                throw IllegalStateException("${selectedEngine.displayName} stopped while attaching the VPN interface")
-            }
-
-            KetTunnelRuntime.publish(
-                TunnelSnapshot(
-                    phase = TunnelPhase.Connected,
-                    node = spec.node,
-                    country = spec.country,
-                    message = "Protected with ${selectedEngine.displayName}",
-                    handshakeLatencyMs = selected.handshakeLatencyMs,
-                    transportName = selectedEngine.displayName,
-                ),
-            )
-            updateForegroundNotification("Protected with ${selectedEngine.displayName}")
+            publishConnected(spec, selected)
             scheduleHealthChecks()
             scheduleTelemetry(spec)
         } catch (error: Exception) {
@@ -139,11 +95,102 @@ class KetVpnService : VpnService() {
         }
     }
 
+    private fun startLocalRoute(spec: TunnelLaunchSpec, reconnectAttempt: Int): SelectedTransport {
+        val failures = mutableListOf<String>()
+        val candidates = transportHistory.rank(spec.transports, SystemClock.elapsedRealtime())
+        for (transport in candidates) {
+            if (stopping.get()) throw IllegalStateException("Tunnel stop was requested")
+            KetTunnelRuntime.update {
+                it.copy(
+                    phase = if (reconnectAttempt > 0) TunnelPhase.Reconnecting else TunnelPhase.Connecting,
+                    message = if (reconnectAttempt > 0) {
+                        "Trying ${transport.displayName} recovery..."
+                    } else {
+                        "Starting ${transport.displayName}..."
+                    },
+                    transportName = transport.displayName,
+                    reconnectAttempt = reconnectAttempt,
+                )
+            }
+            val candidate = engineFor(transport) ?: continue
+            try {
+                val started = candidate.start()
+                if (stopping.get()) throw IllegalStateException("Tunnel stop was requested")
+                engine = candidate
+                activeTransportId = transport.id
+                establishVpnRoute(spec, candidate, started)
+                transportHistory.recordSuccess(transport.id, started.handshakeLatencyMs)
+                return SelectedTransport(candidate, started)
+            } catch (error: Exception) {
+                if (engine === candidate) {
+                    cleanupLocal()
+                } else {
+                    runCatching { candidate.close() }
+                }
+                if (stopping.get()) throw IllegalStateException("Tunnel stop was requested")
+                transportHistory.recordFailure(transport.id, SystemClock.elapsedRealtime())
+                failures += "${transport.displayName}: ${error.message ?: "startup failed"}"
+            }
+        }
+        throw IllegalStateException(
+            failures.joinToString("; ").ifBlank { "No supported transport could start" },
+        )
+    }
+
+    private fun engineFor(transport: AndroidTransport): AndroidTransportEngine? = when (transport) {
+        is HysteriaTransport -> AndroidHysteriaEngine(this, transport)
+        is RealityTransport -> AndroidXrayEngine(this, transport)
+        else -> null
+    }
+
+    private fun establishVpnRoute(
+        spec: TunnelLaunchSpec,
+        selectedEngine: AndroidTransportEngine,
+        selected: AndroidEngineStarted,
+    ) {
+        val builder = Builder()
+            .setSession("Ket - ${spec.node}")
+            .setMtu(TUN_MTU)
+            .setBlocking(false)
+            .addAddress(TUN_IPV4, 32)
+            .addAddress(TUN_IPV6, 128)
+            .addDnsServer("1.1.1.1")
+            .addDnsServer("2606:4700:4700::1111")
+            .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setMetered(false) }
+        addVpnRoutes(builder, selected.bypassAddress)
+        val established = builder.establish()
+            ?: throw IllegalStateException("Android could not establish the VPN interface")
+        tun = established
+        bridgeConfig = writeBridgeConfig(EngineConfig.tunToSocks(selected.socksPort))
+        bridge.start(bridgeConfig!!.absolutePath, established.fd)
+        Thread.sleep(BRIDGE_SETTLE_MILLIS)
+        if (!selectedEngine.isAlive()) {
+            throw IllegalStateException("${selectedEngine.displayName} stopped while attaching the VPN interface")
+        }
+    }
+
+    private fun publishConnected(spec: TunnelLaunchSpec, selected: SelectedTransport) {
+        reconnecting.set(false)
+        KetTunnelRuntime.update {
+            it.copy(
+                phase = TunnelPhase.Connected,
+                node = spec.node,
+                country = spec.country,
+                message = "Protected with ${selected.engine.displayName}",
+                handshakeLatencyMs = selected.started.handshakeLatencyMs,
+                transportName = selected.engine.displayName,
+                reconnectAttempt = 0,
+            )
+        }
+        updateForegroundNotification("Protected with ${selected.engine.displayName}")
+    }
+
     private fun scheduleHealthChecks() {
         healthTask = scheduler.scheduleWithFixedDelay(
             {
-                if (!stopping.get() && engine?.isAlive() != true) {
-                    requestStop("${engine?.displayName ?: "Transport"} stopped unexpectedly")
+                val currentEngine = engine
+                if (!stopping.get() && currentEngine != null && !currentEngine.isAlive()) {
+                    requestRecovery("${currentEngine.displayName} stopped unexpectedly")
                 }
             },
             2,
@@ -152,28 +199,110 @@ class KetVpnService : VpnService() {
         )
     }
 
+    private fun recoverTunnel(
+        spec: TunnelLaunchSpec,
+        failedTransportId: String?,
+        failureReason: String,
+    ) {
+        if (failedTransportId != null) {
+            transportHistory.recordFailure(failedTransportId, SystemClock.elapsedRealtime())
+        }
+        cleanupLocal()
+        var lastFailure = failureReason
+        for (attempt in 1..recoveryPolicy.maximumReconnectRounds) {
+            if (stopping.get()) {
+                reconnecting.set(false)
+                return
+            }
+            KetTunnelRuntime.update {
+                it.copy(
+                    phase = TunnelPhase.Reconnecting,
+                    message = "Restoring protected route...",
+                    reconnectAttempt = attempt,
+                )
+            }
+            updateForegroundNotification("Restoring protected route")
+            try {
+                val selected = startLocalRoute(spec, reconnectAttempt = attempt)
+                if (stopping.get()) {
+                    cleanupLocal()
+                    reconnecting.set(false)
+                    return
+                }
+                publishConnected(spec, selected)
+                return
+            } catch (error: Exception) {
+                lastFailure = error.message ?: "Transport recovery failed"
+            }
+            if (attempt < recoveryPolicy.maximumReconnectRounds) {
+                try {
+                    Thread.sleep(RECONNECT_RETRY_MILLIS * attempt)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            }
+        }
+        requestStop("Unable to restore the protected route: $lastFailure")
+        reconnecting.set(false)
+    }
+
+    private fun requestRecovery(failureReason: String) {
+        if (stopping.get() || !reconnecting.compareAndSet(false, true)) return
+        val currentEngine = engine
+        val spec = launchSpec
+        if (currentEngine == null || spec == null) {
+            reconnecting.set(false)
+            requestStop(failureReason)
+            return
+        }
+        val failedTransportId = activeTransportId
+        worker.execute {
+            recoverTunnel(
+                spec = spec,
+                failedTransportId = failedTransportId,
+                failureReason = failureReason,
+            )
+        }
+    }
+
     private fun scheduleTelemetry(spec: TunnelLaunchSpec) {
         telemetryTask = scheduler.scheduleWithFixedDelay(
             {
                 if (stopping.get()) return@scheduleWithFixedDelay
                 try {
                     KetControlApi.renew(spec.controlEndpoint, spec.sessionToken)
-                    val remote = KetControlApi.status(spec.controlEndpoint, spec.sessionToken)
-                    val local = bridge.stats()
                     renewalFailures = 0
-                    KetTunnelRuntime.update {
-                        it.copy(
-                            node = remote.node,
-                            sentBytes = local.getOrElse(1) { remote.sent },
-                            receivedBytes = local.getOrElse(3) { remote.received },
-                            onlineConnections = remote.online,
-                            capacityPercent = remote.capacity,
-                        )
-                    }
                 } catch (_: Exception) {
                     renewalFailures += 1
-                    if (renewalFailures >= MAX_RENEWAL_FAILURES) {
-                        requestStop("The server session could not be renewed")
+                    when (recoveryPolicy.leaseFailureAction(renewalFailures)) {
+                        AndroidLeaseFailureAction.Wait -> Unit
+                        AndroidLeaseFailureAction.Recover -> requestRecovery(
+                            "The protected route stopped reaching the server",
+                        )
+                        AndroidLeaseFailureAction.Stop -> requestStop(
+                            "The server session could not be renewed after transport recovery",
+                        )
+                    }
+                    return@scheduleWithFixedDelay
+                }
+                val remote = runCatching {
+                    KetControlApi.status(spec.controlEndpoint, spec.sessionToken)
+                }.getOrNull()
+                val local = if (reconnecting.get()) {
+                    null
+                } else {
+                    runCatching { bridge.stats() }.getOrNull()
+                }
+                if (remote != null || local != null) {
+                    KetTunnelRuntime.update {
+                        it.copy(
+                            node = remote?.node ?: it.node,
+                            sentBytes = local?.getOrNull(1) ?: remote?.sent ?: it.sentBytes,
+                            receivedBytes = local?.getOrNull(3) ?: remote?.received ?: it.receivedBytes,
+                            onlineConnections = remote?.online ?: it.onlineConnections,
+                            capacityPercent = remote?.capacity ?: it.capacityPercent,
+                        )
                     }
                 }
             },
@@ -191,6 +320,7 @@ class KetVpnService : VpnService() {
     private fun stopTunnel(failure: String?) {
         healthTask?.cancel(true)
         telemetryTask?.cancel(true)
+        reconnecting.set(false)
         cleanupLocal()
         val spec = launchSpec
         launchSpec = null
@@ -218,6 +348,7 @@ class KetVpnService : VpnService() {
         tun = null
         runCatching { engine?.close() }
         engine = null
+        activeTransportId = null
         bridgeConfig?.delete()
         bridgeConfig = null
     }
@@ -315,9 +446,15 @@ class KetVpnService : VpnService() {
         private const val TUN_MTU = 1400
         private const val TUN_IPV4 = "198.18.0.1"
         private const val TUN_IPV6 = "fc00::1"
-        private const val MAX_RENEWAL_FAILURES = 3
+        private const val RECONNECT_RETRY_MILLIS = 3_000L
+        private const val BRIDGE_SETTLE_MILLIS = 250L
     }
 }
+
+private data class SelectedTransport(
+    val engine: AndroidTransportEngine,
+    val started: AndroidEngineStarted,
+)
 
 internal data class RoutePrefix(val address: InetAddress, val prefixLength: Int)
 

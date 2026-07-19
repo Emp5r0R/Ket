@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. The Android client includes automatic REALITY-to-Hysteria fallback on supported 64-bit ABIs. Production signing, Android physical-device packet-flow tests, and installer upgrade tests remain before this is a complete end-user VPN.
+> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. The Android client includes ranked startup fallback and session-preserving post-connect recovery on supported 64-bit ABIs. Production signing, Android physical-device packet-flow tests, and installer upgrade tests remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -21,7 +21,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Lease-scoped Hysteria2 credentials, HTTP authentication, traffic counters, online state, and connection kicks.
 - Generated Hysteria2 2.10 server configuration with TLS, HTTP/3 masquerading, optional Salamander/Gecko obfuscation, and abuse-resistant ACLs.
 - Generated Xray-core 26.3.27 VLESS + REALITY configuration with Vision, deterministic lease-scoped UUIDs, dynamic user reconciliation/revocation, traffic statistics, and abuse-resistant routing rules.
-- Android Compose client with HTTPS enrollment, ranked VLESS + REALITY/Hysteria2 fallback, foreground `VpnService` ownership, protected Hysteria QUIC sockets, server-route exclusion for Xray, maintained hev TUN-to-SOCKS forwarding, lease renewal, local traffic metrics, and fail-closed engine supervision.
+- Android Compose client with HTTPS enrollment, ranked VLESS + REALITY/Hysteria2 startup fallback, bounded post-connect recovery, foreground `VpnService` ownership, protected Hysteria QUIC sockets, server-route exclusion for Xray, maintained hev TUN-to-SOCKS forwarding, independent lease renewal, local traffic metrics, and fail-closed engine supervision.
 - Typed discovery for Hysteria2, IKEv2, OpenVPN/stunnel, Shadowsocks 2022, VLESS XTLS Reality, WireGuard, stealth, and XOR-wrapped adapters.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
 - Atomic persistent state and graceful shutdown.
@@ -110,7 +110,7 @@ Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting
 ## Delivery order
 
 1. Sign the implemented Linux/Windows packages and exercise clean-install, upgrade, service-start, and uninstall paths on target machines.
-2. Exercise both Android data planes and automatic fallback on physical API 26 and current devices, then add release signing and network-change/Doze tests.
+2. Exercise both Android data planes, startup fallback, and post-connect recovery on physical API 26 and current devices, then add release signing and network-change/Doze tests.
 3. Evaluate the next maintained transport only after the shipped dual-transport paths pass the release matrix.
 4. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.
 

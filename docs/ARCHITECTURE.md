@@ -17,7 +17,7 @@ This separation keeps the API and user experience consistent while allowing a no
 | Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Hysteria2 and VLESS + REALITY implemented |
 | Desktop privilege broker | Authenticated TUN/route ownership and engine supervision | Rust system service | Implemented for Linux/Windows |
 | Linux/Windows desktop | Map-first connection UI and native packaging | Tauri 2 plus shared Rust core | UI and service installers implemented; signed bundles pending |
-| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Hysteria2, Xray, hev-socks5-tunnel | Ranked REALITY/Hysteria fallback implemented; physical packet-flow verification pending |
+| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Hysteria2, Xray, hev-socks5-tunnel | Ranked startup fallback and bounded post-connect recovery implemented; physical packet-flow verification pending |
 
 ## Control flow
 
@@ -28,7 +28,7 @@ This separation keeps the API and user experience consistent while allowing a no
 5. Hysteria2 submits its scoped credential to Ket's HTTP authentication backend. VLESS + REALITY instead receives a deterministic lease-scoped UUID that Ket installs through Xray's private Handler API before returning the manifest.
 6. Clients renew the lease while connected and release it on disconnect. Release, grant revocation, and the expiry reaper reject future authentication and remove or kick the session in every configured data plane. Ket reconciles persisted active leases with Xray at startup.
 7. On desktop, the unprivileged Tauri process sends validated transport requests to a loopback-only system service. The service authenticates each connection before it owns Hysteria TUN mode or the Xray/`tun2proxy` process pair and their routes.
-8. On Android, `VpnService` attempts ranked transports. It either protects Hysteria's QUIC descriptor or excludes Xray's resolved server route, then attaches hev-socks5-tunnel to the Android-owned TUN only after a SOCKS path check succeeds.
+8. On Android, `VpnService` attempts ranked transports. It either protects Hysteria's QUIC descriptor or excludes Xray's resolved server route, then attaches hev-socks5-tunnel to the Android-owned TUN only after a SOCKS path check succeeds. If an established engine exits or repeated HTTPS renewal proves the routed path unhealthy, Android retains the lease while it rebuilds the TUN against ranked alternatives with bounded cooldown and retries.
 
 ## Security invariants
 
@@ -56,8 +56,10 @@ This separation keeps the API and user experience consistent while allowing a no
 
 Clients use a policy engine rather than a hard-coded default. The implemented selector ranks configured transports using operator priority, explicit user preference, recent latency, consecutive failures, and bounded exponential cooldown. Automatic fallback has bounded attempts and never silently downgrades certificate or server-key verification. Packet-loss sampling will be added with the desktop diagnostics surface.
 
+`Shadowsocks2022` remains a discovery identifier rather than an executable adapter. The pinned Xray 26.3.27 engine warns that its Shadowsocks implementation is deprecated and may be removed, so Ket will not bind a new production transport to that lifecycle. A future implementation must use a maintained engine while preserving lease-scoped credentials, live revocation, per-session accounting, and Android/Desktop parity.
+
 `XorScrambled` is represented only as an obfuscation layer. It is not encryption and must wrap an authenticated encrypted transport. Hysteria2 can retain HTTP/3 masquerading or enable Salamander/Gecko packet obfuscation; the client must receive the exact configured mode and password. CDN or reverse-proxy compatibility is transport-specific and cannot be assumed for UDP.
 
 ## Client parity
 
-Desktop and Android consume the same versioned control contract. The Rust desktop core implements probing, bounded fallback, reconnecting, and the full lifecycle snapshot. Android implements disconnected, enrolling, connecting, connected, stopping, and failed states with ranked multi-transport startup fallback, node, capacity, handshake latency, selected protocol, and local traffic metrics. Android runtime reconnect after an already-connected engine fails remains pending.
+Desktop and Android consume the same versioned control contract. The Rust desktop core implements probing, bounded fallback, reconnecting, and the full lifecycle snapshot. Android implements disconnected, enrolling, connecting, reconnecting, connected, stopping, and failed states with ranked multi-transport startup fallback, bounded post-connect recovery, node, capacity, handshake latency, selected protocol, and local traffic metrics.

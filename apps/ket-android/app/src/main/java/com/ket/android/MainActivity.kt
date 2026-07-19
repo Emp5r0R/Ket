@@ -145,7 +145,12 @@ private fun KetApp(
     var serverUrl by rememberSaveable { mutableStateOf("") }
     var accessCode by rememberSaveable { mutableStateOf("") }
     val connected = snapshot.phase == TunnelPhase.Connected
-    val busy = snapshot.phase in setOf(TunnelPhase.Enrolling, TunnelPhase.Connecting, TunnelPhase.Stopping)
+    val busy = snapshot.phase in setOf(
+        TunnelPhase.Enrolling,
+        TunnelPhase.Connecting,
+        TunnelPhase.Reconnecting,
+        TunnelPhase.Stopping,
+    )
     val hasNode = snapshot.node != "No server selected"
     Column(
         Modifier.fillMaxSize().background(Ink).padding(24.dp),
@@ -156,6 +161,7 @@ private fun KetApp(
             when (snapshot.phase) {
                 TunnelPhase.Connected -> "Protected route"
                 TunnelPhase.Enrolling, TunnelPhase.Connecting -> "Securing route"
+                TunnelPhase.Reconnecting -> "Restoring route"
                 TunnelPhase.Stopping -> "Closing route"
                 else -> "Choose your node"
             },
