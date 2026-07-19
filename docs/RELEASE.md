@@ -9,6 +9,7 @@
 | Linux desktop `.deb` | CI job `linux-package` | Bundles pinned engines; clean install, reinstall, remove, and purge are CI-gated |
 | Windows desktop NSIS installer | CI job `windows-package` | Bundles pinned engines and Wintun; install, reinstall, service, and uninstall are CI-gated |
 | Android debug APK | `./packaging/build-android.sh` | Multi-ABI Hysteria and 64-bit Xray payloads validated; dual-transport packet flow, fallback, recovery, cancellation, and disconnect verified on current arm64 hardware |
+| Android release APK | `./packaging/build-android.sh release` | Fail-closed signing and signer pinning are CI-gated with a disposable identity; owner-signed installation remains pending |
 
 ## Required checks
 
@@ -40,6 +41,8 @@ For a production server, source `.env`, run `./packaging/validate-env.sh`, and v
 ## Signing
 
 The Android debug artifact is only for testing. Production Android, Linux, and Windows artifacts must be signed by the release owner and their checksums published alongside the files. Ket does not store signing keys in this repository.
+
+Android release tasks require `KET_ANDROID_KEYSTORE`, `KET_ANDROID_KEYSTORE_PASSWORD`, `KET_ANDROID_KEY_ALIAS`, and `KET_ANDROID_KEY_PASSWORD`. `packaging/build-android.sh release` additionally requires `KET_ANDROID_CERT_SHA256` and refuses an APK whose signer differs from that pinned certificate. Set `KET_ANDROID_VERSION_CODE` and `KET_ANDROID_VERSION_NAME` for each release; they default to the development values `1` and `0.1.0` only when omitted. The CI Android job builds the release variant with an ephemeral key and validates its fingerprint, then deliberately uploads only the debug APK.
 
 The maintained server and client data planes are Hysteria2 and Xray-core VLESS + REALITY. Desktop REALITY has a full-route Docker integration test. Android Hysteria2 and REALITY packet flow, startup fallback, engine-exit recovery, cancellation, and disconnect have been verified on a physical current arm64 device; API 26, network-change, Doze/revoke, and signed-release testing remain. Other protocol identifiers remain contract-level extension points.
 

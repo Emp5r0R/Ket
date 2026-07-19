@@ -231,8 +231,38 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;27.3.13750724"
       - run: ../../packaging/prepare-android-engines.sh app
-      - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug
-      - run: ../../packaging/validate-android-apk.sh app/build/outputs/apk/debug/app-debug.apk
+      - name: Generate disposable release-signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/ket-ci-release.p12"
+          password="ket-ci-release-password"
+          alias="ket-ci"
+          keytool -genkeypair -noprompt \
+            -keystore "$keystore" \
+            -storetype PKCS12 \
+            -storepass "$password" \
+            -keypass "$password" \
+            -alias "$alias" \
+            -keyalg RSA \
+            -keysize 3072 \
+            -validity 2 \
+            -dname "CN=Ket CI Ephemeral, O=Ket, C=XX"
+          cert_sha256=$(keytool -list -v \
+            -keystore "$keystore" \
+            -storepass "$password" \
+            -alias "$alias" | awk '/SHA256:/{gsub(":", "", $2); print $2; exit}')
+          test "${#cert_sha256}" -eq 64
+          {
+            echo "KET_ANDROID_KEYSTORE=$keystore"
+            echo "KET_ANDROID_KEYSTORE_PASSWORD=$password"
+            echo "KET_ANDROID_KEY_ALIAS=$alias"
+            echo "KET_ANDROID_KEY_PASSWORD=$password"
+            echo "KET_ANDROID_CERT_SHA256=$cert_sha256"
+          } >> "$GITHUB_ENV"
+      - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug assembleRelease
+      - run: APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner" ../../packaging/validate-android-apk.sh app/build/outputs/apk/debug/app-debug.apk
+      - run: APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner" ../../packaging/validate-android-apk.sh --expected-cert-sha256 "$KET_ANDROID_CERT_SHA256" app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: ket-android-debug

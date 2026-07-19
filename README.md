@@ -22,6 +22,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Generated Hysteria2 2.10 server configuration with TLS, HTTP/3 masquerading, optional Salamander/Gecko obfuscation, and abuse-resistant ACLs.
 - Generated Xray-core 26.3.27 VLESS + REALITY configuration with Vision, deterministic lease-scoped UUIDs, dynamic user reconciliation/revocation, traffic statistics, and abuse-resistant routing rules.
 - Android Compose client with HTTPS enrollment, ranked VLESS + REALITY/Hysteria2 startup fallback, bounded post-connect recovery, foreground `VpnService` ownership, protected Hysteria QUIC sockets, server-route exclusion for Xray, maintained hev TUN-to-SOCKS forwarding, independent lease renewal, local traffic metrics, and fail-closed engine supervision.
+- Fail-closed Android release signing with operator-supplied version metadata and signer-certificate pinning; CI exercises the complete release path with a disposable identity that is never published as a trusted release.
 - Typed discovery for Hysteria2, IKEv2, OpenVPN/stunnel, Shadowsocks 2022, VLESS XTLS Reality, WireGuard, stealth, and XOR-wrapped adapters.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
 - Atomic persistent state and graceful shutdown.
@@ -113,7 +114,7 @@ GRADLE_USER_HOME=/media/n_emperor/Aadhish/gradle-home ./gradlew build
 
 The Android project is under `apps/ket-android`. It consumes the same control contract as desktop and carries TCP/UDP packets through a local Hysteria2 or Xray SOCKS endpoint and the maintained hev TUN bridge. Android uses a platform-specific lifecycle adapter instead of embedding desktop route-management code.
 
-For a local Android build, install Android SDK Platform 34 and Build Tools 34, then run `./packaging/build-android.sh`. It auto-detects the SDK used by Abyssal when present; set `KET_ANDROID_SDK` to override it. Gradle installs pinned NDK r27d when needed, while the build downloads and verifies Hysteria 2.10, Xray-core 26.3.27, and hev-socks5-tunnel 2.14.0. Xray publishes official Android payloads for `arm64-v8a` and `x86_64`; 32-bit builds retain Hysteria2. The generated APK is under `apps/ket-android/app/build/outputs/apk/debug/`.
+For a local Android build, install Android SDK Platform 34 and Build Tools 34, then run `./packaging/build-android.sh debug`. It auto-detects the SDK used by Abyssal when present; set `KET_ANDROID_SDK` to override it. Gradle installs pinned NDK r27d when needed, while the build downloads and verifies Hysteria 2.10, Xray-core 26.3.27, and hev-socks5-tunnel 2.14.0. Xray publishes official Android payloads for `arm64-v8a` and `x86_64`; 32-bit builds retain Hysteria2. The generated APK is under `apps/ket-android/app/build/outputs/apk/debug/`. The signer-pinned release procedure is in [the release checklist](docs/RELEASE.md).
 
 Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting/tests/lints, desktop UI tests/build, native packages, Android debug packaging, and the control-plane container build run when their inputs change. Workflow changes and manual runs execute the complete matrix, while documentation-only changes avoid unnecessary builds.
 
