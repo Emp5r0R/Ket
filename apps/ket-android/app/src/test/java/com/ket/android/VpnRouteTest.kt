@@ -17,6 +17,26 @@ class VpnRouteTest {
         assertComplement("2001:db8::9", listOf("::", "2001:db8::8", "2001:db8::a", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"), 128)
     }
 
+    @Test
+    fun `multiple endpoints stay outside the guarded route`() {
+        val excluded = listOf("203.0.113.8", "203.0.113.10").map(InetAddress::getByName)
+        val routes = routesExcluding(excluded)
+
+        excluded.forEach { address -> assertFalse(routes.any { it.contains(address) }) }
+        listOf("0.0.0.0", "203.0.113.7", "203.0.113.9", "203.0.113.11", "255.255.255.255")
+            .map(InetAddress::getByName)
+            .forEach { sample -> assertTrue("$sample was not routed", routes.any { it.contains(sample) }) }
+    }
+
+    @Test
+    fun `adjacent endpoint exclusions collapse their common prefix`() {
+        val routes = routesExcluding(
+            listOf("203.0.113.8", "203.0.113.9").map(InetAddress::getByName),
+        )
+
+        assertEquals(31, routes.size)
+    }
+
     private fun assertComplement(server: String, samples: List<String>, expectedPrefixes: Int) {
         val excluded = InetAddress.getByName(server)
         val routes = routesExcluding(excluded)

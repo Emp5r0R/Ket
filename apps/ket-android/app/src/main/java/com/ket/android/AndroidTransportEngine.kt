@@ -23,6 +23,12 @@ internal fun ensureEngineStartActive(cancelled: () -> Boolean) {
     if (cancelled()) throw InterruptedException("Tunnel start was cancelled")
 }
 
+internal fun resolveTransportAddress(host: String): InetAddress {
+    val addresses = InetAddress.getAllByName(host)
+    return addresses.firstOrNull { it.address.size == 4 } ?: addresses.firstOrNull()
+        ?: throw IllegalStateException("Server DNS returned no addresses")
+}
+
 internal fun verifySocksTunnel(port: Int, target: String) {
     val targetBytes = target.toByteArray(Charsets.US_ASCII)
     require(targetBytes.size <= 255) { "SOCKS target is too long" }

@@ -2,7 +2,6 @@ package com.ket.android
 
 import android.system.Os
 import java.io.File
-import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -14,6 +13,7 @@ import kotlin.concurrent.thread
 internal class AndroidXrayEngine(
     private val service: KetVpnService,
     private val transport: RealityTransport,
+    private val resolvedEndpoint: InetAddress,
 ) : AndroidTransportEngine {
     private var process: Process? = null
     private var configFile: File? = null
@@ -26,9 +26,14 @@ internal class AndroidXrayEngine(
         ensureEngineStartActive(cancelled)
         val engine = File(service.applicationInfo.nativeLibraryDir, "libxray.so")
         require(engine.isFile && engine.canExecute()) { "Xray is not installed for this device architecture" }
-        val resolved = resolveServer(transport.endpoint)
         val socksPort = reservePort()
-        configFile = writePrivateConfig(EngineConfig.xray(transport, resolved.hostAddress ?: error("Server address is unavailable"), socksPort))
+        configFile = writePrivateConfig(
+            EngineConfig.xray(
+                transport,
+                resolvedEndpoint.hostAddress ?: error("Server address is unavailable"),
+                socksPort,
+            ),
+        )
         val check = ProcessBuilder(engine.absolutePath, "run", "-test", "-c", configFile!!.absolutePath)
             .redirectErrorStream(true)
             .start()
@@ -60,7 +65,7 @@ internal class AndroidXrayEngine(
                     return AndroidEngineStarted(
                         socksPort,
                         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
-                        resolved,
+                        resolvedEndpoint,
                     )
                 } catch (error: Exception) {
                     diagnostic.compareAndSet(null, error.message)
@@ -84,12 +89,6 @@ internal class AndroidXrayEngine(
             }
         }
         process = null
-    }
-
-    private fun resolveServer(host: String): InetAddress {
-        val addresses = InetAddress.getAllByName(host)
-        return addresses.firstOrNull { it is Inet4Address } ?: addresses.firstOrNull()
-            ?: throw IllegalStateException("Server DNS returned no addresses")
     }
 
     private fun reservePort(): Int = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }

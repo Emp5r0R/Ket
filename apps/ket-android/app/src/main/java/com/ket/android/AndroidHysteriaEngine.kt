@@ -5,7 +5,6 @@ import android.net.LocalSocket
 import android.os.ParcelFileDescriptor
 import android.system.Os
 import java.io.File
-import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -32,7 +31,7 @@ internal class AndroidHysteriaEngine(
         ensureEngineStartActive(cancelled)
         val engine = File(service.applicationInfo.nativeLibraryDir, "libhysteria.so")
         require(engine.isFile && engine.canExecute()) { "Hysteria2 engine is not installed for this device" }
-        val resolved = resolveServer(transport.endpoint)
+        val resolved = resolveTransportAddress(transport.endpoint)
         val socksPort = reservePort()
         val socketName = "ket_hy2_${android.os.Process.myPid()}_${System.nanoTime()}"
         protector = FdProtectionServer(service, socketName).also { it.start() }
@@ -64,7 +63,7 @@ internal class AndroidHysteriaEngine(
                 return AndroidEngineStarted(
                     socksPort,
                     TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
-                    null,
+                    resolved,
                 )
             }
             Thread.sleep(100)
@@ -87,12 +86,6 @@ internal class AndroidHysteriaEngine(
         process = null
         protector?.close()
         protector = null
-    }
-
-    private fun resolveServer(host: String): InetAddress {
-        val addresses = InetAddress.getAllByName(host)
-        return addresses.firstOrNull { it is Inet4Address } ?: addresses.firstOrNull()
-            ?: throw IllegalStateException("Server DNS returned no addresses")
     }
 
     private fun reservePort(): Int = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
