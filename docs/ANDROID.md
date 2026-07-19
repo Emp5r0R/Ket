@@ -24,14 +24,29 @@ Generated third-party files live under `app/build/generated/ket-engines` and are
 ## Verification
 
 ```bash
-./packaging/build-android.sh
+./packaging/build-android.sh debug
 GRADLE_USER_HOME=/media/n_emperor/Aadhish/gradle-home \
   apps/ket-android/gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug
 ./packaging/validate-android-apk.sh \
   apps/ket-android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The debug APK is build evidence, not a production release. Unit tests cover strict parsing for both transports, IPv4/IPv6 route exclusion, deterministic recovery ranking/cooldown, cooperative startup cancellation, and process-output shutdown races.
+`./packaging/build-android.sh` defaults to `debug`; the explicit argument avoids confusing a test build with a release. A release build requires all signing variables and pins the resulting APK to the expected certificate:
+
+```bash
+export KET_ANDROID_KEYSTORE=/secure/path/ket-release.p12
+export KET_ANDROID_KEYSTORE_PASSWORD='<keystore password>'
+export KET_ANDROID_KEY_ALIAS=ket-release
+export KET_ANDROID_KEY_PASSWORD='<key password>'
+export KET_ANDROID_CERT_SHA256='<64-hex-digit certificate SHA-256>'
+export KET_ANDROID_VERSION_CODE=2
+export KET_ANDROID_VERSION_NAME=0.2.0
+./packaging/build-android.sh release
+```
+
+Obtain the expected fingerprint with `keytool -list -v -keystore "$KET_ANDROID_KEYSTORE" -alias "$KET_ANDROID_KEY_ALIAS"`; let `keytool` prompt for the password. Gradle rejects every release task when the signing environment is missing or partial. The wrapper then verifies the APK signature and requires its signer certificate to match `KET_ANDROID_CERT_SHA256` before reporting success.
+
+The debug APK is build evidence, not a production release. CI generates a short-lived signing identity to prove that the release variant, native payloads, and certificate check work together, but it neither uploads that release APK nor establishes a production signer. Unit tests cover strict parsing for both transports, IPv4/IPv6 route exclusion, deterministic recovery ranking/cooldown, cooperative startup cancellation, and process-output shutdown races.
 
 On 2026-07-19, the arm64 payload was exercised on a physical Android 16/API 36 device against the dual-transport Oracle ARM deployment. Both Hysteria2 and VLESS + REALITY established protected routes and reported nonzero bidirectional traffic. The device also proved automatic startup fallback, recovery after forcibly terminating the active Xray child while retaining its lease, cancellation with both data planes unreachable, lease release, and repeated crash-free disconnects. Temporary server firewall rules used for the unreachable-path test were removed and readiness was rechecked afterward.
 
