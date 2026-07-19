@@ -205,8 +205,21 @@ function Assert-KetInstallation {
         Fail "the Ket tunnel service is not configured for automatic startup"
     }
     $ExpectedServicePath = Join-Path $InstallDir "ket-tunnel-service.exe"
-    if ($ServiceRecord.PathName.Trim().Trim('"') -ne $ExpectedServicePath) {
-        Fail "the Ket tunnel service points at an unexpected executable"
+    $RegisteredServicePath = [Environment]::ExpandEnvironmentVariables(
+        [string]$ServiceRecord.PathName
+    ).Trim().Trim('"')
+    $ResolvedExpectedServicePath = (Resolve-Path -LiteralPath $ExpectedServicePath).ProviderPath
+    $ResolvedRegisteredServicePath = Resolve-Path `
+        -LiteralPath $RegisteredServicePath `
+        -ErrorAction SilentlyContinue
+    if (
+        $null -eq $ResolvedRegisteredServicePath -or
+        -not $ResolvedRegisteredServicePath.ProviderPath.Equals(
+            $ResolvedExpectedServicePath,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    ) {
+        Fail "the Ket tunnel service points at '$($ServiceRecord.PathName)', expected '$ExpectedServicePath'"
     }
 
     if ((Get-Item -LiteralPath $TokenFile).Length -ne 32) {
