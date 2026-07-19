@@ -27,8 +27,9 @@ internal class AndroidHysteriaEngine(
 
     override val displayName: String = transport.displayName
 
-    override fun start(): AndroidEngineStarted {
+    override fun start(cancelled: () -> Boolean): AndroidEngineStarted {
         val startedAt = System.nanoTime()
+        ensureEngineStartActive(cancelled)
         val engine = File(service.applicationInfo.nativeLibraryDir, "libhysteria.so")
         require(engine.isFile && engine.canExecute()) { "Hysteria2 engine is not installed for this device" }
         val resolved = resolveServer(transport.endpoint)
@@ -55,6 +56,7 @@ internal class AndroidHysteriaEngine(
         }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
         while (System.nanoTime() < deadline) {
+            ensureEngineStartActive(cancelled)
             if (!child.isAlive) throw IllegalStateException(diagnostic.get() ?: "Hysteria2 exited during startup")
             if (connected.get() && socksReady(socksPort)) {
                 configFile?.delete()
