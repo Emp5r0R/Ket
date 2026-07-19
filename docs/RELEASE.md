@@ -5,6 +5,7 @@
 | Artifact | Build path | Current status |
 | --- | --- | --- |
 | Rust control plane image | `docker build --pull -t ket-control-plane:<tag> .` | Verified on Oracle ARM64 host |
+| Server data planes | Dual Compose overlays | Live-tested VLESS + REALITY over TCP and Salamander-obfuscated Hysteria2 over UDP on Oracle ARM64 |
 | Linux desktop `.deb` | CI job `linux-package` | Bundles pinned Hysteria, Xray, and `tun2proxy` engines |
 | Windows desktop NSIS installer | CI job `windows-package` | Bundles pinned Hysteria, Xray, `tun2proxy`, and Wintun payloads |
 | Android debug APK | `./packaging/build-android.sh` | Multi-ABI Hysteria and 64-bit Xray payloads built and validated; physical dual-transport packet flow pending |
