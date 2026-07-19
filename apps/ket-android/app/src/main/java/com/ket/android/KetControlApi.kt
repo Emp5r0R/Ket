@@ -15,6 +15,13 @@ class EnrollmentResult(
 }
 data class SessionTelemetry(val node: String, val sent: Long, val received: Long, val online: Int, val capacity: Double)
 
+internal class KetControlException(
+    val statusCode: Int,
+    message: String,
+) : IllegalStateException(message) {
+    val authorizationLost: Boolean = statusCode == 401 || statusCode == 403
+}
+
 /** Small platform adapter for the versioned Ket control contract. Secrets never enter logs. */
 object KetControlApi {
     fun enroll(serverUrl: String, accessCode: String, clientName: String): EnrollmentResult {
@@ -26,7 +33,7 @@ object KetControlApi {
         }
         connection.outputStream.use { it.write(JSONObject().put("access_code", accessCode).put("client_name", clientName).toString().toByteArray()) }
         val (code, body) = response(connection)
-        if (code !in 200..299) throw IllegalStateException(errorMessage(body, "Enrollment failed"))
+        requireSuccess(code, body, "Enrollment failed")
         return parseEnrollment(body)
     }
 
@@ -35,7 +42,7 @@ object KetControlApi {
             requestMethod = "GET"; setRequestProperty("Authorization", "Bearer $token")
         }
         val (code, body) = response(connection)
-        if (code !in 200..299) throw IllegalStateException(errorMessage(body, "Session status unavailable"))
+        requireSuccess(code, body, "Session status unavailable")
         val json = JSONObject(body); val node = json.getJSONObject("node"); val traffic = json.getJSONObject("traffic")
         return SessionTelemetry(
             node.getString("display_name"),
@@ -51,7 +58,7 @@ object KetControlApi {
             requestMethod = "PUT"; setRequestProperty("Authorization", "Bearer $token")
         }
         val (code, body) = response(connection)
-        if (code !in 200..299) throw IllegalStateException(errorMessage(body, "Session renewal failed"))
+        requireSuccess(code, body, "Session renewal failed")
         return JSONObject(body).getLong("expires_at_epoch_seconds")
     }
 
@@ -60,7 +67,7 @@ object KetControlApi {
             requestMethod = "DELETE"; setRequestProperty("Authorization", "Bearer $token")
         }
         val (code, body) = response(connection)
-        if (code !in 200..299) throw IllegalStateException(errorMessage(body, "Session release failed"))
+        requireSuccess(code, body, "Session release failed")
     }
 
     internal fun parseEnrollment(body: String): EnrollmentResult {
@@ -102,5 +109,9 @@ object KetControlApi {
     private fun errorMessage(body: String, fallback: String): String {
         if (body.isBlank()) return fallback
         return runCatching { JSONObject(body).optString("message", fallback) }.getOrDefault(fallback)
+    }
+
+    private fun requireSuccess(code: Int, body: String, fallback: String) {
+        if (code !in 200..299) throw KetControlException(code, errorMessage(body, fallback))
     }
 }
