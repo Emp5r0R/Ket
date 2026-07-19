@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. The Android client includes ranked startup fallback and session-preserving post-connect recovery on supported 64-bit ABIs. Production signing and Android physical-device packet-flow tests remain before this is a complete end-user VPN.
+> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. The Android client has carried both transports on a physical current arm64 device, including ranked startup fallback, session-preserving recovery, responsive cancellation, and clean disconnect. Production signing plus the API 26, network-change, Doze, and revoke matrix remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -120,7 +120,7 @@ Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting
 ## Delivery order
 
 1. Sign the implemented Linux/Windows packages and exercise their signed artifacts on target machines; the unsigned Linux and Windows installer, service, reinstall, and removal lifecycles are CI-gated.
-2. Exercise both Android data planes, startup fallback, and post-connect recovery on physical API 26 and current devices, then add release signing and network-change/Doze tests.
+2. Repeat the completed current-device Android packet-flow, fallback, recovery, cancellation, and disconnect checks on physical API 26, then add release signing and network-change/Doze/revoke tests.
 3. Evaluate the next maintained transport only after the shipped dual-transport paths pass the release matrix.
 4. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.
 

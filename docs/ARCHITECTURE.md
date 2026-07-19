@@ -17,7 +17,7 @@ This separation keeps the API and user experience consistent while allowing a no
 | Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Hysteria2 and VLESS + REALITY implemented |
 | Desktop privilege broker | Authenticated TUN/route ownership and engine supervision | Rust system service | Implemented for Linux/Windows |
 | Linux/Windows desktop | Map-first connection UI and native packaging | Tauri 2 plus shared Rust core | UI, service installers, and unsigned lifecycle gates implemented; signed bundles pending |
-| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Hysteria2, Xray, hev-socks5-tunnel | Ranked startup fallback and bounded post-connect recovery implemented; physical packet-flow verification pending |
+| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Hysteria2, Xray, hev-socks5-tunnel | Current arm64 physical packet flow, fallback, recovery, cancellation, and disconnect verified; API 26 and release signing pending |
 
 ## Control flow
 
