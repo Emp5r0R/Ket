@@ -77,6 +77,9 @@ classify() {
     packaging/verify-linux-deb.sh)
       enable linux_package
       ;;
+    packaging/verify-windows-nsis.ps1)
+      enable windows_package
+      ;;
     packaging/linux/*)
       enable linux_package
       ;;
