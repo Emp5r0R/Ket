@@ -41,6 +41,11 @@ internal class TunnelLaunchSpec(
 ) {
     override fun toString(): String =
         "TunnelLaunchSpec(controlEndpoint=$controlEndpoint, sessionToken=[REDACTED], node=$node, country=$country, transports=$transports)"
+
+    companion object {
+        fun fromEnrollment(controlEndpoint: String, result: EnrollmentResult): TunnelLaunchSpec =
+            TunnelLaunchSpec(controlEndpoint, result.token, result.node, result.country, result.transports)
+    }
 }
 
 object KetTunnelRuntime {
@@ -77,38 +82,60 @@ object KetTunnelRuntime {
 object KetTunnelController {
     private val executor = Executors.newSingleThreadExecutor()
     private val generation = AtomicLong()
+    private val lifecycleLock = Any()
 
     fun connect(context: Context, serverUrl: String, accessCode: String) {
-        val attempt = generation.incrementAndGet()
-        val appContext = context.applicationContext
-        KetTunnelRuntime.publish(
-            TunnelSnapshot(phase = TunnelPhase.Enrolling, message = "Authorizing device..."),
-        )
-        executor.execute {
-            var result: EnrollmentResult? = null
-            try {
-                result = KetControlApi.enroll(serverUrl, accessCode, "Ket Android")
-                if (attempt != generation.get()) {
-                    runCatching { KetControlApi.release(serverUrl, result.token) }
-                    return@execute
-                }
-                val spec = TunnelLaunchSpec(serverUrl, result.token, result.node, result.country, result.transports)
-                KetTunnelRuntime.offer(spec)
+        val attempt = synchronized(lifecycleLock) {
+            generation.incrementAndGet().also {
                 KetTunnelRuntime.publish(
-                    TunnelSnapshot(
-                        phase = TunnelPhase.Connecting,
-                        node = result.node,
-                        country = result.country,
-                        message = "Starting protected route...",
-                    ),
+                    TunnelSnapshot(phase = TunnelPhase.Enrolling, message = "Authorizing device..."),
                 )
-                ContextCompat.startForegroundService(
-                    appContext,
-                    Intent(appContext, KetVpnService::class.java).setAction(KetVpnService.ACTION_START),
+            }
+        }
+        val appContext = context.applicationContext
+        executor.execute {
+            var spec: TunnelLaunchSpec? = null
+            var sessionPrepared = false
+            try {
+                val profile = TunnelEnrollmentProfile(
+                    KetControlApi.normalizeBaseUrl(serverUrl),
+                    KetControlApi.validateAccessCode(accessCode),
                 )
+                val store = AndroidTunnelCredentialStore.get(appContext)
+                val preparedSpec = DurableTunnelSessionResolver(KetControlApi, store).resolveForApp(profile)
+                spec = preparedSpec
+                sessionPrepared = true
+                val launched = synchronized(lifecycleLock) {
+                    if (attempt != generation.get()) return@synchronized false
+                    KetTunnelRuntime.offer(preparedSpec)
+                    KetTunnelRuntime.publish(
+                        TunnelSnapshot(
+                            phase = TunnelPhase.Connecting,
+                            node = preparedSpec.node,
+                            country = preparedSpec.country,
+                            message = "Starting protected route...",
+                        ),
+                    )
+                    ContextCompat.startForegroundService(
+                        appContext,
+                        Intent(appContext, KetVpnService::class.java)
+                            .setAction(KetVpnService.ACTION_START)
+                            .putExtra(KetVpnService.EXTRA_APP_STARTED, true),
+                    )
+                    true
+                }
+                if (!launched) {
+                    runCatching { store.clearSession() }
+                    runCatching {
+                        KetControlApi.release(preparedSpec.controlEndpoint, preparedSpec.sessionToken)
+                    }
+                }
             } catch (error: Exception) {
                 KetTunnelRuntime.clearPending()
-                if (result != null) runCatching { KetControlApi.release(serverUrl, result.token) }
+                if (spec != null) runCatching {
+                    KetControlApi.release(spec.controlEndpoint, spec.sessionToken)
+                }
+                if (sessionPrepared) runCatching { AndroidTunnelCredentialStore.get(appContext).clearSession() }
                 if (attempt == generation.get()) {
                     KetTunnelRuntime.publish(
                         TunnelSnapshot(
@@ -122,14 +149,16 @@ object KetTunnelController {
     }
 
     fun disconnect(context: Context) {
-        generation.incrementAndGet()
-        val pending = KetTunnelRuntime.clearPending()
+        val (pending, phase) = synchronized(lifecycleLock) {
+            generation.incrementAndGet()
+            KetTunnelRuntime.clearPending() to KetTunnelRuntime.snapshot().phase
+        }
         if (pending != null) {
             executor.execute {
                 runCatching { KetControlApi.release(pending.controlEndpoint, pending.sessionToken) }
+                runCatching { AndroidTunnelCredentialStore.get(context.applicationContext).clearSession() }
             }
         }
-        val phase = KetTunnelRuntime.snapshot().phase
         if (
             phase == TunnelPhase.Connecting ||
             phase == TunnelPhase.Reconnecting ||
@@ -141,6 +170,7 @@ object KetTunnelController {
                 Intent(context.applicationContext, KetVpnService::class.java).setAction(KetVpnService.ACTION_STOP),
             )
         } else {
+            runCatching { AndroidTunnelCredentialStore.get(context.applicationContext).clearSession() }
             KetTunnelRuntime.publish(TunnelSnapshot())
         }
     }

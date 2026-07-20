@@ -9,6 +9,7 @@ class EnrollmentResult(
     val node: String,
     val country: String,
     val transports: List<AndroidTransport>,
+    internal val manifestJson: String,
 ) {
     override fun toString(): String =
         "EnrollmentResult(token=[REDACTED], node=$node, country=$country, transports=$transports)"
@@ -23,15 +24,15 @@ internal class KetControlException(
 }
 
 /** Small platform adapter for the versioned Ket control contract. Secrets never enter logs. */
-object KetControlApi {
-    fun enroll(serverUrl: String, accessCode: String, clientName: String): EnrollmentResult {
+object KetControlApi : TunnelSessionApi {
+    override fun enroll(serverUrl: String, accessCode: String, clientName: String): EnrollmentResult {
         val base = normalizeBaseUrl(serverUrl)
-        require(accessCode.length == 32) { "Access code must be 32 characters" }
+        val validatedAccessCode = validateAccessCode(accessCode)
         val connection = open("$base/v1/sessions").apply {
             requestMethod = "POST"; readTimeout = 15_000; doOutput = true
             setRequestProperty("Content-Type", "application/json")
         }
-        connection.outputStream.use { it.write(JSONObject().put("access_code", accessCode).put("client_name", clientName).toString().toByteArray()) }
+        connection.outputStream.use { it.write(JSONObject().put("access_code", validatedAccessCode).put("client_name", clientName).toString().toByteArray()) }
         val (code, body) = response(connection)
         requireSuccess(code, body, "Enrollment failed")
         return parseEnrollment(body)
@@ -53,7 +54,7 @@ object KetControlApi {
         )
     }
 
-    fun renew(serverUrl: String, token: String): Long {
+    override fun renew(serverUrl: String, token: String): Long {
         val connection = open("${normalizeBaseUrl(serverUrl)}/v1/sessions/current").apply {
             requestMethod = "PUT"; setRequestProperty("Authorization", "Bearer $token")
         }
@@ -62,7 +63,7 @@ object KetControlApi {
         return JSONObject(body).getLong("expires_at_epoch_seconds")
     }
 
-    fun release(serverUrl: String, token: String) {
+    override fun release(serverUrl: String, token: String) {
         val connection = open("${normalizeBaseUrl(serverUrl)}/v1/sessions/current").apply {
             requestMethod = "DELETE"; setRequestProperty("Authorization", "Bearer $token")
         }
@@ -78,15 +79,22 @@ object KetControlApi {
             node = node.getString("display_name"),
             country = node.getJSONObject("location").getString("country_name"),
             transports = AndroidTransportSelector.parse(json.getJSONArray("transports")),
+            manifestJson = json.toString(),
         )
     }
 
-    private fun normalizeBaseUrl(serverUrl: String): String {
+    internal fun normalizeBaseUrl(serverUrl: String): String {
         val url = URL(serverUrl.trim().trimEnd('/'))
         val localHttp = url.protocol == "http" && (url.host == "localhost" || url.host == "127.0.0.1" || url.host == "::1")
         require(url.protocol == "https" || localHttp) { "Use HTTPS for a remote server" }
         require(url.userInfo == null && url.query == null && url.ref == null && url.path.isBlank()) { "Server URL must not contain credentials, a path, query, or fragment" }
         return url.toExternalForm().trimEnd('/')
+    }
+
+    internal fun validateAccessCode(accessCode: String): String = accessCode.also {
+        require(it.length == 32 && it.all { character -> character.isLetterOrDigit() && character.code <= 127 }) {
+            "Access code must contain exactly 32 ASCII letters or digits"
+        }
     }
 
     private fun open(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
