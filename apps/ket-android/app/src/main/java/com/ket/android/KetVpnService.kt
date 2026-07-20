@@ -47,6 +47,7 @@ class KetVpnService : VpnService() {
     private val bridge = TProxyService()
     private lateinit var connectivityManager: ConnectivityManager
     private lateinit var powerManager: PowerManager
+    private lateinit var credentialStore: TunnelCredentialStore
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             scheduleNetworkChangeRecovery(underlyingNetworks.onAvailable(network))
@@ -87,6 +88,7 @@ class KetVpnService : VpnService() {
         createNotificationChannel()
         connectivityManager = getSystemService(ConnectivityManager::class.java)
         powerManager = getSystemService(PowerManager::class.java)
+        credentialStore = AndroidTunnelCredentialStore.get(this)
         connectivityManager.registerNetworkCallback(
             NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -109,16 +111,31 @@ class KetVpnService : VpnService() {
             requestStop(null)
             return START_NOT_STICKY
         }
-        if (intent?.action != ACTION_START || !active.compareAndSet(false, true)) return START_NOT_STICKY
+        if (!active.compareAndSet(false, true)) return START_REDELIVER_INTENT
         startForegroundCompat(notification("Starting protected route"))
-        val spec = KetTunnelRuntime.take()
-        if (spec == null) {
-            requestStop("Tunnel authorization was not available")
-            return START_NOT_STICKY
+        val pending = if (intent?.getBooleanExtra(EXTRA_APP_STARTED, false) == true) {
+            KetTunnelRuntime.take()
+        } else {
+            null
         }
-        launchSpec = spec
-        worker.execute { startTunnel(spec) }
-        return START_NOT_STICKY
+        if (pending == null) {
+            KetTunnelRuntime.publish(
+                TunnelSnapshot(
+                    phase = TunnelPhase.Connecting,
+                    message = "Restoring saved protected route...",
+                ),
+            )
+        }
+        worker.execute {
+            try {
+                val spec = DurableTunnelSessionResolver(KetControlApi, credentialStore).resolve(pending)
+                launchSpec = spec
+                startTunnel(spec)
+            } catch (error: Exception) {
+                requestStop(error.message ?: "Unable to restore tunnel authorization")
+            }
+        }
+        return START_REDELIVER_INTENT
     }
 
     override fun onRevoke() {
@@ -435,6 +452,7 @@ class KetVpnService : VpnService() {
         val spec = launchSpec
         launchSpec = null
         if (spec != null) runCatching { KetControlApi.release(spec.controlEndpoint, spec.sessionToken) }
+        runCatching { credentialStore.clearSession() }
         if (failure == null) {
             KetTunnelRuntime.publish(TunnelSnapshot())
         } else {
@@ -564,6 +582,7 @@ class KetVpnService : VpnService() {
     companion object {
         const val ACTION_START = "com.ket.android.action.START"
         const val ACTION_STOP = "com.ket.android.action.STOP"
+        const val EXTRA_APP_STARTED = "com.ket.android.extra.APP_STARTED"
         private const val NOTIFICATION_CHANNEL = "ket-vpn"
         private const val NOTIFICATION_ID = 3712
         private const val TUN_MTU = 1400
