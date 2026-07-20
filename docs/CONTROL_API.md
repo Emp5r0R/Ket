@@ -8,7 +8,7 @@ The base URL is the configured `KET_PUBLIC_URL`. JSON requests use `Content-Type
 | --- | --- | --- |
 | `GET` | `/healthz` | Liveness, returns `204` |
 | `GET` | `/readyz` | Readiness |
-| `GET` | `/metrics` | Prometheus text metrics |
+| `GET` | `/metrics` | Prometheus session, capacity, crypto-pressure, overload, and data-plane authentication metrics |
 | `GET` | `/v1/node/status` | Location, health, system load, and session capacity |
 | `POST` | `/v1/sessions` | Exchange a 32-character access code for a short-lived session |
 

@@ -1,4 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use ket_core::{
     AccessGrantSummary, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
@@ -77,6 +83,7 @@ pub struct AccessService {
     state: Mutex<PersistedState>,
     crypto_slots: Arc<Semaphore>,
     crypto_admission: Arc<Semaphore>,
+    crypto_overloads: AtomicU64,
     session_ttl: Duration,
     max_sessions: u32,
 }
@@ -106,6 +113,7 @@ impl AccessService {
             state: Mutex::new(state),
             crypto_slots: Arc::new(Semaphore::new(CRYPTO_WORKERS)),
             crypto_admission: Arc::new(Semaphore::new(MAX_PENDING_CRYPTO_OPERATIONS)),
+            crypto_overloads: AtomicU64::new(0),
             session_ttl,
             max_sessions,
         })
@@ -447,6 +455,19 @@ impl AccessService {
             .collect()
     }
 
+    pub fn crypto_operations_in_flight(&self) -> u32 {
+        MAX_PENDING_CRYPTO_OPERATIONS.saturating_sub(self.crypto_admission.available_permits())
+            as u32
+    }
+
+    pub fn crypto_operation_capacity(&self) -> u32 {
+        MAX_PENDING_CRYPTO_OPERATIONS as u32
+    }
+
+    pub fn crypto_overload_count(&self) -> u64 {
+        self.crypto_overloads.load(Ordering::Relaxed)
+    }
+
     async fn authenticate(
         &self,
         token: &str,
@@ -486,11 +507,7 @@ impl AccessService {
     }
 
     async fn hash(&self, secret: String) -> Result<String, ServiceError> {
-        let _admission = self
-            .crypto_admission
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ServiceError::Busy)?;
+        let _admission = self.admit_crypto()?;
         let permit = self
             .crypto_slots
             .clone()
@@ -503,11 +520,7 @@ impl AccessService {
     }
 
     async fn verify(&self, secret: String, hash: String) -> Result<bool, ServiceError> {
-        let _admission = self
-            .crypto_admission
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ServiceError::Busy)?;
+        let _admission = self.admit_crypto()?;
         let permit = self
             .crypto_slots
             .clone()
@@ -517,6 +530,16 @@ impl AccessService {
         let result = tokio::task::spawn_blocking(move || verify_secret(&secret, &hash)).await?;
         drop(permit);
         Ok(result)
+    }
+
+    fn admit_crypto(&self) -> Result<tokio::sync::OwnedSemaphorePermit, ServiceError> {
+        self.crypto_admission
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| {
+                self.crypto_overloads.fetch_add(1, Ordering::Relaxed);
+                ServiceError::Busy
+            })
     }
 }
 
@@ -559,12 +582,16 @@ mod tests {
         let service = AccessService::load(Arc::new(EmptyRepository), Duration::from_secs(300), 4)
             .await
             .expect("service should load");
-        let _saturated = service
+        let saturated = service
             .crypto_admission
             .clone()
             .acquire_many_owned(MAX_PENDING_CRYPTO_OPERATIONS as u32)
             .await
             .expect("test should reserve the bounded crypto queue");
+        assert_eq!(
+            service.crypto_operations_in_flight(),
+            service.crypto_operation_capacity()
+        );
 
         let result = service
             .create_grant(CreateAccessGrantRequest {
@@ -575,5 +602,8 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(ServiceError::Busy)));
+        assert_eq!(service.crypto_overload_count(), 1);
+        drop(saturated);
+        assert_eq!(service.crypto_operations_in_flight(), 0);
     }
 }
