@@ -55,19 +55,14 @@ class HysteriaTransportTest {
     fun `enrollment parser requires an implemented Android transport and redacts the token`() {
         val body = JSONObject()
             .put("session_token", "control-token-value")
-            .put(
-                "node",
-                JSONObject()
-                    .put("display_name", "Test node")
-                    .put("location", JSONObject().put("country_name", "Testland")),
-            )
+            .put("node", testNodeJson())
             .put("transports", JSONArray().put(validTransport("salamander")))
             .toString()
 
         val result = KetControlApi.parseEnrollment(body)
 
-        assertEquals("Test node", result.node)
-        assertEquals("Testland", result.country)
+        assertEquals("Test node", result.node.displayName)
+        assertEquals("Testland", result.node.location.countryName)
         assertEquals("Hysteria 2", result.transports.single().displayName)
         assertFalse(result.toString().contains("control-token-value"))
     }

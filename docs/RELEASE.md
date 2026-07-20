@@ -8,7 +8,7 @@
 | Server data planes | Dual Compose overlays | Live-tested VLESS + REALITY over TCP and Salamander-obfuscated Hysteria2 over UDP on Oracle ARM64 |
 | Linux desktop `.deb` | CI job `linux-package` | Bundles pinned engines; clean install, reinstall, remove, and purge are CI-gated |
 | Windows desktop NSIS installer | CI job `windows-package` | Bundles pinned engines and Wintun; install, reinstall, service, and uninstall are CI-gated |
-| Android debug APK | `./packaging/build-android.sh` | Multi-ABI Hysteria and 64-bit Xray payloads validated; dual-transport packet flow, fallback, recovery, Wi-Fi/cellular switching, cancellation, and disconnect exercised on current arm64 hardware; fail-closed handover retest pending |
+| Android debug APK | `./packaging/build-android.sh` | Real server map and node telemetry parity implemented; multi-ABI Hysteria and 64-bit Xray payloads validated; dual-transport packet flow, fallback, recovery, Wi-Fi/cellular switching, cancellation, and disconnect exercised on current arm64 hardware; fail-closed handover retest pending |
 | Android release APK | `./packaging/build-android.sh release` | Fail-closed signing and signer pinning are CI-gated with a disposable identity; owner-signed installation remains pending |
 
 ## Required checks

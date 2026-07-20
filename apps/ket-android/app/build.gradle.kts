@@ -54,7 +54,10 @@ android { namespace = "com.ket.android"; compileSdk = 34
         }
     }
     externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
-    sourceSets { named("main") { jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-engines/jniLibs")) } }
+    sourceSets {
+        named("main") { jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-engines/jniLibs")) }
+        named("test") { resources.srcDir("src/main/res/raw") }
+    }
     packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libxray.so") } }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.11" }
