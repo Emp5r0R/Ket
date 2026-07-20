@@ -10,7 +10,7 @@ use std::{
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
@@ -540,6 +540,11 @@ impl From<ServiceError> for ApiError {
                 code: "node_capacity_reached",
                 message: error.to_string(),
             },
+            ServiceError::Busy => Self {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                code: "server_busy",
+                message: "the server is temporarily busy; retry shortly".to_owned(),
+            },
             ServiceError::NotFound => Self {
                 status: StatusCode::NOT_FOUND,
                 code: "not_found",
@@ -559,14 +564,21 @@ impl From<ServiceError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
+        let retry_after = self.status == StatusCode::TOO_MANY_REQUESTS;
+        let mut response = (
             self.status,
             Json(ErrorResponse {
                 code: self.code.to_owned(),
                 message: self.message,
             }),
         )
-            .into_response()
+            .into_response();
+        if retry_after {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+        }
+        response
     }
 }
 
@@ -599,6 +611,23 @@ mod tests {
     };
 
     const ADMIN_TOKEN: &str = "test-admin-token-with-at-least-32-characters";
+
+    #[tokio::test]
+    async fn crypto_overload_returns_a_retryable_http_contract() {
+        let response = ApiError::from(ServiceError::Busy).into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response.headers().get(header::RETRY_AFTER),
+            Some(&HeaderValue::from_static("1"))
+        );
+        let body = to_bytes(response.into_body(), 1024)
+            .await
+            .expect("error response should be readable");
+        let error: ErrorResponse =
+            serde_json::from_slice(&body).expect("error response should remain valid JSON");
+        assert_eq!(error.code, "server_busy");
+    }
 
     #[derive(Default)]
     struct MemoryRepository {

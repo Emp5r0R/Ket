@@ -16,6 +16,8 @@ use crate::{
 
 const MAX_LABEL_LENGTH: usize = 64;
 const MAX_CLIENT_NAME_LENGTH: usize = 96;
+const CRYPTO_WORKERS: usize = 4;
+const MAX_PENDING_CRYPTO_OPERATIONS: usize = 32;
 
 #[derive(Clone)]
 pub struct CreatedSession {
@@ -58,6 +60,8 @@ pub enum ServiceError {
     GrantCapacity,
     #[error("the node session capacity has been reached")]
     NodeCapacity,
+    #[error("secure secret processing is temporarily busy")]
+    Busy,
     #[error("the requested resource does not exist")]
     NotFound,
     #[error("secure secret processing failed")]
@@ -72,6 +76,7 @@ pub struct AccessService {
     repository: Arc<dyn StateRepository>,
     state: Mutex<PersistedState>,
     crypto_slots: Arc<Semaphore>,
+    crypto_admission: Arc<Semaphore>,
     session_ttl: Duration,
     max_sessions: u32,
 }
@@ -99,7 +104,8 @@ impl AccessService {
         Ok(Self {
             repository,
             state: Mutex::new(state),
-            crypto_slots: Arc::new(Semaphore::new(4)),
+            crypto_slots: Arc::new(Semaphore::new(CRYPTO_WORKERS)),
+            crypto_admission: Arc::new(Semaphore::new(MAX_PENDING_CRYPTO_OPERATIONS)),
             session_ttl,
             max_sessions,
         })
@@ -480,6 +486,11 @@ impl AccessService {
     }
 
     async fn hash(&self, secret: String) -> Result<String, ServiceError> {
+        let _admission = self
+            .crypto_admission
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ServiceError::Busy)?;
         let permit = self
             .crypto_slots
             .clone()
@@ -492,6 +503,11 @@ impl AccessService {
     }
 
     async fn verify(&self, secret: String, hash: String) -> Result<bool, ServiceError> {
+        let _admission = self
+            .crypto_admission
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ServiceError::Busy)?;
         let permit = self
             .crypto_slots
             .clone()
@@ -519,4 +535,45 @@ pub fn unix_time() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EmptyRepository;
+
+    #[async_trait::async_trait]
+    impl StateRepository for EmptyRepository {
+        async fn load(&self) -> Result<PersistedState, RepositoryError> {
+            Ok(PersistedState::default())
+        }
+
+        async fn store(&self, _state: &PersistedState) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn crypto_overload_fails_before_queuing_more_work() {
+        let service = AccessService::load(Arc::new(EmptyRepository), Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let _saturated = service
+            .crypto_admission
+            .clone()
+            .acquire_many_owned(MAX_PENDING_CRYPTO_OPERATIONS as u32)
+            .await
+            .expect("test should reserve the bounded crypto queue");
+
+        let result = service
+            .create_grant(CreateAccessGrantRequest {
+                label: "Overload test".to_owned(),
+                max_connections: 1,
+                expires_at_epoch_seconds: None,
+            })
+            .await;
+
+        assert!(matches!(result, Err(ServiceError::Busy)));
+    }
 }

@@ -39,7 +39,7 @@ This separation keeps the API and user experience consistent while allowing a no
 - The admin token must be independent, at least 32 characters, and is compared in constant time.
 - State replacement is atomic and the state file is mode `0600` on Unix.
 - Mutations are serialized and persisted before becoming visible in memory.
-- Request bodies are capped at 16 KiB, requests time out, and Argon2 concurrency is bounded.
+- Request bodies are capped at 16 KiB, requests time out, and Argon2 concurrency plus pending work are bounded. Saturation fails fast with a retryable `429` response instead of building an unbounded secret-processing queue.
 - Server startup structurally parses the public URL and bounds every emitted node/location/transport field, including 32-profile maximum, identifier and display text, host and TLS names, and option maps; invalid operator configuration fails before listeners or data-plane runtime files are created.
 - Docker runs the control plane as an unprivileged user with all Linux capabilities dropped and a read-only root filesystem.
 - The Hysteria2 container is isolated from persistent control state, runs as UID `10001`, has a read-only root filesystem, and receives no Linux capabilities.

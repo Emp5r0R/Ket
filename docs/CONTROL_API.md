@@ -89,4 +89,4 @@ Errors use a stable machine code and a user-safe message:
 }
 ```
 
-Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_capacity_reached`, `node_capacity_reached`, `data_plane_unavailable`, `not_found`, and `internal_error`.
+Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_capacity_reached`, `node_capacity_reached`, `server_busy`, `data_plane_unavailable`, `not_found`, and `internal_error`. Secret verification uses a bounded worker pool and bounded admission queue. When that queue is full, the server returns `429 server_busy` with `Retry-After: 1` instead of accumulating unbounded Argon2 work; clients may retry after that delay.
