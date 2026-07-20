@@ -136,11 +136,11 @@ async fn enroll(
 async fn connect(controller: State<'_, DesktopController>) -> Result<ClientSnapshot, ClientIssue> {
     let mut session = controller.session.lock().await;
     let session = session.as_mut().ok_or_else(not_enrolled)?;
-    let snapshot = session.client.connect().await.map_err(issue)?;
+    let result = session.client.connect().await;
     if session.maintenance.is_none() {
         session.maintenance = Some(session.client.spawn_maintenance(Duration::from_secs(15)));
     }
-    Ok(snapshot)
+    result.map_err(issue)
 }
 
 #[tauri::command]

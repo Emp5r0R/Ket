@@ -58,7 +58,7 @@ This separation keeps the API and user experience consistent while allowing a no
 
 ## Transport strategy
 
-Clients use a policy engine rather than a hard-coded default. The implemented selector ranks configured transports using operator priority, explicit user preference, recent latency, consecutive failures, and bounded exponential cooldown. Automatic fallback has bounded attempts and never silently downgrades certificate or server-key verification. Packet-loss sampling will be added with the desktop diagnostics surface.
+Clients use a policy engine rather than a hard-coded default. The implemented selector ranks configured transports using operator priority, explicit user preference, recent latency, consecutive failures, and bounded exponential cooldown. Automatic fallback has bounded attempts and never silently downgrades certificate or server-key verification. Desktop connection intent survives a round in which every transport is blocked: maintenance preserves the lease and retries on later ticks, while an explicit pause suppresses reconnect. A deterministic dual-transport censorship regression covers that boundary. Packet-loss sampling will be added with the desktop diagnostics surface.
 
 `Shadowsocks2022` remains a discovery identifier rather than an executable adapter. The pinned Xray 26.3.27 engine warns that its Shadowsocks implementation is deprecated and may be removed, so Ket will not bind a new production transport to that lifecycle. A future implementation must use a maintained engine while preserving lease-scoped credentials, live revocation, per-session accounting, and Android/Desktop parity.
 
