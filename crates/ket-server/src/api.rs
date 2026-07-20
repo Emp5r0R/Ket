@@ -330,6 +330,10 @@ async fn authenticate_hysteria(
 
 async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     let active_sessions = state.access.active_session_count().await;
+    let session_capacity = state.config.max_sessions;
+    let crypto_operations = state.access.crypto_operations_in_flight();
+    let crypto_capacity = state.access.crypto_operation_capacity();
+    let crypto_overloads = state.access.crypto_overload_count();
     let accepted = state.metrics.accepted_sessions.load(Ordering::Relaxed);
     let rejected = state.metrics.rejected_sessions.load(Ordering::Relaxed);
     let accepted_data_plane = state
@@ -344,6 +348,18 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
         "# HELP ket_active_sessions Current unexpired control-plane sessions.\n\
          # TYPE ket_active_sessions gauge\n\
          ket_active_sessions {active_sessions}\n\
+         # HELP ket_session_capacity Configured maximum concurrent sessions.\n\
+         # TYPE ket_session_capacity gauge\n\
+         ket_session_capacity {session_capacity}\n\
+         # HELP ket_crypto_operations Current Argon2 operations running or waiting.\n\
+         # TYPE ket_crypto_operations gauge\n\
+         ket_crypto_operations {crypto_operations}\n\
+         # HELP ket_crypto_operation_capacity Maximum Argon2 operations allowed to run or wait.\n\
+         # TYPE ket_crypto_operation_capacity gauge\n\
+         ket_crypto_operation_capacity {crypto_capacity}\n\
+         # HELP ket_crypto_overload_total Secret-processing operations rejected before queuing.\n\
+         # TYPE ket_crypto_overload_total counter\n\
+         ket_crypto_overload_total {crypto_overloads}\n\
          # HELP ket_session_exchange_total Session exchange attempts by result.\n\
          # TYPE ket_session_exchange_total counter\n\
          ket_session_exchange_total{{result=\"accepted\"}} {accepted}\n\
@@ -872,6 +888,41 @@ mod tests {
         assert_eq!(status.location.country_code, "NL");
         assert_eq!(status.location.latitude, 52.3676);
         assert_eq!(status.session_capacity, 4);
+    }
+
+    #[tokio::test]
+    async fn prometheus_metrics_expose_capacity_and_crypto_pressure() {
+        let repository = Arc::new(MemoryRepository::default());
+        let service = AccessService::load(repository, Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let app = build_router(AppState::new(test_config(), service).expect("app state"));
+
+        let response = app
+            .oneshot(empty_request("GET", "/metrics", None))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("text/plain; version=0.0.4"))
+        );
+        let body = to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .expect("metrics response should be readable");
+        let body = std::str::from_utf8(&body).expect("metrics should be UTF-8");
+
+        for sample in [
+            "ket_active_sessions 0",
+            "ket_session_capacity 4",
+            "ket_crypto_operations 0",
+            "ket_crypto_operation_capacity 32",
+            "ket_crypto_overload_total 0",
+            "ket_session_exchange_total{result=\"accepted\"} 0",
+            "ket_data_plane_auth_total{result=\"rejected\"} 0",
+        ] {
+            assert!(body.lines().any(|line| line == sample), "missing {sample}");
+        }
     }
 
     #[tokio::test]
