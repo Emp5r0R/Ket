@@ -16,17 +16,18 @@
 
 The privileged service delegates protocol logic to maintained upstream engines. The desktop process uses `BrokerTransportAdapter`, which authenticates to that service over loopback and never launches engines directly.
 
-Hysteria2 uses its official [cross-platform TUN mode](https://v2.hysteria.network/docs/advanced/Full-Client-Config/#tun). VLESS + REALITY uses Xray-core with a loopback SOCKS inbound and `tun2proxy` for full-route TUN ownership. Ket does not reimplement QUIC, REALITY, or their cryptography.
+Hysteria2 uses its official UDP-capable [SOCKS5 mode](https://v2.hysteria.network/docs/advanced/Full-Client-Config/#socks5), and VLESS + REALITY uses an Xray-core loopback SOCKS inbound. Both engines feed one shared, pinned `tun2proxy` lifecycle for full-route TUN and [virtual-DNS](https://github.com/tun2proxy/tun2proxy#manual-setup) ownership. Ket does not reimplement QUIC, REALITY, proxy translation, or their cryptography.
 
 - TLS verification is mandatory and uses the server-provided SNI.
-- Each adapter resolves and excludes every current server IP before adding full IPv4/IPv6 routes, preventing a tunnel routing loop.
+- Each adapter resolves the server before route setup, pins the engine to the selected IP, and excludes every resolved server IP from full IPv4/IPv6 routes, preventing both a routing loop and data-plane DNS outside the tunnel.
+- The bridge runs with automated system setup and virtual DNS. Hostname queries are intercepted inside the TUN and delivered to the selected SOCKS engine as names for remote resolution instead of being forwarded to a local or LAN resolver.
 - Only known transport options are accepted. Unknown fields, missing credentials, invalid Gecko bounds, invalid REALITY keys, unsupported flows, and downgrade-shaped fields fail closed.
 - BBR defaults are preserved; the client does not invent unsafe bandwidth values.
-- Configuration files are created in a private directory with mode `0600` on Unix, zeroed in the writer buffer, and removed after both connection and TUN readiness are observed.
+- Configuration files are created in a private directory with mode `0600` on Unix, zeroed in the writer buffer, and removed after both engine and full-route bridge readiness are observed.
 - Raw engine output is discarded after extracting an allowlisted diagnostic category, preventing share URIs or credentials from entering app logs.
 - The child process is supervised and killed on explicit disconnect, terminal failure, service shutdown, or desktop heartbeat expiry.
 
-The desktop package bundles verified Hysteria, Xray, and `tun2proxy` binaries with the service installer. The GUI deliberately does not self-elevate. Hysteria TUN transports TCP and UDP but not ICMP, an upstream limitation that the UI diagnostics must state accurately.
+The desktop package bundles verified Hysteria, Xray, and `tun2proxy` binaries with the service installer. The GUI deliberately does not self-elevate. The SOCKS/TUN bridge carries TCP and UDP, not arbitrary IP protocols such as ICMP; UI diagnostics must state that limitation accurately.
 
 ## Integration sketch
 

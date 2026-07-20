@@ -2,7 +2,6 @@ use std::{
     net::IpAddr,
     path::PathBuf,
     process::Stdio,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -10,14 +9,14 @@ use async_trait::async_trait;
 use ket_core::{Network, SessionTransport, TransportProtocol};
 use serde_json::json;
 use tokio::{
-    net::{TcpListener, TcpStream, lookup_host},
+    net::{TcpStream, lookup_host},
     process::{Child, Command},
-    sync::{mpsc, watch},
     time::{sleep, timeout},
 };
 
 use crate::{
-    ActiveTunnel, ClientError, ProbeReport, StartedTunnel, TransportAdapter, TunnelStatus,
+    ClientError, ProbeReport, StartedTunnel, TransportAdapter,
+    full_route::{FullRouteBridge, reserve_proxy_port, stop_child, supervise, wait_until_stable},
     runtime::EphemeralConfig,
 };
 
@@ -30,7 +29,7 @@ const FINGERPRINTS: &[&str] = &[
 #[derive(Clone, Debug)]
 pub struct XrayRealityAdapter {
     xray_binary_path: PathBuf,
-    bridge_binary_path: PathBuf,
+    bridge: FullRouteBridge,
     runtime_dir: PathBuf,
     startup_timeout: Duration,
     stop_timeout: Duration,
@@ -44,7 +43,7 @@ impl XrayRealityAdapter {
     ) -> Self {
         Self {
             xray_binary_path: xray_binary_path.into(),
-            bridge_binary_path: bridge_binary_path.into(),
+            bridge: FullRouteBridge::new(bridge_binary_path),
             runtime_dir: runtime_dir.into(),
             startup_timeout: Duration::from_secs(20),
             stop_timeout: Duration::from_secs(8),
@@ -68,13 +67,7 @@ impl TransportAdapter for XrayRealityAdapter {
             "Xray",
         )
         .await?;
-        check_binary(
-            &self.bridge_binary_path,
-            &["--version"],
-            &transport.profile.id,
-            "tun2proxy",
-        )
-        .await?;
+        self.bridge.check(&transport.profile.id).await?;
         let resolved = timeout(
             Duration::from_secs(5),
             lookup_host((transport.profile.endpoint.as_str(), transport.profile.port)),
@@ -114,7 +107,7 @@ impl TransportAdapter for XrayRealityAdapter {
             )
         })?;
         let started = Instant::now();
-        let socks_port = reserve_port(&transport.profile.id).await?;
+        let socks_port = reserve_proxy_port(&transport.profile.id).await?;
         let document = render_client_config(transport, server.ip(), socks_port)?;
         let config = EphemeralConfig::create(&self.runtime_dir, "xray", document)
             .await
@@ -182,35 +175,12 @@ impl TransportAdapter for XrayRealityAdapter {
             return Err(error);
         }
 
-        let mut bridge_command = Command::new(&self.bridge_binary_path);
-        bridge_command
-            .arg("--setup")
-            .arg("--proxy")
-            .arg(format!("socks5://127.0.0.1:{socks_port}"))
-            .arg("--dns")
-            .arg("virtual")
-            .arg("--verbosity")
-            .arg("error")
-            .arg("--exit-on-fatal-error")
-            .arg("--ipv6-enabled");
-        for address in &probe.resolved_addresses {
-            bridge_command.arg("--bypass").arg(address.ip().to_string());
-        }
-        let mut bridge = bridge_command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|_| {
-                ClientError::transport(
-                    &transport.profile.id,
-                    "failed to launch the full-route bridge",
-                    false,
-                )
-            })?;
-        if let Err(error) = wait_for_bridge(
+        let mut bridge =
+            self.bridge
+                .start(socks_port, &probe.resolved_addresses, &transport.profile.id)?;
+        if let Err(error) = wait_until_stable(
             &mut xray,
+            "Xray",
             &mut bridge,
             Duration::from_millis(1200),
             &transport.profile.id,
@@ -223,16 +193,14 @@ impl TransportAdapter for XrayRealityAdapter {
         }
         drop(config);
 
-        let (command_tx, command_rx) = mpsc::channel(1);
-        let (status_tx, status_rx) = watch::channel(TunnelStatus::Connected);
-        tokio::spawn(supervise_processes(xray, bridge, command_rx, status_tx));
         Ok(StartedTunnel {
-            tunnel: Arc::new(XrayTunnel {
-                transport_id: transport.profile.id.clone(),
-                command_tx,
-                status_rx,
-                stop_timeout: self.stop_timeout,
-            }),
+            tunnel: supervise(
+                transport.profile.id.clone(),
+                "Xray",
+                xray,
+                bridge,
+                self.stop_timeout,
+            ),
             handshake_latency: started.elapsed(),
         })
     }
@@ -484,16 +452,6 @@ fn render_client_config(
     })
 }
 
-async fn reserve_port(transport_id: &str) -> Result<u16, ClientError> {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(|_| {
-        ClientError::transport(transport_id, "failed to reserve a local proxy port", true)
-    })?;
-    Ok(listener
-        .local_addr()
-        .expect("bound listener has an address")
-        .port())
-}
-
 async fn wait_for_socks(
     child: &mut Child,
     port: u16,
@@ -563,136 +521,6 @@ async fn verify_reality_path(
                 true,
             )
         })
-}
-
-async fn wait_for_bridge(
-    xray: &mut Child,
-    bridge: &mut Child,
-    settle_time: Duration,
-    transport_id: &str,
-) -> Result<(), ClientError> {
-    let deadline = tokio::time::Instant::now() + settle_time;
-    loop {
-        if xray
-            .try_wait()
-            .map_err(|_| {
-                ClientError::transport(transport_id, "failed to inspect the Xray process", false)
-            })?
-            .is_some()
-        {
-            return Err(ClientError::transport(
-                transport_id,
-                "Xray stopped while enabling the full-route tunnel",
-                true,
-            ));
-        }
-        if bridge
-            .try_wait()
-            .map_err(|_| {
-                ClientError::transport(transport_id, "failed to inspect the route bridge", false)
-            })?
-            .is_some()
-        {
-            return Err(ClientError::transport(
-                transport_id,
-                "the full-route bridge could not configure this system",
-                false,
-            ));
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Ok(());
-        }
-        sleep(Duration::from_millis(100)).await;
-    }
-}
-
-async fn stop_child(child: &mut Child) {
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-}
-
-enum ProcessCommand {
-    Stop,
-}
-
-async fn supervise_processes(
-    mut xray: Child,
-    mut bridge: Child,
-    mut commands: mpsc::Receiver<ProcessCommand>,
-    status: watch::Sender<TunnelStatus>,
-) {
-    tokio::select! {
-        result = xray.wait() => {
-            stop_child(&mut bridge).await;
-            let message = result.map_or_else(
-                |_| "failed to wait for Xray".to_owned(),
-                |exit| format!("Xray exited unexpectedly ({exit})"),
-            );
-            status.send_replace(TunnelStatus::Failed(message));
-        }
-        result = bridge.wait() => {
-            stop_child(&mut xray).await;
-            let message = result.map_or_else(
-                |_| "failed to wait for the full-route bridge".to_owned(),
-                |exit| format!("full-route bridge exited unexpectedly ({exit})"),
-            );
-            status.send_replace(TunnelStatus::Failed(message));
-        }
-        command = commands.recv() => {
-            if matches!(command, Some(ProcessCommand::Stop)) {
-                stop_child(&mut bridge).await;
-                stop_child(&mut xray).await;
-            }
-            status.send_replace(TunnelStatus::Stopped);
-        }
-    }
-}
-
-struct XrayTunnel {
-    transport_id: String,
-    command_tx: mpsc::Sender<ProcessCommand>,
-    status_rx: watch::Receiver<TunnelStatus>,
-    stop_timeout: Duration,
-}
-
-#[async_trait]
-impl ActiveTunnel for XrayTunnel {
-    fn transport_id(&self) -> &str {
-        &self.transport_id
-    }
-
-    fn status(&self) -> watch::Receiver<TunnelStatus> {
-        self.status_rx.clone()
-    }
-
-    async fn stop(&self) -> Result<(), ClientError> {
-        if !matches!(*self.status_rx.borrow(), TunnelStatus::Connected) {
-            return Ok(());
-        }
-        self.command_tx
-            .send(ProcessCommand::Stop)
-            .await
-            .map_err(|_| {
-                ClientError::transport(
-                    &self.transport_id,
-                    "transport supervisor is unavailable",
-                    true,
-                )
-            })?;
-        let mut status = self.status_rx.clone();
-        timeout(self.stop_timeout, async {
-            while matches!(*status.borrow(), TunnelStatus::Connected) {
-                if status.changed().await.is_err() {
-                    break;
-                }
-            }
-        })
-        .await
-        .map_err(|_| {
-            ClientError::transport(&self.transport_id, "transport shutdown timed out", true)
-        })?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, enforce lease revocation, and report per-session traffic. The Android client has carried both transports on a physical current arm64 device, including ranked startup fallback, session-preserving recovery, bidirectional Wi-Fi/cellular recovery, responsive cancellation, and clean disconnect. An API 36 fail-closed handover retest plus the API 26, Doze, revoke, DNS-leak, and owner-signing matrix remain before this is a complete end-user VPN.
+> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, force desktop name resolution through a supervised virtual-DNS tunnel, enforce lease revocation, and report per-session traffic. The Android client has carried both transports on a physical current arm64 device, including ranked startup fallback, session-preserving recovery, bidirectional Wi-Fi/cellular recovery, responsive cancellation, and clean disconnect. An API 36 fail-closed handover retest plus the Android API 26, Doze, revoke, DNS-leak, and owner-signing matrix remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -14,7 +14,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Shared Rust client controller with hardened HTTPS enrollment, UI-safe state snapshots, lease renewal, metrics refresh, bounded fallback, reconnect maintenance, and clean release.
 - Map-first Tauri 2 desktop UI with secure enrollment, node geography, connection control, health/capacity telemetry, traffic history, and responsive Linux/Windows layouts.
 - Authenticated loopback privilege broker with HMAC-SHA-256 installation identity, bounded framing, one-tunnel ownership, heartbeat expiry, and redacted diagnostics.
-- Privileged desktop transport service with strict Hysteria2 and VLESS + REALITY validation, full-route TUN configuration, server-route exclusion, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
+- Privileged desktop transport service with strict Hysteria2 and VLESS + REALITY validation, shared full-route TUN and virtual-DNS ownership, every resolved server IP excluded, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
 - Hardened `systemd` and Windows Service Control Manager installers with read-only desktop token access and non-destructive upgrades.
 - Exactly 32-character access grants with Argon2-protected at-rest storage.
 - Per-grant connection limits, global capacity, expiry, renewal, release, and revocation.

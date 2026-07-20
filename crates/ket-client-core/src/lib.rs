@@ -4,6 +4,7 @@ mod api;
 mod broker;
 mod client;
 mod error;
+mod full_route;
 mod hysteria;
 mod runtime;
 mod state;
@@ -15,7 +16,7 @@ pub use api::{ControlEndpoint, ControlPlane, HttpControlPlane, InsecureHttpPolic
 pub use broker::{BrokerConfig, BrokerReadiness, BrokerTransportAdapter};
 pub use client::{KetClient, MaintenanceTask};
 pub use error::{ClientError, ClientIssue};
-pub use hysteria::{Hysteria2Adapter, HysteriaTunSettings};
+pub use hysteria::Hysteria2Adapter;
 pub use state::{ClientPhase, ClientSnapshot, TransportSummary};
 pub use strategy::{SelectionPolicy, TransportHistory, TransportSelector};
 pub use transport::{ActiveTunnel, ProbeReport, StartedTunnel, TransportAdapter, TunnelStatus};

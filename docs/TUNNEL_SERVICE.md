@@ -1,6 +1,6 @@
 # Privileged tunnel service
 
-Ket keeps the desktop UI and control-plane client unprivileged. A small system service owns the selected Hysteria2 or Xray/`tun2proxy` processes, TUN device, and route changes. The desktop reaches it only through `127.0.0.1:39731`.
+Ket keeps the desktop UI and control-plane client unprivileged. A small system service owns the selected Hysteria2 or Xray process together with `tun2proxy`, the TUN device, DNS setup, and route changes. The desktop reaches it only through `127.0.0.1:39731`.
 
 ## Trust boundary
 
@@ -9,7 +9,8 @@ Ket keeps the desktop UI and control-plane client unprivileged. A small system s
 - Frames are length-prefixed, JSON encoded, and capped at 128 KiB. Buffers containing transport credentials are zeroized after use.
 - The service permits one full-route tunnel at a time. A desktop heartbeat renews a 12-second lease; a crashed client therefore cannot leave routing under an unmanaged process indefinitely.
 - Tunnel IDs, HMAC proofs, access codes, and transport credentials use redacted debug implementations. The broker token is never sent over the socket.
-- The selected engine receives an ephemeral `0600` configuration under the service runtime directory. Ket removes that file after readiness and disables Hysteria update checks.
+- The selected engine receives an ephemeral `0600` configuration under the service runtime directory. Ket removes that file after engine and bridge readiness and disables Hysteria update checks.
+- Both transports expose only an unauthenticated loopback SOCKS endpoint to the same supervised bridge. The bridge requires virtual DNS, captures IPv4 and IPv6, and bypasses every pre-resolved data-plane server IP.
 
 The token authenticates a local desktop installation; it does not elevate arbitrary requests. The service exposes a fixed command set and validates the server transport description before it starts Hysteria. Administrators and root remain trusted by the operating-system security model.
 

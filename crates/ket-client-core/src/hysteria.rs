@@ -1,9 +1,7 @@
 use std::{
-    collections::BTreeSet,
-    net::{IpAddr, SocketAddr},
+    net::IpAddr,
     path::PathBuf,
     process::Stdio,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -14,13 +12,13 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader, Lines},
     net::lookup_host,
     process::{Child, ChildStderr, Command},
-    sync::{mpsc, watch},
     time::timeout,
 };
 use zeroize::Zeroize;
 
 use crate::{
-    ActiveTunnel, ClientError, ProbeReport, StartedTunnel, TransportAdapter, TunnelStatus,
+    ClientError, ProbeReport, StartedTunnel, TransportAdapter,
+    full_route::{FullRouteBridge, reserve_proxy_port, stop_child, supervise, wait_until_stable},
     runtime::EphemeralConfig,
 };
 
@@ -28,41 +26,10 @@ const KNOWN_OPTIONS: &[&str] = &["obfs", "gecko_min_packet_size", "gecko_max_pac
 const KNOWN_SECRETS: &[&str] = &["obfs_password"];
 
 #[derive(Clone, Debug)]
-pub struct HysteriaTunSettings {
-    pub interface_name: String,
-    pub mtu: u16,
-    pub ipv4_address: String,
-    pub ipv6_address: String,
-    pub enable_ipv6: bool,
-}
-
-impl Default for HysteriaTunSettings {
-    fn default() -> Self {
-        Self {
-            interface_name: default_interface_name().to_owned(),
-            mtu: 1400,
-            ipv4_address: "100.100.100.101/30".to_owned(),
-            ipv6_address: "2001::ffff:ffff:ffff:fff1/126".to_owned(),
-            enable_ipv6: true,
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn default_interface_name() -> &'static str {
-    "Ket"
-}
-
-#[cfg(not(target_os = "windows"))]
-fn default_interface_name() -> &'static str {
-    "ket0"
-}
-
-#[derive(Clone, Debug)]
 pub struct Hysteria2Adapter {
     binary_path: PathBuf,
+    bridge: FullRouteBridge,
     runtime_dir: PathBuf,
-    tun: HysteriaTunSettings,
     startup_timeout: Duration,
     stop_timeout: Duration,
 }
@@ -70,13 +37,13 @@ pub struct Hysteria2Adapter {
 impl Hysteria2Adapter {
     pub fn new(
         binary_path: impl Into<PathBuf>,
+        bridge_binary_path: impl Into<PathBuf>,
         runtime_dir: impl Into<PathBuf>,
-        tun: HysteriaTunSettings,
     ) -> Self {
         Self {
             binary_path: binary_path.into(),
+            bridge: FullRouteBridge::new(bridge_binary_path),
             runtime_dir: runtime_dir.into(),
-            tun,
             startup_timeout: Duration::from_secs(20),
             stop_timeout: Duration::from_secs(8),
         }
@@ -126,6 +93,7 @@ impl TransportAdapter for Hysteria2Adapter {
                 false,
             ));
         }
+        self.bridge.check(&transport.profile.id).await?;
 
         let resolved = timeout(
             Duration::from_secs(5),
@@ -137,7 +105,7 @@ impl TransportAdapter for Hysteria2Adapter {
             ClientError::transport(&transport.profile.id, "server DNS lookup failed", true)
         })?;
         let mut addresses: Vec<_> = resolved.collect();
-        addresses.sort();
+        addresses.sort_by_key(|address| (!address.is_ipv4(), *address));
         addresses.dedup();
         if addresses.is_empty() {
             return Err(ClientError::transport(
@@ -158,15 +126,16 @@ impl TransportAdapter for Hysteria2Adapter {
         probe: &ProbeReport,
     ) -> Result<StartedTunnel, ClientError> {
         validate_transport(transport)?;
-        if probe.resolved_addresses.is_empty() {
-            return Err(ClientError::transport(
+        let server = probe.resolved_addresses.first().ok_or_else(|| {
+            ClientError::transport(
                 &transport.profile.id,
                 "the server address was not resolved",
                 true,
-            ));
-        }
+            )
+        })?;
         let started = Instant::now();
-        let document = render_client_config(transport, &probe.resolved_addresses, &self.tun)?;
+        let socks_port = reserve_proxy_port(&transport.profile.id).await?;
+        let document = render_client_config(transport, server.ip(), socks_port)?;
         let config = EphemeralConfig::create(&self.runtime_dir, "hysteria", document)
             .await
             .map_err(|message| ClientError::transport(&transport.profile.id, message, false))?;
@@ -209,20 +178,33 @@ impl TransportAdapter for Hysteria2Adapter {
             let _ = child.wait().await;
             return Err(error);
         }
+        let mut bridge =
+            self.bridge
+                .start(socks_port, &probe.resolved_addresses, &transport.profile.id)?;
+        if let Err(error) = wait_until_stable(
+            &mut child,
+            "Hysteria2",
+            &mut bridge,
+            Duration::from_millis(1200),
+            &transport.profile.id,
+        )
+        .await
+        {
+            stop_child(&mut bridge).await;
+            stop_child(&mut child).await;
+            return Err(error);
+        }
         drop(config);
 
-        let (command_tx, command_rx) = mpsc::channel(1);
-        let (status_tx, status_rx) = watch::channel(TunnelStatus::Connected);
         tokio::spawn(drain_logs(lines));
-        tokio::spawn(supervise_process(child, command_rx, status_tx));
-        let tunnel = HysteriaTunnel {
-            transport_id: transport.profile.id.clone(),
-            command_tx,
-            status_rx,
-            stop_timeout: self.stop_timeout,
-        };
         Ok(StartedTunnel {
-            tunnel: Arc::new(tunnel),
+            tunnel: supervise(
+                transport.profile.id.clone(),
+                "Hysteria2",
+                child,
+                bridge,
+                self.stop_timeout,
+            ),
             handshake_latency: started.elapsed(),
         })
     }
@@ -309,7 +291,7 @@ struct ClientConfig<'a> {
     obfs: Option<ObfsConfig<'a>>,
     quic: QuicConfig,
     fast_open: bool,
-    tun: TunConfig,
+    socks5: Socks5Config,
 }
 
 #[derive(Serialize)]
@@ -347,34 +329,17 @@ struct QuicConfig {
 }
 
 #[derive(Serialize)]
-struct TunConfig {
-    name: String,
-    mtu: u16,
-    timeout: &'static str,
-    address: TunAddress,
-    route: TunRoute,
-}
-
-#[derive(Serialize)]
-struct TunAddress {
-    ipv4: String,
-    ipv6: String,
-}
-
-#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TunRoute {
-    strict: bool,
-    ipv4: Vec<String>,
-    ipv6: Vec<String>,
-    ipv4_exclude: Vec<String>,
-    ipv6_exclude: Vec<String>,
+struct Socks5Config {
+    listen: String,
+    #[serde(rename = "disableUDP")]
+    disable_udp: bool,
 }
 
 fn render_client_config(
     transport: &SessionTransport,
-    addresses: &[SocketAddr],
-    settings: &HysteriaTunSettings,
+    server_address: IpAddr,
+    socks_port: u16,
 ) -> Result<Vec<u8>, ClientError> {
     validate_transport(transport)?;
     let credential = transport.credential.as_ref().expect("validated credential");
@@ -432,36 +397,9 @@ fn render_client_config(
         }
     };
 
-    let mut ipv4_exclude = BTreeSet::new();
-    let mut ipv6_exclude = BTreeSet::new();
-    for address in addresses {
-        match address.ip() {
-            IpAddr::V4(address) => {
-                ipv4_exclude.insert(format!("{address}/32"));
-            }
-            IpAddr::V6(address) => {
-                ipv6_exclude.insert(format!("{address}/128"));
-            }
-        }
-    }
-    if !settings.enable_ipv6 {
-        ipv6_exclude.clear();
-        ipv6_exclude.insert("::/0".to_owned());
-    }
-
-    let server_host = if matches!(
-        transport.profile.endpoint.to_ascii_lowercase().as_str(),
-        "hysteria2" | "hy2"
-    ) {
-        match addresses[0].ip() {
-            IpAddr::V4(address) => address.to_string(),
-            IpAddr::V6(address) => format!("[{address}]"),
-        }
-    } else {
-        match transport.profile.endpoint.parse::<IpAddr>() {
-            Ok(IpAddr::V6(address)) => format!("[{address}]"),
-            _ => transport.profile.endpoint.clone(),
-        }
+    let server_host = match server_address {
+        IpAddr::V4(address) => address.to_string(),
+        IpAddr::V6(address) => format!("[{address}]"),
     };
     let config = ClientConfig {
         server: format!("{server_host}:{}", transport.profile.port),
@@ -473,25 +411,9 @@ fn render_client_config(
             keep_alive_period: "10s",
         },
         fast_open: false,
-        tun: TunConfig {
-            name: settings.interface_name.clone(),
-            mtu: settings.mtu,
-            timeout: "5m",
-            address: TunAddress {
-                ipv4: settings.ipv4_address.clone(),
-                ipv6: settings.ipv6_address.clone(),
-            },
-            route: TunRoute {
-                strict: true,
-                ipv4: vec!["0.0.0.0/0".to_owned()],
-                ipv6: if settings.enable_ipv6 {
-                    vec!["::/0".to_owned()]
-                } else {
-                    Vec::new()
-                },
-                ipv4_exclude: ipv4_exclude.into_iter().collect(),
-                ipv6_exclude: ipv6_exclude.into_iter().collect(),
-            },
+        socks5: Socks5Config {
+            listen: format!("127.0.0.1:{socks_port}"),
+            disable_udp: false,
         },
     };
     serde_json::to_vec_pretty(&config).map_err(|_| {
@@ -539,10 +461,10 @@ async fn wait_until_ready(
 ) -> Result<(), ClientError> {
     let deadline = tokio::time::Instant::now() + startup_timeout;
     let mut connected = false;
-    let mut tun_ready = false;
+    let mut socks_ready = false;
     let mut diagnostic = None;
     loop {
-        if connected && tun_ready {
+        if connected && socks_ready {
             return Ok(());
         }
         if let Some(status) = child.try_wait().map_err(|_| {
@@ -566,7 +488,7 @@ async fn wait_until_ready(
         match timeout(wait, lines.next_line()).await {
             Ok(Ok(Some(mut line))) => {
                 connected |= line.contains("connected to server");
-                tun_ready |= line.contains("TUN listening");
+                socks_ready |= line.contains("SOCKS5 server listening");
                 diagnostic = classify_diagnostic(&line).or(diagnostic);
                 line.zeroize();
             }
@@ -592,7 +514,7 @@ async fn wait_until_ready(
 fn classify_diagnostic(line: &str) -> Option<String> {
     let normalized = line.to_ascii_lowercase();
     if normalized.contains("permission denied") || normalized.contains("operation not permitted") {
-        Some("TUN setup requires elevated network permissions".to_owned())
+        Some("the Hysteria2 local proxy could not be initialized".to_owned())
     } else if normalized.contains("authentication failed")
         || normalized.contains("authentication error")
     {
@@ -616,80 +538,6 @@ async fn drain_logs(mut lines: Lines<BufReader<ChildStderr>>) {
     }
 }
 
-enum ProcessCommand {
-    Stop,
-}
-
-async fn supervise_process(
-    mut child: Child,
-    mut commands: mpsc::Receiver<ProcessCommand>,
-    status: watch::Sender<TunnelStatus>,
-) {
-    tokio::select! {
-        result = child.wait() => {
-            let message = match result {
-                Ok(exit) => format!("Hysteria2 exited unexpectedly ({exit})"),
-                Err(_) => "failed to wait for Hysteria2".to_owned(),
-            };
-            status.send_replace(TunnelStatus::Failed(message));
-        }
-        command = commands.recv() => {
-            if matches!(command, Some(ProcessCommand::Stop)) {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
-            }
-            status.send_replace(TunnelStatus::Stopped);
-        }
-    }
-}
-
-struct HysteriaTunnel {
-    transport_id: String,
-    command_tx: mpsc::Sender<ProcessCommand>,
-    status_rx: watch::Receiver<TunnelStatus>,
-    stop_timeout: Duration,
-}
-
-#[async_trait]
-impl ActiveTunnel for HysteriaTunnel {
-    fn transport_id(&self) -> &str {
-        &self.transport_id
-    }
-
-    fn status(&self) -> watch::Receiver<TunnelStatus> {
-        self.status_rx.clone()
-    }
-
-    async fn stop(&self) -> Result<(), ClientError> {
-        if !matches!(*self.status_rx.borrow(), TunnelStatus::Connected) {
-            return Ok(());
-        }
-        self.command_tx
-            .send(ProcessCommand::Stop)
-            .await
-            .map_err(|_| {
-                ClientError::transport(
-                    &self.transport_id,
-                    "transport supervisor is unavailable",
-                    true,
-                )
-            })?;
-        let mut status = self.status_rx.clone();
-        timeout(self.stop_timeout, async {
-            while matches!(*status.borrow(), TunnelStatus::Connected) {
-                if status.changed().await.is_err() {
-                    break;
-                }
-            }
-        })
-        .await
-        .map_err(|_| {
-            ClientError::transport(&self.transport_id, "transport shutdown timed out", true)
-        })?;
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, fs, net::Ipv4Addr};
@@ -698,21 +546,22 @@ mod tests {
     use rand::{Rng, distributions::Alphanumeric};
 
     use super::*;
+    use crate::TunnelStatus;
 
     #[test]
-    fn renderer_enables_strict_tun_routes_and_keeps_tls_verification() {
+    fn renderer_pins_the_server_and_enables_udp_socks_without_tls_downgrade() {
         let transport = test_transport("gecko");
-        let addresses = [SocketAddr::from((Ipv4Addr::new(203, 0, 113, 8), 443))];
-        let bytes = render_client_config(&transport, &addresses, &HysteriaTunSettings::default())
-            .expect("config should render");
+        let server = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 8));
+        let bytes = render_client_config(&transport, server, 10808).expect("config should render");
         let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
-        assert_eq!(document["server"], "vpn.example.test:443");
+        assert_eq!(document["server"], "203.0.113.8:443");
         assert_eq!(document["tls"]["sni"], "cdn.example.test");
         assert!(document["tls"].get("insecure").is_none());
         assert_eq!(document["obfs"]["type"], "gecko");
-        assert_eq!(document["tun"]["route"]["strict"], true);
-        assert_eq!(document["tun"]["route"]["ipv4Exclude"][0], "203.0.113.8/32");
+        assert_eq!(document["socks5"]["listen"], "127.0.0.1:10808");
+        assert_eq!(document["socks5"]["disableUDP"], false);
+        assert!(document.get("tun").is_none());
         assert_eq!(document["fastOpen"], false);
     }
 
@@ -723,16 +572,12 @@ mod tests {
             .profile
             .options
             .insert("insecure".to_owned(), "true".to_owned());
-        let address = ["203.0.113.8:443".parse().unwrap()];
-        assert!(
-            render_client_config(&transport, &address, &HysteriaTunSettings::default()).is_err()
-        );
+        let address = "203.0.113.8".parse().unwrap();
+        assert!(render_client_config(&transport, address, 10808).is_err());
 
         transport.profile.options.remove("insecure");
         transport.credential = None;
-        assert!(
-            render_client_config(&transport, &address, &HysteriaTunSettings::default()).is_err()
-        );
+        assert!(render_client_config(&transport, address, 10808).is_err());
     }
 
     fn test_transport(obfs: &str) -> SessionTransport {
@@ -766,12 +611,8 @@ mod tests {
 
     #[test]
     fn test_timeout_override_is_available_for_process_tests() {
-        let adapter = Hysteria2Adapter::new(
-            "hysteria",
-            std::env::temp_dir(),
-            HysteriaTunSettings::default(),
-        )
-        .with_timeouts(Duration::from_millis(1), Duration::from_millis(1));
+        let adapter = Hysteria2Adapter::new("hysteria", "tun2proxy", std::env::temp_dir())
+            .with_timeouts(Duration::from_millis(1), Duration::from_millis(1));
         assert_eq!(adapter.startup_timeout, Duration::from_millis(1));
     }
 
@@ -789,13 +630,20 @@ mod tests {
         let runtime = root.join("runtime");
         fs::create_dir_all(&root).unwrap();
         let binary = root.join("fake-hysteria");
+        let bridge = root.join("fake-tun2proxy");
         fs::write(
             &binary,
-            "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then exit 0; fi\necho '{\"msg\":\"connected to server\"}' >&2\necho '{\"msg\":\"TUN listening\"}' >&2\nexec sleep 300\n",
+            "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then exit 0; fi\necho '{\"msg\":\"connected to server\"}' >&2\necho '{\"msg\":\"SOCKS5 server listening\"}' >&2\nexec sleep 300\n",
+        )
+        .unwrap();
+        fs::write(
+            &bridge,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexec sleep 300\n",
         )
         .unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
-        let adapter = Hysteria2Adapter::new(&binary, &runtime, HysteriaTunSettings::default())
+        fs::set_permissions(&bridge, fs::Permissions::from_mode(0o700)).unwrap();
+        let adapter = Hysteria2Adapter::new(&binary, &bridge, &runtime)
             .with_timeouts(Duration::from_secs(2), Duration::from_secs(2));
         let mut transport = test_transport("gecko");
         transport.profile.endpoint = "localhost".to_owned();
