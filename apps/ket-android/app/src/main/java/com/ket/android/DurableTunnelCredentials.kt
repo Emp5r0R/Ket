@@ -30,7 +30,10 @@ internal class DurableTunnelCredentials(
     val sessionManifest: String?,
 ) {
     fun launchSpec(): TunnelLaunchSpec? = sessionManifest?.let { manifest ->
-        TunnelLaunchSpec.fromEnrollment(profile.serverUrl, KetControlApi.parseEnrollment(manifest))
+        TunnelLaunchSpec.fromEnrollment(
+            profile.serverUrl,
+            KetControlApi.parseEnrollment(manifest, requireActiveLease = false),
+        )
     }
 
     override fun toString(): String =
@@ -261,6 +264,6 @@ internal class DurableTunnelSessionResolver(
     }
 
     companion object {
-        const val CLIENT_NAME = "Ket Android"
+        const val CLIENT_NAME = KET_ANDROID_CLIENT_NAME
     }
 }

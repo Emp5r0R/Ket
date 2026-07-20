@@ -52,9 +52,43 @@ class HysteriaTransportTest {
     }
 
     @Test
+    fun `selector rejects excessive malformed and duplicate transport identities`() {
+        val excessive = JSONArray().apply {
+            repeat(33) { put(validTransport("none").put("id", "hy2-$it")) }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidTransportSelector.parse(excessive)
+        }
+
+        val malformed = JSONArray().put(validTransport("none").put("id", "../hy2"))
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidTransportSelector.parse(malformed)
+        }
+
+        val duplicates = JSONArray()
+            .put(validTransport("none"))
+            .put(validTransport("none"))
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidTransportSelector.parse(duplicates)
+        }
+    }
+
+    @Test
+    fun `transport credentials are bounded before engine configuration`() {
+        val profile = validTransport("none")
+        profile.getJSONObject("credential").put("auth", "x".repeat(4_097))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            HysteriaTransport.select(JSONArray().put(profile))
+        }
+    }
+
+    @Test
     fun `enrollment parser requires an implemented Android transport and redacts the token`() {
+        val token = testSessionToken('H')
         val body = JSONObject()
-            .put("session_token", "control-token-value")
+            .put("session_token", token)
+            .put("session_expires_at_epoch_seconds", 4_000_000_000)
             .put("node", testNodeJson())
             .put("transports", JSONArray().put(validTransport("salamander")))
             .toString()
@@ -64,7 +98,7 @@ class HysteriaTransportTest {
         assertEquals("Test node", result.node.displayName)
         assertEquals("Testland", result.node.location.countryName)
         assertEquals("Hysteria 2", result.transports.single().displayName)
-        assertFalse(result.toString().contains("control-token-value"))
+        assertFalse(result.toString().contains(token))
     }
 
     private fun validTransport(obfs: String): JSONObject {

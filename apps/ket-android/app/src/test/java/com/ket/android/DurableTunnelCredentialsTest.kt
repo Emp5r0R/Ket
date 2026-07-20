@@ -1,6 +1,5 @@
 package com.ket.android
 
-import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,7 +14,7 @@ import javax.crypto.KeyGenerator
 class DurableTunnelCredentialsTest {
     @Test
     fun `credential codec round trips a strict resumable session without exposing secrets`() {
-        val original = credentials(sessionManifest("old-session-token"))
+        val original = credentials(testSessionManifest(OLD_TOKEN))
 
         val decoded = DurableTunnelCredentialsCodec.decode(
             DurableTunnelCredentialsCodec.encode(original),
@@ -24,10 +23,10 @@ class DurableTunnelCredentialsTest {
 
         assertEquals(SERVER_URL, decoded.profile.serverUrl)
         assertEquals(ACCESS_CODE, decoded.profile.accessCode)
-        assertEquals("old-session-token", launch.sessionToken)
+        assertEquals(OLD_TOKEN, launch.sessionToken)
         assertEquals("Hysteria 2", launch.transports.single().displayName)
         assertFalse(decoded.toString().contains(ACCESS_CODE))
-        assertFalse(decoded.toString().contains("old-session-token"))
+        assertFalse(decoded.toString().contains(OLD_TOKEN))
         assertFalse(decoded.toString().contains("transport-auth-secret"))
     }
 
@@ -56,13 +55,13 @@ class DurableTunnelCredentialsTest {
     @Test
     fun `credential envelope hides plaintext and rejects authenticated tampering`() {
         val plaintext = DurableTunnelCredentialsCodec.encode(
-            credentials(sessionManifest("sealed-session-token")),
+            credentials(testSessionManifest(SEALED_TOKEN)),
         )
         val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
         val sealed = TunnelCredentialEnvelope.seal(plaintext, key)
 
         assertFalse(String(sealed).contains(ACCESS_CODE))
-        assertFalse(String(sealed).contains("sealed-session-token"))
+        assertFalse(String(sealed).contains(SEALED_TOKEN))
         assertTrue(plaintext.contentEquals(TunnelCredentialEnvelope.open(sealed, key)))
 
         sealed[sealed.lastIndex] = (sealed.last().toInt() xor 1).toByte()
@@ -73,9 +72,9 @@ class DurableTunnelCredentialsTest {
 
     @Test
     fun `explicit app launch takes precedence without reading durable credentials`() {
-        val pending = requireNotNull(credentials(sessionManifest("pending-token")).launchSpec())
+        val pending = requireNotNull(credentials(testSessionManifest(PENDING_TOKEN)).launchSpec())
         val store = FakeCredentialStore(null)
-        val api = FakeSessionApi(enrollment("unused-token"))
+        val api = FakeSessionApi(enrollment(UNUSED_TOKEN))
 
         val resolved = DurableTunnelSessionResolver(api, store).resolve(pending)
 
@@ -87,12 +86,12 @@ class DurableTunnelCredentialsTest {
 
     @Test
     fun `process restart renews and resumes the existing server session`() {
-        val store = FakeCredentialStore(credentials(sessionManifest("existing-token")))
-        val api = FakeSessionApi(enrollment("unused-token"))
+        val store = FakeCredentialStore(credentials(testSessionManifest(EXISTING_TOKEN)))
+        val api = FakeSessionApi(enrollment(UNUSED_TOKEN))
 
         val resolved = DurableTunnelSessionResolver(api, store).resolve(null)
 
-        assertEquals("existing-token", resolved.sessionToken)
+        assertEquals(EXISTING_TOKEN, resolved.sessionToken)
         assertEquals(1, api.renewals)
         assertEquals(0, api.enrollments)
         assertEquals(0, store.saves)
@@ -100,13 +99,13 @@ class DurableTunnelCredentialsTest {
 
     @Test
     fun `manual reconnect to the saved profile reuses its existing connection slot`() {
-        val store = FakeCredentialStore(credentials(sessionManifest("existing-token")))
-        val api = FakeSessionApi(enrollment("unused-token"))
+        val store = FakeCredentialStore(credentials(testSessionManifest(EXISTING_TOKEN)))
+        val api = FakeSessionApi(enrollment(UNUSED_TOKEN))
         val profile = TunnelEnrollmentProfile(SERVER_URL, ACCESS_CODE)
 
         val resolved = DurableTunnelSessionResolver(api, store).resolveForApp(profile)
 
-        assertEquals("existing-token", resolved.sessionToken)
+        assertEquals(EXISTING_TOKEN, resolved.sessionToken)
         assertEquals(1, api.renewals)
         assertEquals(0, api.enrollments)
         assertEquals(0, api.releasedTokens.size)
@@ -114,44 +113,44 @@ class DurableTunnelCredentialsTest {
 
     @Test
     fun `blocked control endpoint retains the existing session for transport recovery`() {
-        val store = FakeCredentialStore(credentials(sessionManifest("existing-token")))
+        val store = FakeCredentialStore(credentials(testSessionManifest(EXISTING_TOKEN)))
         val api = FakeSessionApi(
-            enrollment("unused-token"),
+            enrollment(UNUSED_TOKEN),
             renewalError = IllegalStateException("control endpoint blocked"),
         )
 
         val resolved = DurableTunnelSessionResolver(api, store).resolve(null)
 
-        assertEquals("existing-token", resolved.sessionToken)
+        assertEquals(EXISTING_TOKEN, resolved.sessionToken)
         assertEquals(0, api.enrollments)
         assertEquals(0, store.clears)
     }
 
     @Test
     fun `expired session is replaced from the encrypted enrollment profile`() {
-        val store = FakeCredentialStore(credentials(sessionManifest("expired-token")))
+        val store = FakeCredentialStore(credentials(testSessionManifest(EXPIRED_TOKEN)))
         val api = FakeSessionApi(
-            enrollment("replacement-token"),
+            enrollment(REPLACEMENT_TOKEN),
             renewalError = KetControlException(401, "expired"),
         )
 
         val resolved = DurableTunnelSessionResolver(api, store).resolve(null)
 
-        assertEquals("replacement-token", resolved.sessionToken)
+        assertEquals(REPLACEMENT_TOKEN, resolved.sessionToken)
         assertEquals(1, api.renewals)
         assertEquals(1, api.enrollments)
         assertEquals(1, store.clears)
-        assertEquals("replacement-token", requireNotNull(store.current?.launchSpec()).sessionToken)
+        assertEquals(REPLACEMENT_TOKEN, requireNotNull(store.current?.launchSpec()).sessionToken)
     }
 
     @Test
     fun `always on start creates a session when only enrollment is stored`() {
         val store = FakeCredentialStore(credentials(null))
-        val api = FakeSessionApi(enrollment("fresh-token"))
+        val api = FakeSessionApi(enrollment(FRESH_TOKEN))
 
         val resolved = DurableTunnelSessionResolver(api, store).resolve(null)
 
-        assertEquals("fresh-token", resolved.sessionToken)
+        assertEquals(FRESH_TOKEN, resolved.sessionToken)
         assertEquals(1, api.enrollments)
         assertEquals(1, store.saves)
     }
@@ -159,19 +158,19 @@ class DurableTunnelCredentialsTest {
     @Test
     fun `failed durable save releases the newly created server session`() {
         val store = FakeCredentialStore(credentials(null), failSaves = true)
-        val api = FakeSessionApi(enrollment("orphan-token"))
+        val api = FakeSessionApi(enrollment(ORPHAN_TOKEN))
 
         assertThrows(IllegalStateException::class.java) {
             DurableTunnelSessionResolver(api, store).resolve(null)
         }
 
-        assertEquals(listOf("orphan-token"), api.releasedTokens)
+        assertEquals(listOf(ORPHAN_TOKEN), api.releasedTokens)
     }
 
     @Test
     fun `unconfigured always on start fails before contacting the server`() {
         val store = FakeCredentialStore(null)
-        val api = FakeSessionApi(enrollment("unused-token"))
+        val api = FakeSessionApi(enrollment(UNUSED_TOKEN))
 
         val error = assertThrows(IllegalStateException::class.java) {
             DurableTunnelSessionResolver(api, store).resolve(null)
@@ -240,36 +239,19 @@ class DurableTunnelCredentialsTest {
         DurableTunnelCredentials(TunnelEnrollmentProfile(SERVER_URL, ACCESS_CODE), manifest)
 
     private fun enrollment(token: String): EnrollmentResult =
-        KetControlApi.parseEnrollment(sessionManifest(token))
-
-    private fun sessionManifest(token: String): String = JSONObject()
-        .put("session_token", token)
-        .put("session_expires_at_epoch_seconds", 4_000_000_000)
-        .put("node", testNodeJson())
-        .put(
-            "transports",
-            JSONArray().put(
-                JSONObject()
-                    .put("id", "hy2-primary")
-                    .put("protocol", "hysteria2")
-                    .put("endpoint", "vpn.example.test")
-                    .put("port", 443)
-                    .put("network", "udp")
-                    .put("priority", 10)
-                    .put("tls_server_name", "vpn.example.test")
-                    .put("options", JSONObject().put("obfs", "none"))
-                    .put(
-                        "credential",
-                        JSONObject()
-                            .put("auth", "transport-auth-secret")
-                            .put("secrets", JSONObject()),
-                    ),
-            ),
-        )
-        .toString()
+        KetControlApi.parseEnrollment(testSessionManifest(token))
 
     companion object {
         private const val SERVER_URL = "https://ket.example.test"
         private val ACCESS_CODE = "A".repeat(32)
+        private val OLD_TOKEN = testSessionToken('O')
+        private val SEALED_TOKEN = testSessionToken('S')
+        private val PENDING_TOKEN = testSessionToken('P')
+        private val EXISTING_TOKEN = testSessionToken('E')
+        private val EXPIRED_TOKEN = testSessionToken('X')
+        private val REPLACEMENT_TOKEN = testSessionToken('R')
+        private val FRESH_TOKEN = testSessionToken('F')
+        private val ORPHAN_TOKEN = testSessionToken('N')
+        private val UNUSED_TOKEN = testSessionToken('U')
     }
 }
