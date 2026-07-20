@@ -36,7 +36,7 @@ $installer = Get-ChildItem target/release/bundle/nsis/*.exe -File
 ./packaging/verify-windows-nsis.ps1 -Installer $installer.FullName
 ```
 
-For a production server, source `.env`, run `./packaging/validate-env.sh`, and validate the base file plus each enabled overlay with `docker compose config --quiet`. Hysteria2 requires direct UDP reachability and VLESS + REALITY requires direct raw TCP reachability; ordinary Cloudflare HTTP proxying or a Cloudflare Tunnel does not carry either unmodified data plane.
+For a production server, source `.env`, run `./packaging/validate-env.sh`, and validate the base file plus each enabled overlay with `docker compose config --quiet`. The preflight validates client-visible URL, node identity/location, and enabled transport inputs; `ket-server` then repeats authoritative structured URL and manifest-field validation before it binds a listener. Hysteria2 requires direct UDP reachability and VLESS + REALITY requires direct raw TCP reachability; ordinary Cloudflare HTTP proxying or a Cloudflare Tunnel does not carry either unmodified data plane.
 
 ## Signing
 

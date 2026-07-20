@@ -25,6 +25,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Fail-closed Android release signing with operator-supplied version metadata and signer-certificate pinning; CI exercises the complete release path with a disposable identity that is never published as a trusted release.
 - Typed discovery for Hysteria2, IKEv2, OpenVPN/stunnel, Shadowsocks 2022, VLESS XTLS Reality, WireGuard, stealth, and XOR-wrapped adapters.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
+- Fail-fast server configuration that structurally validates the public URL and bounds node, location, transport, TLS-name, and option metadata before any manifest is issued.
 - Atomic persistent state and graceful shutdown.
 - Rootless, capability-free Docker control-plane image with a read-only root filesystem.
 
@@ -43,6 +44,8 @@ curl --fail http://127.0.0.1:8787/healthz
 ```
 
 The Compose default publishes only on loopback. Put a TLS reverse proxy in front of port `8787`, or explicitly set `KET_PUBLISH_ADDRESS` when a different binding is required. Do not expose an unencrypted control API over the public internet, and deny all public requests to `/internal/`; that namespace is reserved for private data-plane callbacks.
+
+The shell preflight rejects malformed operator-facing URL and node fields before Compose starts. `ket-server` repeats the authoritative structured validation at process startup, including HTTPS-or-loopback URL policy, map metadata, transport count and identifier bounds, endpoint/TLS names, and option maps, so it cannot emit a manifest that Ket clients reject for shape.
 
 To enable the Hysteria2 data plane, install a valid certificate under `secrets/tls`, set `KET_HYSTERIA_ENABLED=true` and the related Hysteria values in `.env`, then use the overlay:
 
