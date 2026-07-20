@@ -4,16 +4,54 @@ set -euo pipefail
 fail() { printf 'Ket configuration error: %s\n' "$1" >&2; exit 1; }
 required() { [[ -n "${!1:-}" ]] || fail "$1 is required"; }
 valid_port() { [[ "${!1:-$2}" =~ ^[1-9][0-9]*$ ]] && (( ${!1:-$2} <= 65535 )); }
+bounded_text() {
+  local name=$1 value=${!1:-$2} maximum=$3
+  [[ -n "$value" && ${#value} -le $maximum ]] || return 1
+  [[ "$value" != [[:space:]]* && "$value" != *[[:space:]] ]] || return 1
+  [[ ! "$value" =~ [[:cntrl:]] ]]
+}
+valid_host() {
+  local value=${!1:-}
+  [[ -n "$value" && ${#value} -le 253 ]] || return 1
+  [[ "$value" != *://* && "$value" != */* && "$value" != *\\* ]] || return 1
+  [[ "$value" != *'?'* && "$value" != *'#'* ]] || return 1
+  [[ ! "$value" =~ [[:space:][:cntrl:]] ]]
+}
+valid_public_url() {
+  local value=${KET_PUBLIC_URL:-http://127.0.0.1:8787} authority
+  [[ -n "$value" && ${#value} -le 2048 ]] || return 1
+  [[ "$value" == http://* || "$value" == https://* ]] || return 1
+  [[ "$value" != *'?'* && "$value" != *'#'* ]] || return 1
+  [[ ! "$value" =~ [[:space:][:cntrl:]] ]] || return 1
+  authority=${value#*://}
+  authority=${authority%%/*}
+  [[ -n "$authority" && "$authority" != *'@'* ]] || return 1
+  if [[ "$value" == http://* ]]; then
+    case "$authority" in
+      localhost|localhost:*|127.0.0.1|127.0.0.1:*|'[::1]'|'[::1]':*) ;;
+      *) return 1 ;;
+    esac
+  fi
+}
 
 required KET_ADMIN_TOKEN
 (( ${#KET_ADMIN_TOKEN} >= 32 )) || fail 'KET_ADMIN_TOKEN must contain at least 32 characters'
-[[ "${KET_SESSION_TTL_SECONDS:-1800}" =~ ^[0-9]+$ ]] || fail 'KET_SESSION_TTL_SECONDS must be numeric'
-(( KET_SESSION_TTL_SECONDS >= 60 && KET_SESSION_TTL_SECONDS <= 86400 )) || fail 'KET_SESSION_TTL_SECONDS must be between 60 and 86400'
+valid_public_url || fail 'KET_PUBLIC_URL must use HTTPS or loopback HTTP without credentials, whitespace, a query, or a fragment'
+[[ "${KET_NODE_ID:-ket-node-1}" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || fail 'KET_NODE_ID must be a 1-128 character ASCII identifier'
+bounded_text KET_NODE_NAME 'Ket node' 128 || fail 'KET_NODE_NAME must contain 1-128 trimmed printable characters'
+bounded_text KET_COUNTRY_NAME 'Unknown' 128 || fail 'KET_COUNTRY_NAME must contain 1-128 trimmed printable characters'
+if [[ -n "${KET_CITY:-}" ]]; then
+  bounded_text KET_CITY '' 128 || fail 'KET_CITY must contain 1-128 trimmed printable characters'
+fi
+session_ttl=${KET_SESSION_TTL_SECONDS:-1800}
+[[ "$session_ttl" =~ ^[0-9]+$ ]] || fail 'KET_SESSION_TTL_SECONDS must be numeric'
+(( session_ttl >= 60 && session_ttl <= 86400 )) || fail 'KET_SESSION_TTL_SECONDS must be between 60 and 86400'
 [[ "${KET_MAX_SESSIONS:-1000}" =~ ^[1-9][0-9]*$ ]] || fail 'KET_MAX_SESSIONS must be a positive integer'
 [[ "${KET_COUNTRY_CODE:-ZZ}" =~ ^[A-Z]{2}$ ]] || fail 'KET_COUNTRY_CODE must be two uppercase letters'
 
 if [[ "${KET_HYSTERIA_ENABLED:-false}" == true ]]; then
   required KET_HYSTERIA_PUBLIC_HOST
+  valid_host KET_HYSTERIA_PUBLIC_HOST || fail 'KET_HYSTERIA_PUBLIC_HOST must be a bounded hostname or IP address'
   required KET_HYSTERIA_STATS_SECRET
   (( ${#KET_HYSTERIA_STATS_SECRET} >= 32 )) || fail 'KET_HYSTERIA_STATS_SECRET must contain at least 32 characters'
   required KET_HYSTERIA_MASQUERADE_URL
@@ -29,7 +67,7 @@ fi
 
 if [[ "${KET_XRAY_ENABLED:-false}" == true ]]; then
   required KET_XRAY_PUBLIC_HOST
-  [[ "$KET_XRAY_PUBLIC_HOST" != *://* && "$KET_XRAY_PUBLIC_HOST" != */* ]] || fail 'KET_XRAY_PUBLIC_HOST must be a hostname or IP address without a scheme or path'
+  valid_host KET_XRAY_PUBLIC_HOST || fail 'KET_XRAY_PUBLIC_HOST must be a bounded hostname or IP address'
   valid_port KET_XRAY_PUBLIC_PORT 443 || fail 'KET_XRAY_PUBLIC_PORT must be between 1 and 65535'
   required KET_XRAY_SNI
   required KET_XRAY_SERVER_NAMES

@@ -40,6 +40,7 @@ This separation keeps the API and user experience consistent while allowing a no
 - State replacement is atomic and the state file is mode `0600` on Unix.
 - Mutations are serialized and persisted before becoming visible in memory.
 - Request bodies are capped at 16 KiB, requests time out, and Argon2 concurrency is bounded.
+- Server startup structurally parses the public URL and bounds every emitted node/location/transport field, including 32-profile maximum, identifier and display text, host and TLS names, and option maps; invalid operator configuration fails before listeners or data-plane runtime files are created.
 - Docker runs the control plane as an unprivileged user with all Linux capabilities dropped and a read-only root filesystem.
 - The Hysteria2 container is isolated from persistent control state, runs as UID `10001`, has a read-only root filesystem, and receives no Linux capabilities.
 - The Xray container has the same UID, read-only root, and capability restrictions. It can only read the mode-`0600` generated runtime configuration, while its gRPC control API remains private to the Compose network.

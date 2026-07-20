@@ -8,6 +8,16 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use ket_core::{Network, NodeLocation, TransportProfile, TransportProtocol};
+use url::{Host, Url};
+
+const MAX_NODE_TEXT_CHARS: usize = 128;
+const MAX_PUBLIC_URL_CHARS: usize = 2_048;
+const MAX_TRANSPORTS: usize = 32;
+const MAX_TRANSPORT_ID_CHARS: usize = 128;
+const MAX_ENDPOINT_CHARS: usize = 253;
+const MAX_OPTION_ENTRIES: usize = 32;
+const MAX_OPTION_KEY_CHARS: usize = 64;
+const MAX_OPTION_VALUE_CHARS: usize = 2_048;
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -83,12 +93,7 @@ impl ServerConfig {
             bail!("KET_ADMIN_TOKEN must contain at least 32 characters");
         }
 
-        let public_url = value("KET_PUBLIC_URL", "http://127.0.0.1:8787")
-            .trim_end_matches('/')
-            .to_owned();
-        if !(public_url.starts_with("https://") || public_url.starts_with("http://")) {
-            bail!("KET_PUBLIC_URL must start with http:// or https://");
-        }
+        let public_url = normalize_public_url(value("KET_PUBLIC_URL", "http://127.0.0.1:8787"))?;
 
         let max_sessions = parse_value("KET_MAX_SESSIONS", 1000_u32)?;
         if max_sessions == 0 {
@@ -113,27 +118,32 @@ impl ServerConfig {
         }
         validate_transports(&transports)?;
 
-        let country_code = value("KET_COUNTRY_CODE", "ZZ").to_uppercase();
+        let node_id = value("KET_NODE_ID", "ket-node-1");
+        let node_name = value("KET_NODE_NAME", "Ket node");
+        let country_code = value("KET_COUNTRY_CODE", "ZZ");
+        let country_name = value("KET_COUNTRY_NAME", "Unknown");
+        let city = env::var("KET_CITY")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
         let latitude = parse_value("KET_LATITUDE", 0.0_f64)?;
         let longitude = parse_value("KET_LONGITUDE", 0.0_f64)?;
-        validate_location(&country_code, latitude, longitude)?;
+        let location = NodeLocation {
+            country_code,
+            country_name,
+            city,
+            latitude,
+            longitude,
+        };
+        validate_node_metadata(&node_id, &node_name, &location)?;
 
         Ok(Self {
             bind_address,
             state_path: value("KET_STATE_PATH", "/var/lib/ket/state.json").into(),
             admin_token,
             public_url,
-            node_id: value("KET_NODE_ID", "ket-node-1"),
-            node_name: value("KET_NODE_NAME", "Ket node"),
-            location: NodeLocation {
-                country_code,
-                country_name: value("KET_COUNTRY_NAME", "Unknown"),
-                city: env::var("KET_CITY")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty()),
-                latitude,
-                longitude,
-            },
+            node_id,
+            node_name,
+            location,
             max_sessions,
             session_ttl: Duration::from_secs(session_ttl_seconds),
             transports,
@@ -149,10 +159,7 @@ impl HysteriaConfig {
             return Ok(None);
         }
 
-        let public_host = required("KET_HYSTERIA_PUBLIC_HOST")?;
-        if public_host.contains("://") || public_host.contains('/') {
-            bail!("KET_HYSTERIA_PUBLIC_HOST must be a hostname or IP address without a scheme");
-        }
+        let public_host = required_hostname("KET_HYSTERIA_PUBLIC_HOST")?;
         let public_port = parse_value("KET_HYSTERIA_PUBLIC_PORT", 443_u16)?;
         if public_port == 0 {
             bail!("KET_HYSTERIA_PUBLIC_PORT must be greater than zero");
@@ -241,7 +248,7 @@ impl XrayConfig {
         let public_port = nonzero_port("KET_XRAY_PUBLIC_PORT", 443)?;
         let listen_port = nonzero_port("KET_XRAY_LISTEN_PORT", 8444)?;
         let api_port = nonzero_port("KET_XRAY_API_PORT", 10085)?;
-        let sni = required_hostname("KET_XRAY_SNI")?;
+        let sni = required_dns_name("KET_XRAY_SNI")?;
         let server_names = required("KET_XRAY_SERVER_NAMES")?
             .split(',')
             .map(str::trim)
@@ -252,7 +259,7 @@ impl XrayConfig {
             bail!("KET_XRAY_SERVER_NAMES must contain at least one hostname");
         }
         for name in &server_names {
-            validate_hostname(name, "KET_XRAY_SERVER_NAMES")?;
+            validate_dns_name(name, "KET_XRAY_SERVER_NAMES")?;
         }
         if !server_names.iter().any(|name| name == &sni) {
             bail!("KET_XRAY_SNI must be listed in KET_XRAY_SERVER_NAMES");
@@ -360,16 +367,49 @@ fn required_hostname(name: &str) -> Result<String> {
     Ok(hostname)
 }
 
+fn required_dns_name(name: &str) -> Result<String> {
+    let hostname = required(name)?;
+    validate_dns_name(&hostname, name)?;
+    Ok(hostname)
+}
+
 fn validate_hostname(hostname: &str, name: &str) -> Result<()> {
     if hostname.is_empty()
-        || hostname.len() > 253
+        || hostname.len() > MAX_ENDPOINT_CHARS
+        || hostname != hostname.trim()
         || hostname.contains("://")
         || hostname.contains('/')
+        || hostname.contains('\\')
+        || hostname.contains('?')
+        || hostname.contains('#')
         || hostname.chars().any(char::is_whitespace)
-        || hostname.starts_with('.')
-        || hostname.ends_with('.')
     {
         bail!("{name} must be a hostname or IP address without a scheme or path");
+    }
+    if hostname.parse::<std::net::IpAddr>().is_ok() {
+        return Ok(());
+    }
+    if hostname.starts_with('.')
+        || hostname.ends_with('.')
+        || !hostname.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        bail!("{name} must be a valid hostname or IP address");
+    }
+    Ok(())
+}
+
+fn validate_dns_name(hostname: &str, name: &str) -> Result<()> {
+    validate_hostname(hostname, name)?;
+    if hostname.parse::<std::net::IpAddr>().is_ok() {
+        bail!("{name} must be a DNS hostname, not an IP address");
     }
     Ok(())
 }
@@ -436,21 +476,121 @@ where
 }
 
 fn validate_transports(transports: &[TransportProfile]) -> Result<()> {
+    if transports.len() > MAX_TRANSPORTS {
+        bail!("at most {MAX_TRANSPORTS} transports may be advertised");
+    }
     let mut ids = HashSet::new();
     for transport in transports {
-        if transport.id.trim().is_empty() || transport.display_name.trim().is_empty() {
-            bail!("transport ids and display names cannot be empty");
-        }
-        if transport.endpoint.trim().is_empty()
-            || transport.endpoint.contains("://")
-            || transport.endpoint.contains('/')
+        validate_identifier(&transport.id, "transport ID", MAX_TRANSPORT_ID_CHARS)?;
+        validate_text(
+            &transport.display_name,
+            "transport display name",
+            MAX_NODE_TEXT_CHARS,
+        )?;
+        if validate_hostname(&transport.endpoint, "transport endpoint").is_err()
             || transport.port == 0
         {
             bail!("transport {} has an invalid endpoint", transport.id);
         }
+        if let Some(server_name) = &transport.tls_server_name {
+            validate_hostname(server_name, "transport TLS server name")?;
+        }
+        if transport.options.len() > MAX_OPTION_ENTRIES {
+            bail!("transport {} contains too many options", transport.id);
+        }
+        for (key, value) in &transport.options {
+            validate_option_key(key, "transport option")?;
+            if value.chars().count() > MAX_OPTION_VALUE_CHARS || value.chars().any(char::is_control)
+            {
+                bail!(
+                    "transport {} contains an invalid option value",
+                    transport.id
+                );
+            }
+        }
         if !ids.insert(&transport.id) {
             bail!("transport ids must be unique: {}", transport.id);
         }
+    }
+    Ok(())
+}
+
+fn normalize_public_url(value: String) -> Result<String> {
+    validate_text(&value, "KET_PUBLIC_URL", MAX_PUBLIC_URL_CHARS)?;
+    let parsed = Url::parse(&value).context("KET_PUBLIC_URL must be an absolute URL")?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        bail!("KET_PUBLIC_URL must be an HTTP(S) URL without credentials, a query, or a fragment");
+    }
+    if parsed.scheme() == "http" && !is_loopback_url(&parsed) {
+        bail!("KET_PUBLIC_URL must use HTTPS unless it targets loopback development");
+    }
+    Ok(value.trim_end_matches('/').to_owned())
+}
+
+fn is_loopback_url(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
+}
+
+fn validate_node_metadata(node_id: &str, node_name: &str, location: &NodeLocation) -> Result<()> {
+    validate_identifier(node_id, "KET_NODE_ID", MAX_NODE_TEXT_CHARS)?;
+    validate_text(node_name, "KET_NODE_NAME", MAX_NODE_TEXT_CHARS)?;
+    validate_text(
+        &location.country_name,
+        "KET_COUNTRY_NAME",
+        MAX_NODE_TEXT_CHARS,
+    )?;
+    if let Some(city) = &location.city {
+        validate_text(city, "KET_CITY", MAX_NODE_TEXT_CHARS)?;
+    }
+    validate_location(
+        &location.country_code,
+        location.latitude,
+        location.longitude,
+    )
+}
+
+fn validate_identifier(value: &str, label: &str, maximum_chars: usize) -> Result<()> {
+    if value.is_empty()
+        || value.chars().count() > maximum_chars
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        bail!("{label} has an invalid identifier shape");
+    }
+    Ok(())
+}
+
+fn validate_text(value: &str, label: &str, maximum_chars: usize) -> Result<()> {
+    if value.is_empty()
+        || value != value.trim()
+        || value.chars().count() > maximum_chars
+        || value.chars().any(char::is_control)
+    {
+        bail!("{label} must contain 1-{maximum_chars} trimmed printable characters");
+    }
+    Ok(())
+}
+
+fn validate_option_key(value: &str, label: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > MAX_OPTION_KEY_CHARS
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        bail!("{label} keys must use 1-{MAX_OPTION_KEY_CHARS} lowercase ASCII characters");
     }
     Ok(())
 }
@@ -472,12 +612,50 @@ fn validate_location(country_code: &str, latitude: f64, longitude: f64) -> Resul
 mod tests {
     use std::collections::BTreeMap;
 
-    use ket_core::{Network, TransportProfile, TransportProtocol};
+    use ket_core::{Network, NodeLocation, TransportProfile, TransportProtocol};
 
     use super::{
-        required_reality_key, validate_authority, validate_hostname, validate_location,
-        validate_target, validate_transports,
+        normalize_public_url, required_reality_key, validate_authority, validate_dns_name,
+        validate_hostname, validate_location, validate_node_metadata, validate_target,
+        validate_transports,
     };
+
+    #[test]
+    fn public_url_validation_rejects_ambiguous_control_endpoints() {
+        assert_eq!(
+            normalize_public_url("https://ket.example.test/control/".to_owned()).unwrap(),
+            "https://ket.example.test/control"
+        );
+        assert!(normalize_public_url("http://127.0.0.1:8787".to_owned()).is_ok());
+        assert!(normalize_public_url("http://[::1]:8787".to_owned()).is_ok());
+        assert!(normalize_public_url("http://ket.example.test".to_owned()).is_err());
+        assert!(normalize_public_url("ftp://ket.example.test".to_owned()).is_err());
+        assert!(normalize_public_url("https://user@ket.example.test".to_owned()).is_err());
+        assert!(normalize_public_url("https://ket.example.test?token=nope".to_owned()).is_err());
+        assert!(normalize_public_url("https://ket.example.test#fragment".to_owned()).is_err());
+        assert!(normalize_public_url(" https://ket.example.test".to_owned()).is_err());
+    }
+
+    #[test]
+    fn node_metadata_validation_matches_client_bounds() {
+        let location = NodeLocation {
+            country_code: "DE".to_owned(),
+            country_name: "Germany".to_owned(),
+            city: Some("Frankfurt".to_owned()),
+            latitude: 50.1109,
+            longitude: 8.6821,
+        };
+        assert!(validate_node_metadata("de-fra-1", "Frankfurt", &location).is_ok());
+        assert!(validate_node_metadata("../node", "Frankfurt", &location).is_err());
+        assert!(validate_node_metadata("de-fra-1", " Frankfurt", &location).is_err());
+
+        let mut malformed = location.clone();
+        malformed.country_name = "x".repeat(129);
+        assert!(validate_node_metadata("de-fra-1", "Frankfurt", &malformed).is_err());
+        malformed = location.clone();
+        malformed.city = Some("Frankfurt\nspoofed".to_owned());
+        assert!(validate_node_metadata("de-fra-1", "Frankfurt", &malformed).is_err());
+    }
 
     #[test]
     fn location_validation_rejects_invalid_map_coordinates() {
@@ -504,6 +682,8 @@ mod tests {
         assert!(validate_transports(&[profile("one", "vpn.example")]).is_ok());
         assert!(validate_transports(&[profile("one", "https://vpn.example")]).is_err());
         assert!(validate_transports(&[profile("one", "vpn.example/path")]).is_err());
+        assert!(validate_transports(&[profile("../one", "vpn.example")]).is_err());
+        assert!(validate_transports(&[profile("one", "vpn.example?target=other")]).is_err());
         assert!(
             validate_transports(&[
                 profile("one", "vpn.example"),
@@ -511,6 +691,17 @@ mod tests {
             ])
             .is_err()
         );
+
+        let excessive = (0..33)
+            .map(|index| profile(&format!("transport-{index}"), "vpn.example"))
+            .collect::<Vec<_>>();
+        assert!(validate_transports(&excessive).is_err());
+
+        let mut malformed_option = profile("one", "vpn.example");
+        malformed_option
+            .options
+            .insert("UPPERCASE".to_owned(), "value".to_owned());
+        assert!(validate_transports(&[malformed_option]).is_err());
     }
 
     #[test]
@@ -518,6 +709,10 @@ mod tests {
         assert!(validate_hostname("vpn.example.test", "HOST").is_ok());
         assert!(validate_hostname("", "HOST").is_err());
         assert!(validate_hostname("https://vpn.example.test", "HOST").is_err());
+        assert!(validate_hostname("bad_host.example", "HOST").is_err());
+        assert!(validate_hostname("2001:db8::1", "HOST").is_ok());
+        assert!(validate_dns_name("www.example.com", "SNI").is_ok());
+        assert!(validate_dns_name("203.0.113.1", "SNI").is_err());
         assert!(validate_target("www.example.com:443").is_ok());
         assert!(validate_target("https://www.example.com:443").is_err());
         assert!(validate_authority("xray:10085", "API").is_ok());
