@@ -17,7 +17,7 @@ This separation keeps the API and user experience consistent while allowing a no
 | Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Hysteria2 and VLESS + REALITY implemented |
 | Desktop privilege broker | Authenticated TUN/route ownership and engine supervision | Rust system service | Implemented for Linux/Windows |
 | Linux/Windows desktop | Map-first connection UI and native packaging | Tauri 2 plus shared Rust core | UI, service installers, and unsigned lifecycle gates implemented; signed bundles pending |
-| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Android Keystore, Hysteria2, Xray, hev-socks5-tunnel | Current arm64 packet flow, fallback, recovery, cancellation, and disconnect verified; corrected handover, Doze/revoke, API 26, DNS leak, always-on/reboot, and owner-signing physical gates pending |
+| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Natural Earth, Android Keystore, Hysteria2, Xray, hev-socks5-tunnel | Real node map and telemetry parity implemented; current arm64 packet flow, fallback, recovery, cancellation, and disconnect verified; corrected handover, Doze/revoke, API 26, DNS leak, always-on/reboot, and owner-signing physical gates pending |
 
 ## Control flow
 
@@ -64,4 +64,4 @@ Clients use a policy engine rather than a hard-coded default. The implemented se
 
 ## Client parity
 
-Desktop and Android consume the same versioned control contract. The Rust desktop core implements probing, bounded fallback, reconnecting, and the full lifecycle snapshot. Android implements disconnected, enrolling, connecting, reconnecting, connected, stopping, and failed states with ranked multi-transport startup fallback, bounded post-connect recovery, node, capacity, handshake latency, selected protocol, and local traffic metrics.
+Desktop and Android consume the same versioned control contract. The Rust desktop core implements probing, bounded fallback, reconnecting, and the full lifecycle snapshot. Android implements disconnected, enrolling, connecting, reconnecting, connected, stopping, and failed states with ranked multi-transport startup fallback and bounded post-connect recovery. Both surfaces now plot the server's real coordinates on Natural Earth geography and expose node health, capacity, CPU, memory, uptime, handshake latency, selected protocol, sessions, and transfer metrics; Android rejects invalid geographic and telemetry values before publishing them.

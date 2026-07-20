@@ -245,12 +245,7 @@ class DurableTunnelCredentialsTest {
     private fun sessionManifest(token: String): String = JSONObject()
         .put("session_token", token)
         .put("session_expires_at_epoch_seconds", 4_000_000_000)
-        .put(
-            "node",
-            JSONObject()
-                .put("display_name", "Test node")
-                .put("location", JSONObject().put("country_name", "Testland")),
-        )
+        .put("node", testNodeJson())
         .put(
             "transports",
             JSONArray().put(

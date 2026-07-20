@@ -238,7 +238,7 @@ class KetVpnService : VpnService() {
             (transportAddresses.values + listOfNotNull(selected.bypassAddress)).distinct()
         val dnsServers = AndroidVpnDnsPolicy.serversFor(bypassAddresses)
         val builder = Builder()
-            .setSession("Ket - ${spec.node}")
+            .setSession("Ket - ${spec.node.displayName}")
             .setMtu(TUN_MTU)
             .setBlocking(false)
             .addAddress(TUN_IPV4, 32)
@@ -265,7 +265,6 @@ class KetVpnService : VpnService() {
             it.copy(
                 phase = TunnelPhase.Connected,
                 node = spec.node,
-                country = spec.country,
                 message = "Protected with ${selected.engine.displayName}",
                 handshakeLatencyMs = selected.started.handshakeLatencyMs,
                 transportName = selected.engine.displayName,
@@ -422,13 +421,13 @@ class KetVpnService : VpnService() {
             }
             if (stopping.get()) return
             if (remote != null || local != null) {
+                val remoteTraffic = remote?.takeIf(SessionTelemetry::available)
                 KetTunnelRuntime.update {
                     it.copy(
                         node = remote?.node ?: it.node,
-                        sentBytes = local?.getOrNull(1) ?: remote?.sent ?: it.sentBytes,
-                        receivedBytes = local?.getOrNull(3) ?: remote?.received ?: it.receivedBytes,
-                        onlineConnections = remote?.online ?: it.onlineConnections,
-                        capacityPercent = remote?.capacity ?: it.capacityPercent,
+                        sentBytes = local?.getOrNull(1) ?: remoteTraffic?.sent ?: it.sentBytes,
+                        receivedBytes = local?.getOrNull(3) ?: remoteTraffic?.received ?: it.receivedBytes,
+                        onlineConnections = remoteTraffic?.online ?: it.onlineConnections,
                     )
                 }
             }
@@ -460,7 +459,6 @@ class KetVpnService : VpnService() {
                 TunnelSnapshot(
                     phase = TunnelPhase.Failed,
                     node = spec?.node ?: KetTunnelRuntime.snapshot().node,
-                    country = spec?.country ?: KetTunnelRuntime.snapshot().country,
                     message = failure,
                 ),
             )

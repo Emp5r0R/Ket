@@ -6,15 +6,20 @@ import java.net.URL
 
 class EnrollmentResult(
     val token: String,
-    val node: String,
-    val country: String,
+    val node: AndroidNodeStatus,
     val transports: List<AndroidTransport>,
     internal val manifestJson: String,
 ) {
     override fun toString(): String =
-        "EnrollmentResult(token=[REDACTED], node=$node, country=$country, transports=$transports)"
+        "EnrollmentResult(token=[REDACTED], node=${node.displayName}, transports=$transports)"
 }
-data class SessionTelemetry(val node: String, val sent: Long, val received: Long, val online: Int, val capacity: Double)
+data class SessionTelemetry(
+    val node: AndroidNodeStatus,
+    val available: Boolean,
+    val sent: Long,
+    val received: Long,
+    val online: Int,
+)
 
 internal class KetControlException(
     val statusCode: Int,
@@ -44,14 +49,7 @@ object KetControlApi : TunnelSessionApi {
         }
         val (code, body) = response(connection)
         requireSuccess(code, body, "Session status unavailable")
-        val json = JSONObject(body); val node = json.getJSONObject("node"); val traffic = json.getJSONObject("traffic")
-        return SessionTelemetry(
-            node.getString("display_name"),
-            traffic.optLong("bytes_sent"),
-            traffic.optLong("bytes_received"),
-            traffic.optInt("online_connections"),
-            node.getDouble("capacity_percent"),
-        )
+        return parseStatus(body)
     }
 
     override fun renew(serverUrl: String, token: String): Long {
@@ -73,13 +71,25 @@ object KetControlApi : TunnelSessionApi {
 
     internal fun parseEnrollment(body: String): EnrollmentResult {
         val json = JSONObject(body)
-        val node = json.getJSONObject("node")
         return EnrollmentResult(
             token = json.getString("session_token").also { require(it.isNotBlank()) { "Session token is missing" } },
-            node = node.getString("display_name"),
-            country = node.getJSONObject("location").getString("country_name"),
+            node = AndroidNodeStatusParser.parse(json.getJSONObject("node")),
             transports = AndroidTransportSelector.parse(json.getJSONArray("transports")),
             manifestJson = json.toString(),
+        )
+    }
+
+    internal fun parseStatus(body: String): SessionTelemetry {
+        val json = JSONObject(body)
+        val traffic = json.getJSONObject("traffic")
+        return SessionTelemetry(
+            node = AndroidNodeStatusParser.parse(json.getJSONObject("node")),
+            available = traffic.getBoolean("available"),
+            sent = nonNegativeLong(traffic, "bytes_sent"),
+            received = nonNegativeLong(traffic, "bytes_received"),
+            online = traffic.getInt("online_connections").also {
+                require(it >= 0) { "Online connection count is invalid" }
+            },
         )
     }
 
@@ -121,5 +131,9 @@ object KetControlApi : TunnelSessionApi {
 
     private fun requireSuccess(code: Int, body: String, fallback: String) {
         if (code !in 200..299) throw KetControlException(code, errorMessage(body, fallback))
+    }
+
+    private fun nonNegativeLong(json: JSONObject, key: String): Long = json.getLong(key).also {
+        require(it >= 0) { "$key is invalid" }
     }
 }

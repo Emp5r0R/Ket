@@ -20,13 +20,11 @@ enum class TunnelPhase {
 
 data class TunnelSnapshot(
     val phase: TunnelPhase = TunnelPhase.Disconnected,
-    val node: String = "No server selected",
-    val country: String = "",
+    val node: AndroidNodeStatus? = null,
     val message: String = "",
     val sentBytes: Long = 0,
     val receivedBytes: Long = 0,
     val onlineConnections: Int = 0,
-    val capacityPercent: Double = 0.0,
     val handshakeLatencyMs: Long? = null,
     val transportName: String = "Auto",
     val reconnectAttempt: Int = 0,
@@ -35,16 +33,15 @@ data class TunnelSnapshot(
 internal class TunnelLaunchSpec(
     val controlEndpoint: String,
     val sessionToken: String,
-    val node: String,
-    val country: String,
+    val node: AndroidNodeStatus,
     val transports: List<AndroidTransport>,
 ) {
     override fun toString(): String =
-        "TunnelLaunchSpec(controlEndpoint=$controlEndpoint, sessionToken=[REDACTED], node=$node, country=$country, transports=$transports)"
+        "TunnelLaunchSpec(controlEndpoint=$controlEndpoint, sessionToken=[REDACTED], node=${node.displayName}, transports=$transports)"
 
     companion object {
         fun fromEnrollment(controlEndpoint: String, result: EnrollmentResult): TunnelLaunchSpec =
-            TunnelLaunchSpec(controlEndpoint, result.token, result.node, result.country, result.transports)
+            TunnelLaunchSpec(controlEndpoint, result.token, result.node, result.transports)
     }
 }
 
@@ -112,7 +109,6 @@ object KetTunnelController {
                         TunnelSnapshot(
                             phase = TunnelPhase.Connecting,
                             node = preparedSpec.node,
-                            country = preparedSpec.country,
                             message = "Starting protected route...",
                         ),
                     )
