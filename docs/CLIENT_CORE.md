@@ -5,11 +5,11 @@
 ## Implemented lifecycle
 
 1. `ControlEndpoint` accepts HTTPS and loopback HTTP by default. Embedded credentials, URL query secrets, fragments, redirects, ambient system proxies, oversized responses, and TLS older than 1.2 are rejected.
-2. `KetClient::enroll` validates the 32-character access code locally, exchanges it once, validates the returned token/profile shapes, and retains the session only in memory.
+2. `KetClient::enroll` validates the 32-character access code locally, exchanges it once, then validates the complete untrusted manifest before retaining the session in memory. Tokens, lease expiry, node text and URL fields, map coordinates, health telemetry, transport counts, identifiers, endpoints, option maps, and credential sizes are all bounded; a valid lease is released if another manifest field fails validation.
 3. `TransportSelector` ranks adapters using configured priority, optional protocol preference, recent latency, consecutive failures, and bounded cooldown.
 4. `KetClient::connect` probes and attempts at most the configured number of transports. Every failure is recorded before fallback.
 5. A serializable `ClientSnapshot` is published through a Tokio watch channel for UI parity. It contains no control token, transport credential, or secret option values.
-6. `refresh`, `renew`, and the optional maintenance task update node health, capacity, traffic, expiry, and reconnect state. Authorization loss stops the tunnel and clears the in-memory session.
+6. `refresh`, `renew`, and the optional maintenance task update node health, capacity, traffic, expiry, and reconnect state. Every status response must carry the session ID encoded by the active token, the exact enrolled device name, a future lease expiry, valid node telemetry, and internally consistent traffic data before it can replace the last known-good snapshot. Malformed status is reported as `invalid_server_response` without publishing its fields. Authorization loss stops the tunnel and clears the in-memory session.
 7. `disconnect` stops the local tunnel before releasing the server lease. A failed release is safe because the bounded server lease still expires.
 
 ## Desktop service adapters

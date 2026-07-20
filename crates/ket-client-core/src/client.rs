@@ -1,13 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
 use ket_core::{
-    ACCESS_CODE_LENGTH, SESSION_TOKEN_LENGTH, SecretString, SessionManifest, SessionStatus,
+    ACCESS_CODE_LENGTH, SecretString, SessionManifest, SessionStatus, split_session_token,
 };
 use tokio::{
     sync::{Mutex, oneshot, watch},
     task::JoinHandle,
 };
 
+use crate::validation::{validate_manifest, validate_status};
 use crate::{
     ActiveTunnel, ClientError, ClientPhase, ClientSnapshot, ControlEndpoint, ControlPlane,
     SelectionPolicy, TransportAdapter, TransportHistory, TransportSelector, TransportSummary,
@@ -101,11 +102,13 @@ impl KetClient {
                 return Err(error);
             }
         };
-        if let Err(error) = validate_manifest(&manifest) {
-            let _ = self
-                .api
-                .release_session(&self.endpoint, &manifest.session_token)
-                .await;
+        if let Err(error) = validate_manifest(&manifest, unix_time()) {
+            if split_session_token(manifest.session_token.expose_secret()).is_ok() {
+                let _ = self
+                    .api
+                    .release_session(&self.endpoint, &manifest.session_token)
+                    .await;
+            }
             self.fail(&error);
             return Err(error);
         }
@@ -406,6 +409,13 @@ impl KetClient {
         };
         match status {
             Ok(status) => {
+                if let Err(error) = validate_status(&status, &token, &self.client_name, unix_time())
+                {
+                    self.update_snapshot(|snapshot| {
+                        snapshot.issue = Some(error.issue());
+                    });
+                    return Err(error);
+                }
                 self.apply_status(status).await;
                 Ok(self.snapshot())
             }
@@ -514,38 +524,6 @@ fn validate_access_code(code: &SecretString) -> Result<(), ClientError> {
     }
 }
 
-fn validate_manifest(manifest: &SessionManifest) -> Result<(), ClientError> {
-    if manifest.session_token.len() != SESSION_TOKEN_LENGTH
-        || !manifest
-            .session_token
-            .expose_secret()
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric())
-    {
-        return Err(ClientError::InvalidResponse(
-            "session token has an invalid shape".to_owned(),
-        ));
-    }
-    if manifest.transports.is_empty() {
-        return Err(ClientError::InvalidResponse(
-            "server advertised no transports".to_owned(),
-        ));
-    }
-    let mut ids = std::collections::BTreeSet::new();
-    for transport in &manifest.transports {
-        if transport.profile.id.trim().is_empty()
-            || transport.profile.endpoint.trim().is_empty()
-            || transport.profile.port == 0
-            || !ids.insert(transport.profile.id.as_str())
-        {
-            return Err(ClientError::InvalidResponse(
-                "server advertised an invalid transport profile".to_owned(),
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn unix_time() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -632,16 +610,53 @@ mod tests {
         assert_eq!(api.enrollments.load(Ordering::SeqCst), 0);
     }
 
+    #[tokio::test]
+    async fn malformed_status_preserves_the_last_known_good_snapshot() {
+        let mut malformed_status = test_status();
+        malformed_status.node.location.longitude = 181.0;
+        let api = Arc::new(MockApi::with_status(test_manifest(), malformed_status));
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+
+        let enrolled = client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        let error = client.refresh().await.unwrap_err();
+        let current = client.snapshot();
+
+        assert!(matches!(error, ClientError::InvalidResponse(_)));
+        assert_eq!(current.phase, ClientPhase::Enrolled);
+        assert_eq!(current.node, enrolled.node);
+        assert_eq!(current.traffic, None);
+        assert_eq!(
+            current.issue.as_ref().map(|issue| issue.code.as_str()),
+            Some("invalid_server_response")
+        );
+    }
+
     struct MockApi {
         manifest: SessionManifest,
+        status: SessionStatus,
         enrollments: AtomicUsize,
         releases: AtomicUsize,
     }
 
     impl MockApi {
         fn new(manifest: SessionManifest) -> Self {
+            Self::with_status(manifest, test_status())
+        }
+
+        fn with_status(manifest: SessionManifest, status: SessionStatus) -> Self {
             Self {
                 manifest,
+                status,
                 enrollments: AtomicUsize::new(0),
                 releases: AtomicUsize::new(0),
             }
@@ -665,7 +680,7 @@ mod tests {
             _endpoint: &ControlEndpoint,
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
-            Ok(test_status())
+            Ok(self.status.clone())
         }
 
         async fn renew_session(
@@ -673,7 +688,7 @@ mod tests {
             _endpoint: &ControlEndpoint,
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
-            Ok(test_status())
+            Ok(self.status.clone())
         }
 
         async fn release_session(
