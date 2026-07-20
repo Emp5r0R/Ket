@@ -82,6 +82,21 @@ pub fn verify_secret(secret: &str, encoded_hash: &str) -> bool {
         .is_ok()
 }
 
+/// Accepts only the exact Argon2id profile emitted by [`hash_secret`].
+pub fn is_supported_secret_hash(encoded_hash: &str) -> bool {
+    let Ok(hash) = PasswordHash::new(encoded_hash) else {
+        return false;
+    };
+    hash.algorithm.as_str() == "argon2id"
+        && hash.version == Some(19)
+        && hash.params.iter().count() == 3
+        && hash.params.get_decimal("m") == Some(19 * 1024)
+        && hash.params.get_decimal("t") == Some(2)
+        && hash.params.get_decimal("p") == Some(1)
+        && hash.salt.is_some()
+        && hash.hash.is_some_and(|output| output.len() == 32)
+}
+
 /// Fast hashing for machine-generated tokens with approximately 190 bits of entropy.
 pub fn hash_token_secret(secret: &str) -> [u8; 32] {
     Blake2s256::digest(secret.as_bytes()).into()
@@ -130,9 +145,25 @@ mod tests {
     fn hashes_verify_without_retaining_plaintext() {
         let hash = hash_secret("high-entropy-secret").expect("hashing should work");
 
+        assert!(is_supported_secret_hash(&hash));
         assert!(verify_secret("high-entropy-secret", &hash));
         assert!(!verify_secret("different-secret", &hash));
         assert!(!hash.contains("high-entropy-secret"));
+    }
+
+    #[test]
+    fn secret_hash_policy_rejects_unbounded_or_downgraded_profiles() {
+        let hash = hash_secret("high-entropy-secret").expect("hashing should work");
+
+        assert!(!is_supported_secret_hash(&hash.replacen(
+            "m=19456",
+            "m=4294967295",
+            1
+        )));
+        assert!(!is_supported_secret_hash(
+            &hash.replacen("argon2id", "argon2i", 1)
+        ));
+        assert!(!is_supported_secret_hash("not-a-password-hash"));
     }
 
     #[test]
