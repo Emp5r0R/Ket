@@ -8,9 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use ket_client_core::{
-    ActiveTunnel, Hysteria2Adapter, HysteriaTunSettings, TransportAdapter, XrayRealityAdapter,
-};
+use ket_client_core::{ActiveTunnel, Hysteria2Adapter, TransportAdapter, XrayRealityAdapter};
 use ket_tunnel_protocol::{
     BrokerFault, BrokerRequest, BrokerResponse, BrokerToken, BrokerTunnelStatus, HandshakeProof,
     HandshakeResult, challenge, read_frame, write_frame,
@@ -252,11 +250,11 @@ pub async fn serve_until(
             .context("failed to load the tunnel broker installation token")?,
     );
     let mut adapters: Vec<Arc<dyn TransportAdapter>> = Vec::with_capacity(2);
-    if config.hysteria_path.is_file() {
+    if config.hysteria_path.is_file() && config.bridge_path.is_file() {
         adapters.push(Arc::new(Hysteria2Adapter::new(
             &config.hysteria_path,
+            &config.bridge_path,
             &config.runtime_dir,
-            HysteriaTunSettings::default(),
         )));
     }
     if config.xray_path.is_file() && config.bridge_path.is_file() {

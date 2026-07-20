@@ -13,6 +13,10 @@ Ket integrates the maintained Hysteria2 engine instead of implementing QUIC, con
 
 Neither secret is stored in plaintext. The transport credential cannot call bearer-protected control endpoints.
 
+## Desktop packet path
+
+The privileged desktop service resolves the advertised endpoint before changing routes, pins Hysteria to one resulting IP while retaining the configured hostname for TLS verification, and starts Hysteria's UDP-capable loopback SOCKS5 mode. The shared `tun2proxy` bridge then captures IPv4, IPv6, and DNS with virtual-DNS mode while bypassing every resolved server IP. Hysteria and the bridge are supervised as one tunnel: either process exiting stops the other, and explicit disconnect or lease expiry restores bridge-owned system state.
+
 ## Production prerequisites
 
 - A direct server IP or DNS-only hostname for the transport endpoint, plus an SNI hostname covered by the certificate. These may be different values.
