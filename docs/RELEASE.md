@@ -38,6 +38,8 @@ $installer = Get-ChildItem target/release/bundle/nsis/*.exe -File
 
 For a production server, source `.env`, run `./packaging/validate-env.sh`, and validate the base file plus each enabled overlay with `docker compose config --quiet`. The preflight validates client-visible URL, node identity/location, and enabled transport inputs; `ket-server` then repeats authoritative structured URL and manifest-field validation before it binds a listener. Hysteria2 requires direct UDP reachability and VLESS + REALITY requires direct raw TCP reachability; ordinary Cloudflare HTTP proxying or a Cloudflare Tunnel does not carry either unmodified data plane.
 
+Container upgrades retain the v1 state volume. The loader accepts older v1 session records that predate scoped data-plane hashes, but those missing credentials remain fail closed until the client creates a current session. Unknown schema versions and structurally inconsistent or oversized state files stop startup instead of discarding grants or guessing a migration. Back up the `ket-state` volume before upgrading; never replace a rejected state file with an empty document as an automated recovery action.
+
 ## Signing
 
 The Android debug artifact is only for testing. Production Android, Linux, and Windows artifacts must be signed by the release owner and their checksums published alongside the files. Ket does not store signing keys in this repository.

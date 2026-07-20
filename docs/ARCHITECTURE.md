@@ -37,7 +37,7 @@ This separation keeps the API and user experience consistent while allowing a no
 - Data-plane tokens share only the public session lookup ID with the control token. Their independent high-entropy secrets use BLAKE2 hashes and constant-time verification on the handshake hot path.
 - Client-side secret values redact diagnostics and zero their allocations on drop. Protocol secret options live inside the credential object rather than public transport metadata.
 - The admin token must be independent, at least 32 characters, and is compared in constant time.
-- State replacement is atomic and the state file is mode `0600` on Unix.
+- State replacement is atomic and the state file is mode `0600` on Unix. State loading is size-bounded and fails closed on unknown schemas, duplicate identities, orphan sessions, malformed records, impossible grant/session lifetimes, or password hashes outside Ket's exact Argon2id cost profile.
 - Mutations are serialized and persisted before becoming visible in memory.
 - Request bodies are capped at 16 KiB, requests time out, and Argon2 concurrency plus pending work are bounded. Saturation fails fast with a retryable `429` response instead of building an unbounded secret-processing queue.
 - Server startup structurally parses the public URL and bounds every emitted node/location/transport field, including 32-profile maximum, identifier and display text, host and TLS names, and option maps; invalid operator configuration fails before listeners or data-plane runtime files are created.
