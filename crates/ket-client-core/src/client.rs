@@ -18,6 +18,7 @@ use crate::{
 struct RuntimeState {
     session: Option<SessionManifest>,
     tunnel: Option<Arc<dyn ActiveTunnel>>,
+    connection_requested: bool,
     history: TransportHistory,
 }
 
@@ -60,6 +61,7 @@ impl KetClient {
             runtime: Mutex::new(RuntimeState {
                 session: None,
                 tunnel: None,
+                connection_requested: false,
                 history: TransportHistory::default(),
             }),
             snapshot,
@@ -127,6 +129,13 @@ impl KetClient {
 
     pub async fn connect(&self) -> Result<ClientSnapshot, ClientError> {
         let _operation = self.operation.lock().await;
+        {
+            let mut runtime = self.runtime.lock().await;
+            if runtime.session.is_none() {
+                return Err(ClientError::NotEnrolled);
+            }
+            runtime.connection_requested = true;
+        }
         self.connect_locked(false).await
     }
 
@@ -142,21 +151,27 @@ impl KetClient {
 
     pub async fn maintain_once(&self) -> Result<ClientSnapshot, ClientError> {
         let _operation = self.operation.lock().await;
-        let tunnel_status = {
+        let (tunnel_status, connection_requested) = {
             let runtime = self.runtime.lock().await;
-            runtime.tunnel.as_ref().map(|tunnel| {
-                (
-                    tunnel.transport_id().to_owned(),
-                    tunnel.status().borrow().clone(),
-                )
-            })
+            (
+                runtime.tunnel.as_ref().map(|tunnel| {
+                    (
+                        tunnel.transport_id().to_owned(),
+                        tunnel.status().borrow().clone(),
+                    )
+                }),
+                runtime.connection_requested,
+            )
         };
-        if let Some((transport_id, status)) = tunnel_status
+        if let Some((transport_id, status)) = &tunnel_status
             && !matches!(status, TunnelStatus::Connected)
         {
             self.runtime.lock().await.tunnel = None;
-            self.record_failure(&transport_id).await;
-            return self.connect_locked(true).await;
+            self.record_failure(transport_id).await;
+            return self.reconnect_locked().await;
+        }
+        if tunnel_status.is_none() && connection_requested {
+            return self.reconnect_locked().await;
         }
         let expires_at = self
             .runtime
@@ -174,6 +189,7 @@ impl KetClient {
         let _operation = self.operation.lock().await;
         let (tunnel, token) = {
             let mut runtime = self.runtime.lock().await;
+            runtime.connection_requested = false;
             (
                 runtime.tunnel.take(),
                 runtime
@@ -234,6 +250,7 @@ impl KetClient {
         let _operation = self.operation.lock().await;
         let (tunnel, enrolled) = {
             let mut runtime = self.runtime.lock().await;
+            runtime.connection_requested = false;
             (runtime.tunnel.take(), runtime.session.is_some())
         };
         let Some(tunnel) = tunnel else {
@@ -393,6 +410,32 @@ impl KetClient {
         Err(error)
     }
 
+    async fn reconnect_locked(&self) -> Result<ClientSnapshot, ClientError> {
+        match self.connect_locked(true).await {
+            Ok(snapshot) => Ok(snapshot),
+            Err(connection_error) => {
+                let expires_at = self
+                    .runtime
+                    .lock()
+                    .await
+                    .session
+                    .as_ref()
+                    .map(|session| session.session_expires_at_epoch_seconds)
+                    .ok_or(ClientError::NotEnrolled)?;
+                let refresh = self
+                    .refresh_locked(unix_time().saturating_add(60) >= expires_at)
+                    .await;
+                if let Err(error) = refresh
+                    && error.is_unauthorized()
+                {
+                    return Err(error);
+                }
+                self.fail(&connection_error);
+                Err(connection_error)
+            }
+        }
+    }
+
     async fn refresh_locked(&self, renew: bool) -> Result<ClientSnapshot, ClientError> {
         let token = self
             .runtime
@@ -420,7 +463,11 @@ impl KetClient {
                 Ok(self.snapshot())
             }
             Err(error) if error.is_unauthorized() => {
-                let tunnel = self.runtime.lock().await.tunnel.take();
+                let tunnel = {
+                    let mut runtime = self.runtime.lock().await;
+                    runtime.connection_requested = false;
+                    runtime.tunnel.take()
+                };
                 if let Some(tunnel) = tunnel {
                     let _ = tunnel.stop().await;
                 }
@@ -537,7 +584,7 @@ mod tests {
         collections::{BTreeMap, BTreeSet},
         net::{Ipv4Addr, SocketAddr},
         sync::{
-            Arc,
+            Arc, Mutex as StdMutex,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
     };
@@ -641,11 +688,83 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn maintenance_retries_after_a_fully_blocked_recovery_round() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![
+            test_reality_transport("reality-primary", 1),
+            test_transport("hy2-fallback", 2),
+        ];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        adapter.set_blocked(["reality-primary"]);
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy {
+                max_attempts: 2,
+                preferred_protocol: None,
+                failure_cooldown_seconds: 15,
+            },
+        )
+        .unwrap();
+
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        let connected = client.connect().await.unwrap();
+        assert_eq!(
+            connected
+                .active_transport
+                .as_ref()
+                .map(|item| item.id.as_str()),
+            Some("hy2-fallback")
+        );
+
+        adapter.set_blocked(["reality-primary", "hy2-fallback"]);
+        adapter.fail("hy2-fallback");
+        let error = client.maintain_once().await.unwrap_err();
+        assert!(matches!(error, ClientError::Transport { .. }));
+        assert_eq!(api.statuses.load(Ordering::SeqCst), 1);
+        assert_eq!(client.snapshot().phase, ClientPhase::Error);
+
+        adapter.set_blocked(["hy2-fallback"]);
+        let recovered = client.maintain_once().await.unwrap();
+        assert_eq!(recovered.phase, ClientPhase::Connected);
+        assert_eq!(
+            recovered
+                .active_transport
+                .as_ref()
+                .map(|item| item.id.as_str()),
+            Some("reality-primary")
+        );
+
+        let connection_attempts = adapter.connection_attempts.load(Ordering::SeqCst);
+        let stopped = client.stop_tunnel().await.unwrap();
+        assert_eq!(stopped.phase, ClientPhase::Enrolled);
+        assert_eq!(adapter.stops.load(Ordering::SeqCst), 1);
+
+        let maintained = client.maintain_once().await.unwrap();
+        assert_eq!(maintained.phase, ClientPhase::Enrolled);
+        assert_eq!(
+            adapter.connection_attempts.load(Ordering::SeqCst),
+            connection_attempts
+        );
+        assert_eq!(api.statuses.load(Ordering::SeqCst), 2);
+
+        client.disconnect().await.unwrap();
+        assert_eq!(api.releases.load(Ordering::SeqCst), 1);
+    }
+
     struct MockApi {
         manifest: SessionManifest,
         status: SessionStatus,
         enrollments: AtomicUsize,
         releases: AtomicUsize,
+        statuses: AtomicUsize,
     }
 
     impl MockApi {
@@ -659,6 +778,7 @@ mod tests {
                 status,
                 enrollments: AtomicUsize::new(0),
                 releases: AtomicUsize::new(0),
+                statuses: AtomicUsize::new(0),
             }
         }
     }
@@ -680,6 +800,7 @@ mod tests {
             _endpoint: &ControlEndpoint,
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
+            self.statuses.fetch_add(1, Ordering::SeqCst);
             Ok(self.status.clone())
         }
 
@@ -688,6 +809,7 @@ mod tests {
             _endpoint: &ControlEndpoint,
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
+            self.statuses.fetch_add(1, Ordering::SeqCst);
             Ok(self.status.clone())
         }
 
@@ -704,6 +826,111 @@ mod tests {
     struct MockAdapter {
         failing_ids: BTreeSet<String>,
         stopped: Arc<AtomicBool>,
+    }
+
+    struct RecoveryAdapter {
+        blocked: StdMutex<BTreeSet<String>>,
+        tunnels: StdMutex<BTreeMap<String, watch::Sender<TunnelStatus>>>,
+        connection_attempts: AtomicUsize,
+        stops: Arc<AtomicUsize>,
+    }
+
+    impl RecoveryAdapter {
+        fn new() -> Self {
+            Self {
+                blocked: StdMutex::new(BTreeSet::new()),
+                tunnels: StdMutex::new(BTreeMap::new()),
+                connection_attempts: AtomicUsize::new(0),
+                stops: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn set_blocked<const N: usize>(&self, transport_ids: [&str; N]) {
+            *self.blocked.lock().expect("blocked transport lock") =
+                transport_ids.into_iter().map(str::to_owned).collect();
+        }
+
+        fn fail(&self, transport_id: &str) {
+            self.tunnels
+                .lock()
+                .expect("recovery tunnel lock")
+                .get(transport_id)
+                .expect("transport should have an active test tunnel")
+                .send_replace(TunnelStatus::Failed("simulated path loss".to_owned()));
+        }
+    }
+
+    #[async_trait]
+    impl TransportAdapter for RecoveryAdapter {
+        fn supports(&self, transport: &SessionTransport) -> bool {
+            matches!(
+                transport.profile.protocol,
+                TransportProtocol::Hysteria2 | TransportProtocol::VlessXtlsReality
+            )
+        }
+
+        async fn probe(&self, transport: &SessionTransport) -> Result<ProbeReport, ClientError> {
+            if self
+                .blocked
+                .lock()
+                .expect("blocked transport lock")
+                .contains(&transport.profile.id)
+            {
+                return Err(ClientError::transport(
+                    &transport.profile.id,
+                    "simulated censorship",
+                    true,
+                ));
+            }
+            Ok(ProbeReport {
+                resolved_addresses: vec![SocketAddr::from((Ipv4Addr::new(203, 0, 113, 9), 443))],
+                elapsed: Duration::from_millis(5),
+            })
+        }
+
+        async fn connect(
+            &self,
+            transport: &SessionTransport,
+            _probe: &ProbeReport,
+        ) -> Result<StartedTunnel, ClientError> {
+            self.connection_attempts.fetch_add(1, Ordering::SeqCst);
+            let (status, _) = watch::channel(TunnelStatus::Connected);
+            self.tunnels
+                .lock()
+                .expect("recovery tunnel lock")
+                .insert(transport.profile.id.clone(), status.clone());
+            Ok(StartedTunnel {
+                tunnel: Arc::new(RecoveryTunnel {
+                    transport_id: transport.profile.id.clone(),
+                    status,
+                    stops: Arc::clone(&self.stops),
+                }),
+                handshake_latency: Duration::from_millis(25),
+            })
+        }
+    }
+
+    struct RecoveryTunnel {
+        transport_id: String,
+        status: watch::Sender<TunnelStatus>,
+        stops: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl ActiveTunnel for RecoveryTunnel {
+        fn transport_id(&self) -> &str {
+            &self.transport_id
+        }
+
+        fn status(&self) -> watch::Receiver<TunnelStatus> {
+            self.status.subscribe()
+        }
+
+        async fn stop(&self) -> Result<(), ClientError> {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            self.status.send_replace(TunnelStatus::Stopped);
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -795,6 +1022,40 @@ mod tests {
             credential: Some(TransportCredential {
                 auth: SecretString::from("A23456789012C3456789012345678901234567890123"),
                 secrets: BTreeMap::new(),
+            }),
+        }
+    }
+
+    fn test_reality_transport(id: &str, priority: u16) -> SessionTransport {
+        SessionTransport {
+            profile: TransportProfile {
+                id: id.to_owned(),
+                display_name: "VLESS + REALITY".to_owned(),
+                protocol: TransportProtocol::VlessXtlsReality,
+                endpoint: "vpn.example.test".to_owned(),
+                port: 443,
+                network: Network::Tcp,
+                priority,
+                tls_server_name: Some("www.example.com".to_owned()),
+                options: BTreeMap::from([
+                    ("encryption".to_owned(), "none".to_owned()),
+                    ("fingerprint".to_owned(), "chrome".to_owned()),
+                    ("flow".to_owned(), "xtls-rprx-vision".to_owned()),
+                    ("transport".to_owned(), "raw".to_owned()),
+                ]),
+            },
+            credential: Some(TransportCredential {
+                auth: SecretString::from("550e8400-e29b-41d4-a716-446655440000"),
+                secrets: BTreeMap::from([
+                    (
+                        "reality_password".to_owned(),
+                        SecretString::from("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+                    ),
+                    (
+                        "reality_short_id".to_owned(),
+                        SecretString::from("0123456789abcdef"),
+                    ),
+                ]),
             }),
         }
     }

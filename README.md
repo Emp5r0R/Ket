@@ -11,7 +11,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 ## Implemented now
 
 - Rust workspace with shared, serializable client/server contracts.
-- Shared Rust client controller with hardened HTTPS enrollment, bounded and identity-bound control-response validation, UI-safe last-known-good state snapshots, lease renewal, metrics refresh, bounded fallback, reconnect maintenance, and clean release.
+- Shared Rust client controller with hardened HTTPS enrollment, bounded and identity-bound control-response validation, UI-safe last-known-good state snapshots, lease renewal, metrics refresh, bounded fallback, persistent reconnect intent across fully blocked rounds, and clean release.
 - Map-first Tauri 2 desktop UI with secure enrollment, node geography, connection control, health/capacity telemetry, traffic history, and responsive Linux/Windows layouts.
 - Authenticated loopback privilege broker with HMAC-SHA-256 installation identity, bounded framing, one-tunnel ownership, heartbeat expiry, and redacted diagnostics.
 - Privileged desktop transport service with strict Hysteria2 and VLESS + REALITY validation, shared full-route TUN and virtual-DNS ownership, every resolved server IP excluded, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
