@@ -10,6 +10,7 @@ mod runtime;
 mod state;
 mod strategy;
 mod transport;
+mod validation;
 mod xray;
 
 pub use api::{ControlEndpoint, ControlPlane, HttpControlPlane, InsecureHttpPolicy};
