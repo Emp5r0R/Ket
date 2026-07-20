@@ -217,19 +217,19 @@ class KetVpnService : VpnService() {
         selectedEngine: AndroidTransportEngine,
         selected: AndroidEngineStarted,
     ) {
+        val bypassAddresses =
+            (transportAddresses.values + listOfNotNull(selected.bypassAddress)).distinct()
+        val dnsServers = AndroidVpnDnsPolicy.serversFor(bypassAddresses)
         val builder = Builder()
             .setSession("Ket - ${spec.node}")
             .setMtu(TUN_MTU)
             .setBlocking(false)
             .addAddress(TUN_IPV4, 32)
             .addAddress(TUN_IPV6, 128)
-            .addDnsServer("1.1.1.1")
-            .addDnsServer("2606:4700:4700::1111")
             .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setMetered(false) }
-        addVpnRoutes(
-            builder,
-            (transportAddresses.values + listOfNotNull(selected.bypassAddress)).distinct(),
-        )
+        // Do not call allowBypass(): apps must not bind around the active VPN.
+        dnsServers.forEach(builder::addDnsServer)
+        addVpnRoutes(builder, bypassAddresses)
         val established = builder.establish()
             ?: throw IllegalStateException("Android could not establish the VPN interface")
         vpnRoute.replace(established)

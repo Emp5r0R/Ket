@@ -17,7 +17,7 @@ This separation keeps the API and user experience consistent while allowing a no
 | Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Hysteria2 and VLESS + REALITY implemented |
 | Desktop privilege broker | Authenticated TUN/route ownership and engine supervision | Rust system service | Implemented for Linux/Windows |
 | Linux/Windows desktop | Map-first connection UI and native packaging | Tauri 2 plus shared Rust core | UI, service installers, and unsigned lifecycle gates implemented; signed bundles pending |
-| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Hysteria2, Xray, hev-socks5-tunnel | Current arm64 packet flow, fallback, recovery, cancellation, and disconnect verified; corrected handover, Doze/revoke, API 26, DNS leak, and owner-signing gates pending |
+| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Hysteria2, Xray, hev-socks5-tunnel | Current arm64 packet flow, fallback, recovery, cancellation, and disconnect verified; corrected handover, Doze/revoke, API 26, DNS leak, always-on enrollment, and owner-signing gates pending |
 
 ## Control flow
 
@@ -48,7 +48,7 @@ This separation keeps the API and user experience consistent while allowing a no
 - The client accepts plaintext control HTTP only on loopback by default, refuses redirects and system proxies, requires TLS 1.2 or newer for HTTPS, caps response bodies, and sanitizes server errors before UI delivery.
 - Desktop transport credentials exist only in memory and an ephemeral mode-`0600` configuration that is deleted after engine and route readiness.
 - Desktop Hysteria and Reality both require the supervised bridge's virtual-DNS mode; the bridge captures IPv4 and IPv6, while each engine connects to a pre-resolved server IP outside those routes.
-- Android rejects unknown transport options and downgrade-shaped TLS fields, resolves and excludes every data-plane endpoint before routing traffic, additionally protects Hysteria's QUIC socket, and deletes its mode-`0600` engine configuration after SOCKS readiness.
+- Android rejects unknown transport options and downgrade-shaped TLS fields, pins and excludes data-plane endpoint addresses before routing traffic, selects explicit dual-stack VPN DNS addresses that cannot overlap those exclusions, never enables application bypass, additionally protects Hysteria's QUIC socket, and deletes its mode-`0600` engine configuration after SOCKS readiness.
 - Android native inputs are reproducible: Hysteria and Xray executables plus the complete hev source archive are version- and checksum-pinned, and CI verifies the expected payload matrix.
 - Desktop broker connections require a fresh challenge response using a 256-bit per-installation token. Protocol frames are bounded, credential buffers are zeroized, and debug output redacts proofs and tunnel IDs.
 - The privileged broker allows one full-route tunnel and stops orphaned engine processes when the desktop heartbeat lease expires.
