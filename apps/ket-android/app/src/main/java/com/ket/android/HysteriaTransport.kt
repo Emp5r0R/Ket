@@ -33,7 +33,7 @@ class HysteriaTransport private constructor(
         internal fun parse(json: JSONObject): HysteriaTransport {
             require(json.getString("protocol") == "hysteria2") { "Unsupported Android transport" }
             require(json.getString("network") == "udp") { "Hysteria2 must use UDP" }
-            val id = json.getString("id").also { require(it.isNotBlank()) { "Transport ID is missing" } }
+            val id = validateTransportId(json.getString("id"))
             val endpoint = validateHost(json.getString("endpoint"), "Transport endpoint")
             val port = json.getInt("port").also { require(it in 1..65535) { "Transport port is invalid" } }
             val priority = json.optInt("priority", 100).also { require(it in 0..65535) { "Transport priority is invalid" } }
@@ -42,9 +42,10 @@ class HysteriaTransport private constructor(
             rejectUnknownKeys(options, knownOptions, "transport option")
             val credential = json.optJSONObject("credential")
                 ?: throw IllegalArgumentException("Transport credential is missing")
-            val auth = credential.optString("auth").also {
-                require(it.isNotBlank()) { "Transport credential is empty" }
-            }
+            val auth = validateTransportSecret(
+                credential.optString("auth"),
+                "Transport credential",
+            )
             val secrets = credential.optJSONObject("secrets") ?: JSONObject()
             rejectUnknownKeys(secrets, knownSecrets, "transport credential")
             val obfs = when (val mode = options.optString("obfs", "none")) {
@@ -75,9 +76,10 @@ class HysteriaTransport private constructor(
         }
 
         private fun requiredSecret(secrets: JSONObject): String =
-            secrets.optString("obfs_password").also {
-                require(it.isNotBlank()) { "Obfuscation password is missing" }
-            }
+            validateTransportSecret(
+                secrets.optString("obfs_password"),
+                "Obfuscation password",
+            )
 
         private fun packetSize(options: JSONObject, key: String, default: Int): Int {
             if (!options.has(key)) return default

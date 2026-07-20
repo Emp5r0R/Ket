@@ -29,7 +29,7 @@ class RealityTransport private constructor(
         internal fun parse(json: JSONObject): RealityTransport {
             require(json.getString("protocol") == "vless_xtls_reality") { "Unsupported Android transport" }
             require(json.getString("network") == "tcp") { "VLESS + REALITY must use TCP" }
-            val id = json.getString("id").also { require(it.isNotBlank()) { "Transport ID is missing" } }
+            val id = validateTransportId(json.getString("id"))
             val endpoint = validateTransportHost(json.getString("endpoint"), "Transport endpoint")
             val port = json.getInt("port").also { require(it in 1..65535) { "Transport port is invalid" } }
             val priority = json.optInt("priority", 100).also { require(it in 0..65535) { "Transport priority is invalid" } }
