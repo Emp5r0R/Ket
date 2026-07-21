@@ -1,8 +1,10 @@
 package com.ket.android
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,13 +22,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -72,11 +78,21 @@ internal fun KetTheme(content: @Composable () -> Unit) {
 @Composable
 internal fun KetApp(
     snapshot: TunnelSnapshot,
-    onConnect: (String, String) -> Unit,
+    onConnect: (String, String, KetProtocol?) -> Unit,
     onDisconnect: () -> Unit,
 ) {
     var serverUrl by rememberSaveable { mutableStateOf("") }
     var accessCode by rememberSaveable { mutableStateOf("") }
+    var preferredProtocolWireName by rememberSaveable { mutableStateOf<String?>(null) }
+    var guideProtocolWireName by rememberSaveable { mutableStateOf<String?>(null) }
+    val preferredProtocol = preferredProtocolWireName?.let(KetProtocol::fromWireName)
+    guideProtocolWireName?.let(KetProtocol::fromWireName)?.let { guideProtocol ->
+        ProtocolLearnMorePage(
+            initialProtocol = guideProtocol,
+            onBack = { guideProtocolWireName = null },
+        )
+        return
+    }
     val connected = snapshot.phase == TunnelPhase.Connected
     val busy = snapshot.phase in setOf(
         TunnelPhase.Enrolling,
@@ -93,7 +109,11 @@ internal fun KetApp(
                     enabled = snapshot.phase != TunnelPhase.Stopping &&
                         (connected || busy || (serverUrl.isNotBlank() && accessCode.length == 32)),
                     onClick = {
-                        if (connected || busy) onDisconnect() else onConnect(serverUrl, accessCode)
+                        if (connected || busy) {
+                            onDisconnect()
+                        } else {
+                            onConnect(serverUrl, accessCode, preferredProtocol)
+                        }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -150,6 +170,13 @@ internal fun KetApp(
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                 )
+                ProtocolPreferenceSelector(
+                    selected = preferredProtocol,
+                    onSelect = { preferredProtocolWireName = it?.wireName },
+                    onLearnMore = {
+                        guideProtocolWireName = (preferredProtocol ?: KetProtocol.Stealth).wireName
+                    },
+                )
             }
             ServerMap(snapshot.node, connected)
             snapshot.node?.let { node ->
@@ -163,6 +190,131 @@ internal fun KetApp(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ProtocolPreferenceSelector(
+    selected: KetProtocol?,
+    onSelect: (KetProtocol?) -> Unit,
+    onLearnMore: () -> Unit,
+) {
+    var expanded by androidx.compose.runtime.remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("PREFERRED PROTOCOL", color = KetMuted, style = MaterialTheme.typography.labelSmall)
+            TextButton(onClick = onLearnMore) { Text("Learn more") }
+        }
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Text(selected?.displayName ?: "Automatic")
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Automatic") },
+                    onClick = {
+                        onSelect(null)
+                        expanded = false
+                    },
+                )
+                KetProtocol.entries.forEach { protocol ->
+                    DropdownMenuItem(
+                        text = { Text(protocol.displayName) },
+                        onClick = {
+                            onSelect(protocol)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+        }
+        Text(
+            selected?.shortInstruction ?: AUTO_PROTOCOL_INSTRUCTION,
+            color = KetMuted,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
+private fun ProtocolLearnMorePage(
+    initialProtocol: KetProtocol,
+    onBack: () -> Unit,
+) {
+    var selectedWireName by rememberSaveable { mutableStateOf(initialProtocol.wireName) }
+    var menuExpanded by androidx.compose.runtime.remember { mutableStateOf(false) }
+    val protocol = KetProtocol.fromWireName(selectedWireName) ?: initialProtocol
+    BackHandler(onBack = onBack)
+    Scaffold(
+        containerColor = KetInk,
+        contentWindowInsets = WindowInsets.safeDrawing,
+    ) { contentPadding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = onBack) { Text("Back") }
+                Text("PROTOCOL GUIDE", color = KetTeal, style = MaterialTheme.typography.labelLarge)
+            }
+            Box(Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) {
+                    Text(protocol.displayName)
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    KetProtocol.entries.forEach { item ->
+                        DropdownMenuItem(
+                            text = { Text(item.displayName) },
+                            onClick = {
+                                selectedWireName = item.wireName
+                                menuExpanded = false
+                            },
+                        )
+                    }
+                }
+            }
+            Text(protocol.shortInstruction, style = MaterialTheme.typography.titleMedium)
+            ProtocolGuideSection("Best for", protocol.bestFor)
+            ProtocolGuideSection("How it works", protocol.operation)
+            ProtocolGuideList("Connect", protocol.steps)
+            ProtocolGuideList("Limits", protocol.limitations)
+        }
+    }
+}
+
+@Composable
+private fun ProtocolGuideSection(title: String, body: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        HorizontalDivider(color = Color(0xFF243237))
+        Text(title, color = KetTeal, style = MaterialTheme.typography.labelLarge)
+        Text(body, color = KetMuted, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun ProtocolGuideList(title: String, items: List<String>) {
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        HorizontalDivider(color = Color(0xFF243237))
+        Text(title, color = KetTeal, style = MaterialTheme.typography.labelLarge)
+        items.forEachIndexed { index, item ->
+            Text("${index + 1}. $item", color = KetMuted, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

@@ -40,4 +40,30 @@ describe("Ket desktop shell", () => {
     expect(screen.getByText("Hysteria 2")).toBeInTheDocument();
     expect(screen.getByText("42 ms")).toBeInTheDocument();
   });
+
+  it("uses a chosen protocol and opens its learn more page", async () => {
+    const { default: App } = await import("./App");
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Server URL"), {
+      target: { value: "https://de-fra.ket.example" },
+    });
+    fireEvent.change(screen.getByLabelText("Access code"), {
+      target: { value: "A2345678901234567890123456789012" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add server" }));
+
+    const selector = await screen.findByLabelText("Preferred protocol");
+    fireEvent.change(selector, { target: { value: "stealth" } });
+    expect(localStorage.getItem("ket.protocol-preference")).toBe("stealth");
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn more" }));
+    expect(screen.getByRole("heading", { name: "HTTPS Stealth", level: 1 })).toBeInTheDocument();
+    expect(screen.getByText(/XHTTP packet-up/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect tunnel" }));
+    expect(await screen.findByText("Traffic is protected")).toBeInTheDocument();
+    expect(screen.getAllByText("HTTPS Stealth").length).toBeGreaterThan(0);
+  });
 });

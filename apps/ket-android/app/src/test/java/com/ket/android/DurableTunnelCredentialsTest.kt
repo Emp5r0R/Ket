@@ -14,7 +14,7 @@ import javax.crypto.KeyGenerator
 class DurableTunnelCredentialsTest {
     @Test
     fun `credential codec round trips a strict resumable session without exposing secrets`() {
-        val original = credentials(testSessionManifest(OLD_TOKEN))
+        val original = credentials(testSessionManifest(OLD_TOKEN), KetProtocol.WireGuardTls)
 
         val decoded = DurableTunnelCredentialsCodec.decode(
             DurableTunnelCredentialsCodec.encode(original),
@@ -23,6 +23,8 @@ class DurableTunnelCredentialsTest {
 
         assertEquals(SERVER_URL, decoded.profile.serverUrl)
         assertEquals(ACCESS_CODE, decoded.profile.accessCode)
+        assertEquals(KetProtocol.WireGuardTls, decoded.profile.preferredProtocol)
+        assertEquals(KetProtocol.WireGuardTls, launch.preferredProtocol)
         assertEquals(OLD_TOKEN, launch.sessionToken)
         assertEquals("Hysteria 2", launch.transports.single().displayName)
         assertFalse(decoded.toString().contains(ACCESS_CODE))
@@ -40,12 +42,19 @@ class DurableTunnelCredentialsTest {
             .put("unexpected", true)
             .toString()
             .toByteArray()
+        val invalidProtocol = JSONObject(String(DurableTunnelCredentialsCodec.encode(credentials(null))))
+            .put("preferred_protocol", "unsupported")
+            .toString()
+            .toByteArray()
 
         assertThrows(IllegalArgumentException::class.java) {
             DurableTunnelCredentialsCodec.decode(wrongSchema)
         }
         assertThrows(IllegalArgumentException::class.java) {
             DurableTunnelCredentialsCodec.decode(unknownField)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DurableTunnelCredentialsCodec.decode(invalidProtocol)
         }
         assertThrows(IllegalArgumentException::class.java) {
             KetControlApi.validateAccessCode("A".repeat(31) + "é")
@@ -109,6 +118,22 @@ class DurableTunnelCredentialsTest {
         assertEquals(1, api.renewals)
         assertEquals(0, api.enrollments)
         assertEquals(0, api.releasedTokens.size)
+    }
+
+    @Test
+    fun `manual protocol change persists without consuming another connection slot`() {
+        val store = FakeCredentialStore(credentials(testSessionManifest(EXISTING_TOKEN)))
+        val api = FakeSessionApi(enrollment(UNUSED_TOKEN))
+        val profile = TunnelEnrollmentProfile(SERVER_URL, ACCESS_CODE, KetProtocol.Stealth)
+
+        val resolved = DurableTunnelSessionResolver(api, store).resolveForApp(profile)
+
+        assertEquals(EXISTING_TOKEN, resolved.sessionToken)
+        assertEquals(KetProtocol.Stealth, resolved.preferredProtocol)
+        assertEquals(KetProtocol.Stealth, store.current?.profile?.preferredProtocol)
+        assertEquals(1, api.renewals)
+        assertEquals(0, api.enrollments)
+        assertEquals(1, store.saves)
     }
 
     @Test
@@ -235,8 +260,14 @@ class DurableTunnelCredentialsTest {
         }
     }
 
-    private fun credentials(manifest: String?): DurableTunnelCredentials =
-        DurableTunnelCredentials(TunnelEnrollmentProfile(SERVER_URL, ACCESS_CODE), manifest)
+    private fun credentials(
+        manifest: String?,
+        preferredProtocol: KetProtocol? = null,
+    ): DurableTunnelCredentials =
+        DurableTunnelCredentials(
+            TunnelEnrollmentProfile(SERVER_URL, ACCESS_CODE, preferredProtocol),
+            manifest,
+        )
 
     private fun enrollment(token: String): EnrollmentResult =
         KetControlApi.parseEnrollment(testSessionManifest(token))

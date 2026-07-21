@@ -1920,6 +1920,7 @@ version = "0.1.0"
 dependencies = [
  "glib",
  "ket-client-core",
+ "ket-core",
  "serde",
  "tauri",
  "tauri-build",

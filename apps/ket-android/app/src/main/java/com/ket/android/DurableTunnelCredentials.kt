@@ -17,6 +17,7 @@ import org.json.JSONObject
 internal class TunnelEnrollmentProfile(
     val serverUrl: String,
     val accessCode: String,
+    val preferredProtocol: KetProtocol? = null,
 ) {
     fun matches(other: TunnelEnrollmentProfile): Boolean =
         serverUrl == other.serverUrl && accessCode == other.accessCode
@@ -33,6 +34,7 @@ internal class DurableTunnelCredentials(
         TunnelLaunchSpec.fromEnrollment(
             profile.serverUrl,
             KetControlApi.parseEnrollment(manifest, requireActiveLease = false),
+            profile.preferredProtocol,
         )
     }
 
@@ -49,13 +51,20 @@ internal interface TunnelCredentialStore {
 internal object DurableTunnelCredentialsCodec {
     private const val SCHEMA_VERSION = 1
     private const val MAX_PLAINTEXT_BYTES = 128 * 1024
-    private val rootKeys = setOf("schema_version", "server_url", "access_code", "session_manifest")
+    private val rootKeys = setOf(
+        "schema_version",
+        "server_url",
+        "access_code",
+        "preferred_protocol",
+        "session_manifest",
+    )
 
     fun encode(credentials: DurableTunnelCredentials): ByteArray {
         val root = JSONObject()
             .put("schema_version", SCHEMA_VERSION)
             .put("server_url", credentials.profile.serverUrl)
             .put("access_code", credentials.profile.accessCode)
+        credentials.profile.preferredProtocol?.let { root.put("preferred_protocol", it.wireName) }
         credentials.sessionManifest?.let { root.put("session_manifest", JSONObject(it)) }
         return root.toString().toByteArray(StandardCharsets.UTF_8).also {
             require(it.size <= MAX_PLAINTEXT_BYTES) { "Saved tunnel credentials are too large" }
@@ -74,6 +83,9 @@ internal object DurableTunnelCredentialsCodec {
         val profile = TunnelEnrollmentProfile(
             serverUrl = KetControlApi.normalizeBaseUrl(root.getString("server_url")),
             accessCode = KetControlApi.validateAccessCode(root.getString("access_code")),
+            preferredProtocol = root.optString("preferred_protocol")
+                .takeIf(String::isNotEmpty)
+                ?.let { KetProtocol.fromWireName(it) ?: throw IllegalArgumentException("Saved protocol is unsupported") },
         )
         val manifest = root.optJSONObject("session_manifest")?.toString()
         manifest?.let(KetControlApi::parseEnrollment)
@@ -220,7 +232,11 @@ internal class DurableTunnelSessionResolver(
 ) {
     fun resolveForApp(profile: TunnelEnrollmentProfile): TunnelLaunchSpec {
         val saved = store.load()
-        if (saved != null && saved.profile.matches(profile)) return resolveSaved(saved)
+        if (saved != null && saved.profile.matches(profile)) {
+            val updated = DurableTunnelCredentials(profile, saved.sessionManifest)
+            if (saved.profile.preferredProtocol != profile.preferredProtocol) store.save(updated)
+            return resolveSaved(updated)
+        }
         saved?.launchSpec()?.let { previous ->
             runCatching { api.release(previous.controlEndpoint, previous.sessionToken) }
             store.clearSession()
@@ -260,7 +276,7 @@ internal class DurableTunnelSessionResolver(
             runCatching { api.release(profile.serverUrl, result.token) }
             throw error
         }
-        return TunnelLaunchSpec.fromEnrollment(profile.serverUrl, result)
+        return TunnelLaunchSpec.fromEnrollment(profile.serverUrl, result, profile.preferredProtocol)
     }
 
     companion object {

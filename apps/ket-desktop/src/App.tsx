@@ -13,15 +13,24 @@ import { EnrollmentPanel } from "./components/EnrollmentPanel";
 import { MetricsView } from "./components/MetricsView";
 import { NavRail, type AppView } from "./components/NavRail";
 import { SettingsView } from "./components/SettingsView";
+import { ProtocolsView } from "./components/ProtocolsView";
 import { StatStrip } from "./components/StatStrip";
 import { WorldMap } from "./components/WorldMap";
+import {
+  isProtocolId,
+  type ProtocolId,
+  type ProtocolPreference,
+} from "./lib/protocols";
 
 const SERVER_KEY = "ket.server-url";
 const DEVICE_KEY = "ket.device-name";
+const PROTOCOL_KEY = "ket.protocol-preference";
 
 const emptySnapshot: ClientSnapshot = {
   phase: "disconnected",
   node: null,
+  available_transports: [],
+  preferred_protocol: null,
   active_transport: null,
   traffic: null,
   handshake_latency_ms: null,
@@ -51,6 +60,11 @@ export default function App() {
     () => localStorage.getItem(DEVICE_KEY) ?? "Ket desktop",
   );
   const [history, setHistory] = useState<TrafficPoint[]>([]);
+  const [protocolPreference, setProtocolPreference] = useState<ProtocolPreference>(() => {
+    const saved = localStorage.getItem(PROTOCOL_KEY);
+    return saved === "auto" || (saved !== null && isProtocolId(saved)) ? saved : "auto";
+  });
+  const [guideProtocol, setGuideProtocol] = useState<ProtocolId>("stealth");
 
   const applySnapshot = (snapshot: ClientSnapshot) => {
     setState((current) => ({ ...current, snapshot, configured: snapshot.node !== null || current.configured }));
@@ -112,6 +126,19 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [state.configured]);
 
+  useEffect(() => {
+    if (
+      protocolPreference !== "auto" &&
+      state.snapshot.available_transports.length > 0 &&
+      !state.snapshot.available_transports.some(
+        (transport) => transport.protocol === protocolPreference,
+      )
+    ) {
+      setProtocolPreference("auto");
+      localStorage.setItem(PROTOCOL_KEY, "auto");
+    }
+  }, [protocolPreference, state.snapshot.available_transports]);
+
   const run = async (operation: () => Promise<ClientSnapshot>) => {
     setBusy(true);
     setLocalIssue(null);
@@ -146,7 +173,25 @@ export default function App() {
     });
   };
 
+  const chooseProtocol = (preference: ProtocolPreference) => {
+    setProtocolPreference(preference);
+    localStorage.setItem(PROTOCOL_KEY, preference);
+  };
+
+  const openProtocolGuide = (protocol: ProtocolId) => {
+    setGuideProtocol(protocol);
+    setView("protocols");
+  };
+
   const connected = state.snapshot.phase === "connected";
+  const availableProtocols = useMemo(
+    () => new Set(
+      state.snapshot.available_transports
+        .map((transport) => transport.protocol)
+        .filter(isProtocolId),
+    ),
+    [state.snapshot.available_transports],
+  );
   const heading = useMemo(() => {
     const location = state.snapshot.node?.location;
     if (!location) return "Choose your node";
@@ -199,7 +244,12 @@ export default function App() {
                   }}
                   engine={state.engine}
                   busy={busy}
-                  onConnect={() => run(() => bridge.connect())}
+                  preference={protocolPreference}
+                  onPreferenceChange={chooseProtocol}
+                  onLearnMore={openProtocolGuide}
+                  onConnect={() => run(() => bridge.connect(
+                    protocolPreference === "auto" ? null : protocolPreference,
+                  ))}
                   onStop={() => run(() => bridge.stop())}
                 />
               ) : (
@@ -215,6 +265,13 @@ export default function App() {
           </div>
         ) : null}
         {view === "metrics" ? <MetricsView snapshot={state.snapshot} history={history} /> : null}
+        {view === "protocols" ? (
+          <ProtocolsView
+            selected={guideProtocol}
+            available={availableProtocols}
+            onSelect={setGuideProtocol}
+          />
+        ) : null}
         {view === "settings" ? (
           <SettingsView
             state={state}

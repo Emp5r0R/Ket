@@ -1,3 +1,5 @@
+import type { ProtocolId } from "./lib/protocols";
+
 export type ClientPhase =
   | "disconnected"
   | "enrolling"
@@ -44,7 +46,7 @@ export interface NodeStatus {
 export interface TransportSummary {
   id: string;
   display_name: string;
-  protocol: string;
+  protocol: ProtocolId;
   network: string;
 }
 
@@ -59,6 +61,8 @@ export interface SessionTraffic {
 export interface ClientSnapshot {
   phase: ClientPhase;
   node: NodeStatus | null;
+  available_transports: TransportSummary[];
+  preferred_protocol: ProtocolId | null;
   active_transport: TransportSummary | null;
   traffic: SessionTraffic | null;
   handshake_latency_ms: number | null;

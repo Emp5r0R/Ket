@@ -33,6 +33,7 @@ internal class OpenVpnStunnelTransport private constructor(
     val tlsCryptKey: String,
 ) : AndroidTransport {
     override val displayName: String = "OpenVPN TLS"
+    override val protocol: KetProtocol = KetProtocol.OpenVpnTls
 
     override fun toString(): String =
         "OpenVpnStunnelTransport(id=$id, endpoint=$endpoint, port=$port, tlsServerName=$tlsServerName, credentials=[REDACTED])"

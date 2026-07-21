@@ -35,13 +35,18 @@ internal class TunnelLaunchSpec(
     val sessionToken: String,
     val node: AndroidNodeStatus,
     val transports: List<AndroidTransport>,
+    val preferredProtocol: KetProtocol? = null,
 ) {
     override fun toString(): String =
         "TunnelLaunchSpec(controlEndpoint=$controlEndpoint, sessionToken=[REDACTED], node=${node.displayName}, transports=$transports)"
 
     companion object {
-        fun fromEnrollment(controlEndpoint: String, result: EnrollmentResult): TunnelLaunchSpec =
-            TunnelLaunchSpec(controlEndpoint, result.token, result.node, result.transports)
+        fun fromEnrollment(
+            controlEndpoint: String,
+            result: EnrollmentResult,
+            preferredProtocol: KetProtocol? = null,
+        ): TunnelLaunchSpec =
+            TunnelLaunchSpec(controlEndpoint, result.token, result.node, result.transports, preferredProtocol)
     }
 }
 
@@ -81,7 +86,12 @@ object KetTunnelController {
     private val generation = AtomicLong()
     private val lifecycleLock = Any()
 
-    fun connect(context: Context, serverUrl: String, accessCode: String) {
+    fun connect(
+        context: Context,
+        serverUrl: String,
+        accessCode: String,
+        preferredProtocol: KetProtocol? = null,
+    ) {
         val attempt = synchronized(lifecycleLock) {
             generation.incrementAndGet().also {
                 KetTunnelRuntime.publish(
@@ -97,6 +107,7 @@ object KetTunnelController {
                 val profile = TunnelEnrollmentProfile(
                     KetControlApi.normalizeBaseUrl(serverUrl),
                     KetControlApi.validateAccessCode(accessCode),
+                    preferredProtocol,
                 )
                 val store = AndroidTunnelCredentialStore.get(appContext)
                 val preparedSpec = DurableTunnelSessionResolver(KetControlApi, store).resolveForApp(profile)

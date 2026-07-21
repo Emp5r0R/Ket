@@ -75,6 +75,18 @@ impl TransportSelector {
         history: &TransportHistory,
         now: u64,
     ) -> Vec<&'a SessionTransport> {
+        self.rank_with_preference(transports, adapters, history, now, None)
+    }
+
+    pub fn rank_with_preference<'a>(
+        &self,
+        transports: &'a [SessionTransport],
+        adapters: &[std::sync::Arc<dyn TransportAdapter>],
+        history: &TransportHistory,
+        now: u64,
+        preferred_protocol: Option<&TransportProtocol>,
+    ) -> Vec<&'a SessionTransport> {
+        let preferred_protocol = preferred_protocol.or(self.policy.preferred_protocol.as_ref());
         let mut candidates: Vec<_> = transports
             .iter()
             .filter(|transport| adapters.iter().any(|adapter| adapter.supports(transport)))
@@ -87,11 +99,8 @@ impl TransportSelector {
             let latency = record
                 .and_then(|record| record.last_latency_ms)
                 .unwrap_or(500);
-            let preferred = self
-                .policy
-                .preferred_protocol
-                .as_ref()
-                .is_some_and(|protocol| protocol == &transport.profile.protocol);
+            let preferred =
+                preferred_protocol.is_some_and(|protocol| protocol == &transport.profile.protocol);
             (
                 cooling_down,
                 !preferred,

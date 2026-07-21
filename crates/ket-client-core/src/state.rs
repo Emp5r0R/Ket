@@ -41,6 +41,8 @@ impl From<&TransportProfile> for TransportSummary {
 pub struct ClientSnapshot {
     pub phase: ClientPhase,
     pub node: Option<NodeStatus>,
+    pub available_transports: Vec<TransportSummary>,
+    pub preferred_protocol: Option<TransportProtocol>,
     pub active_transport: Option<TransportSummary>,
     pub traffic: Option<SessionTraffic>,
     pub handshake_latency_ms: Option<u64>,

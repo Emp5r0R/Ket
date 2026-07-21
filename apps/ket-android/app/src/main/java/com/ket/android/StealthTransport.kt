@@ -17,6 +17,7 @@ class StealthTransport private constructor(
     val path: String,
 ) : AndroidXrayTransport {
     override val displayName: String = "HTTPS Stealth"
+    override val protocol: KetProtocol = KetProtocol.Stealth
 
     override fun toString(): String =
         "StealthTransport(id=$id, endpoint=$endpoint, port=$port, tlsServerName=$tlsServerName, userId=[REDACTED], fingerprint=$fingerprint, path=[REDACTED])"

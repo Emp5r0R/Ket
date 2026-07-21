@@ -11,16 +11,25 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 
+private data class PendingConnectionRequest(
+    val serverUrl: String,
+    val accessCode: String,
+    val preferredProtocol: KetProtocol?,
+)
+
 private object PendingPermissionRequest {
     var serverUrl: String? = null
     var accessCode: String? = null
+    var preferredProtocol: KetProtocol? = null
 
-    fun clear(): Pair<String, String>? {
+    fun clear(): PendingConnectionRequest? {
         val server = serverUrl
         val code = accessCode
+        val protocol = preferredProtocol
         serverUrl = null
         accessCode = null
-        return if (server != null && code != null) server to code else null
+        preferredProtocol = null
+        return if (server != null && code != null) PendingConnectionRequest(server, code, protocol) else null
     }
 }
 
@@ -30,7 +39,12 @@ class MainActivity : ComponentActivity() {
     private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val request = PendingPermissionRequest.clear()
         if (result.resultCode == RESULT_OK && request != null) {
-            KetTunnelController.connect(this, request.first, request.second)
+            KetTunnelController.connect(
+                this,
+                request.serverUrl,
+                request.accessCode,
+                request.preferredProtocol,
+            )
         } else if (request != null) {
             KetTunnelRuntime.publish(
                 TunnelSnapshot(phase = TunnelPhase.Failed, message = "Android VPN permission was not granted"),
@@ -63,9 +77,14 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun requestConnection(serverUrl: String, accessCode: String) {
+    private fun requestConnection(
+        serverUrl: String,
+        accessCode: String,
+        preferredProtocol: KetProtocol?,
+    ) {
         PendingPermissionRequest.serverUrl = serverUrl
         PendingPermissionRequest.accessCode = accessCode
+        PendingPermissionRequest.preferredProtocol = preferredProtocol
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -79,7 +98,9 @@ class MainActivity : ComponentActivity() {
     private fun requestVpnPermission() {
         val permission = VpnService.prepare(this)
         if (permission == null) {
-            PendingPermissionRequest.clear()?.let { KetTunnelController.connect(this, it.first, it.second) }
+            PendingPermissionRequest.clear()?.let {
+                KetTunnelController.connect(this, it.serverUrl, it.accessCode, it.preferredProtocol)
+            }
         } else {
             vpnPermission.launch(permission)
         }

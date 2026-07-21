@@ -42,7 +42,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
   letter-spacing: 0;
 }
@@ -52,7 +53,8 @@ button {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid rgb(40 103 214 / 24%);
   outline-offset: 2px;
 }
@@ -140,6 +142,7 @@ input:disabled {
 
 .connection-view,
 .metrics-view,
+.protocols-view,
 .settings-view {
   min-height: 100%;
   padding: 26px 30px 30px;
@@ -574,6 +577,62 @@ input:disabled {
   white-space: nowrap;
 }
 
+.protocol-choice {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.protocol-choice-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.protocol-choice-heading label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.protocol-choice-heading button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  color: var(--blue);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.protocol-choice select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 34px 0 11px;
+  border: 1px solid #ccd4cf;
+  border-radius: 6px;
+  color: var(--ink);
+  background: #fbfcfb;
+  font-size: 12px;
+}
+
+.protocol-choice select:disabled {
+  opacity: 0.65;
+}
+
+.protocol-choice p {
+  min-height: 34px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .power-control {
   display: grid;
   justify-items: center;
@@ -632,9 +691,119 @@ input:disabled {
 }
 
 .metrics-view,
+.protocols-view,
 .settings-view {
   max-width: 1220px;
   margin: 0 auto;
+}
+
+.protocols-view {
+  max-width: 1060px;
+}
+
+.protocol-availability {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.protocol-availability.is-offered {
+  color: var(--green-dark);
+}
+
+.protocol-guide-layout {
+  display: grid;
+  min-height: 520px;
+  grid-template-columns: 230px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.protocol-list {
+  display: grid;
+  align-content: start;
+  border-right: 1px solid var(--line);
+  background: #fbfcfa;
+}
+
+.protocol-list-item {
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: 22px minmax(0, 1fr) 8px;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.protocol-list-item:hover,
+.protocol-list-item.is-active {
+  color: var(--ink);
+  background: var(--green-soft);
+}
+
+.protocol-list-item i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c4ccc7;
+}
+
+.protocol-list-item i.is-offered {
+  background: var(--green);
+}
+
+.protocol-detail {
+  padding: 28px 34px 34px;
+}
+
+.protocol-lead {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 12px;
+  padding-bottom: 24px;
+  color: var(--green-dark);
+}
+
+.protocol-lead p,
+.protocol-detail section p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.protocol-detail section {
+  padding: 21px 0;
+  border-top: 1px solid var(--line);
+}
+
+.protocol-detail h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.protocol-detail ol,
+.protocol-detail ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .version-label {
@@ -961,6 +1130,7 @@ input:disabled {
 
   .connection-view,
   .metrics-view,
+  .protocols-view,
   .settings-view {
     padding-right: 20px;
     padding-left: 20px;
@@ -998,6 +1168,7 @@ input:disabled {
 
   .app-shell {
     display: block;
+    height: auto;
     min-height: 100%;
     padding-bottom: 70px;
   }
@@ -1028,7 +1199,7 @@ input:disabled {
 
   .nav-items {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 5px;
   }
 
@@ -1043,6 +1214,7 @@ input:disabled {
 
   .connection-view,
   .metrics-view,
+  .protocols-view,
   .settings-view {
     min-height: auto;
     padding: 18px 14px 24px;
@@ -1085,6 +1257,24 @@ input:disabled {
 
   .chart-grid-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .protocol-guide-layout {
+    display: block;
+  }
+
+  .protocol-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .protocol-list-item:nth-child(odd) {
+    border-right: 1px solid var(--line);
+  }
+
+  .protocol-detail {
+    padding: 24px 20px;
   }
 
   .capacity-copy {
