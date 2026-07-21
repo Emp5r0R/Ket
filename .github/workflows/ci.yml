@@ -295,9 +295,26 @@ jobs:
           KET_XRAY_SHORT_ID=0123456789abcdef
           KET_XRAY_CREDENTIAL_KEY=credential-key-with-at-least-32-characters
           ./packaging/validate-env.sh
+      - name: Validate HTTPS Stealth environment
+        run: >-
+          KET_ADMIN_TOKEN=01234567890123456789012345678901
+          KET_SESSION_TTL_SECONDS=1800
+          KET_MAX_SESSIONS=100
+          KET_COUNTRY_CODE=US
+          KET_XHTTP_ENABLED=true
+          KET_XHTTP_PUBLIC_HOST=stealth.example.test
+          KET_XHTTP_PUBLIC_PORT=443
+          KET_XHTTP_SNI=stealth.example.test
+          KET_XHTTP_PATH=/ket-a1b2c3d4e5f6a1b2c3d4e5f6
+          KET_XHTTP_ORIGIN_BIND_ADDRESS=127.0.0.1
+          KET_XHTTP_ORIGIN_PORT=8445
+          KET_XRAY_CREDENTIAL_KEY=credential-key-with-at-least-32-characters
+          ./packaging/validate-env.sh
       - run: cp .env.example .env
       - run: docker compose -f compose.yaml -f compose.hysteria.yaml config --quiet
       - run: docker compose -f compose.yaml -f compose.xray.yaml config --quiet
+      - run: docker compose -f compose.yaml -f compose.xhttp.yaml config --quiet
+      - run: docker compose -f compose.yaml -f compose.xray.yaml -f compose.xhttp.yaml config --quiet
       - run: docker build --pull --tag ket-control-plane:ci .
       - run: docker run --rm --entrypoint /usr/local/bin/xray ket-control-plane:ci version
       - run: docker image inspect ket-control-plane:ci

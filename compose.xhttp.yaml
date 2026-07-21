@@ -1,0 +1,36 @@
+services:
+  control-plane:
+    environment:
+      KET_XRAY_CONFIG_PATH: /var/lib/ket-dataplane/xray.json
+      KET_XRAY_BINARY: /usr/local/bin/xray
+      KET_XRAY_API_SERVER: xray:10085
+      KET_XRAY_API_LISTEN: 0.0.0.0
+      KET_XRAY_API_PORT: 10085
+      KET_XHTTP_LISTEN_HOST: 0.0.0.0
+      KET_XHTTP_LISTEN_PORT: 8445
+    volumes:
+      - ket-dataplane:/var/lib/ket-dataplane
+
+  xray:
+    image: ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7
+    user: "10001:10001"
+    command: ["run", "-c", "/var/lib/ket-dataplane/xray.json"]
+    depends_on:
+      control-plane:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
+    ports:
+      - "${KET_XHTTP_ORIGIN_BIND_ADDRESS:-127.0.0.1}:${KET_XHTTP_ORIGIN_PORT:-8445}:8445/tcp"
+    volumes:
+      - ket-dataplane:/var/lib/ket-dataplane:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt: !override
+      - no-new-privileges:true
+
+volumes:
+  ket-dataplane:

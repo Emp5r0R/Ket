@@ -364,61 +364,109 @@ impl XrayControl {
     async fn add_user(&self, session_id: &str) -> Result<(), DataPlaneError> {
         validate_session_id(session_id)?;
         let path = user_config_path(session_id);
-        write_user_config(&path, &xray::user_document(&self.config, session_id)).await?;
-        let mut arguments = self.api_arguments("adu");
-        arguments.push(path.to_string_lossy().into_owned());
-        let result = self.run(&arguments).await;
-        let cleanup = tokio::fs::remove_file(&path).await;
-        let output = result?;
-        if let Err(error) = cleanup {
-            return Err(DataPlaneError::Io(error));
-        }
-        if !output.contains("Added 1 user(s) in total.") {
-            return Err(DataPlaneError::Command(
-                "Xray did not confirm one added user".to_owned(),
-            ));
-        }
-        Ok(())
-    }
-
-    async fn remove_emails(&self, emails: &[String]) -> Result<(), DataPlaneError> {
-        for chunk in emails.chunks(100) {
-            if chunk.is_empty() {
-                continue;
+        let email = xray::session_email(session_id);
+        let mut added_tags = Vec::new();
+        for (tag, document) in xray::inbound_tags(&self.config)
+            .into_iter()
+            .zip(xray::user_documents(&self.config, session_id))
+        {
+            if let Err(error) = write_user_config(&path, &document).await {
+                let _ = self.remove_emails_from_tags(&added_tags, &[email]).await;
+                return Err(error);
             }
-            let mut arguments = self.api_arguments("rmu");
-            arguments.push(format!("-tag={}", self.config.inbound_tag));
-            arguments.extend(chunk.iter().cloned());
-            let output = self.run(&arguments).await?;
-            if !output.contains("Removed ") || !output.contains(" user(s) in total.") {
+            let mut arguments = self.api_arguments("adu");
+            arguments.push(path.to_string_lossy().into_owned());
+            let result = self.run(&arguments).await;
+            let cleanup = tokio::fs::remove_file(&path).await;
+            if let Err(error) = result {
+                let _ = self.remove_emails_from_tags(&added_tags, &[email]).await;
+                return Err(error);
+            }
+            added_tags.push(tag);
+            if let Err(error) = cleanup {
+                let _ = self.remove_emails_from_tags(&added_tags, &[email]).await;
+                return Err(DataPlaneError::Io(error));
+            }
+            let inbound_emails = match self.inbound_emails(tag).await {
+                Ok(inbound_emails) => inbound_emails,
+                Err(error) => {
+                    let _ = self.remove_emails_from_tags(&added_tags, &[email]).await;
+                    return Err(error);
+                }
+            };
+            if !inbound_emails.contains(&email) {
+                let _ = self.remove_emails_from_tags(&added_tags, &[email]).await;
                 return Err(DataPlaneError::Command(
-                    "Xray did not confirm user removal".to_owned(),
+                    "Xray did not retain the provisioned user".to_owned(),
                 ));
             }
         }
         Ok(())
     }
 
+    async fn remove_emails(&self, emails: &[String]) -> Result<(), DataPlaneError> {
+        self.remove_emails_from_tags(&xray::inbound_tags(&self.config), emails)
+            .await
+    }
+
+    async fn remove_emails_from_tags(
+        &self,
+        tags: &[&str],
+        emails: &[String],
+    ) -> Result<(), DataPlaneError> {
+        for tag in tags {
+            for chunk in emails.chunks(100) {
+                if chunk.is_empty() {
+                    continue;
+                }
+                let mut arguments = self.api_arguments("rmu");
+                arguments.push(format!("-tag={tag}"));
+                arguments.extend(chunk.iter().cloned());
+                self.run(&arguments).await?;
+                let inbound_emails = self.inbound_emails(tag).await?;
+                if chunk.iter().any(|email| inbound_emails.contains(email)) {
+                    return Err(DataPlaneError::Command(
+                        "Xray retained a removed user".to_owned(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn managed_emails(&self) -> Result<Vec<String>, DataPlaneError> {
-        let mut arguments = self.api_arguments("inbounduser");
-        arguments.push(format!("-tag={}", self.config.inbound_tag));
-        let output = self.run(&arguments).await?;
-        let value: Value = serde_json::from_str(&output)?;
         let mut emails = BTreeSet::new();
-        collect_emails(&value, &mut emails);
+        for tag in xray::inbound_tags(&self.config) {
+            emails.extend(self.inbound_emails(tag).await?);
+        }
         Ok(emails
             .into_iter()
             .filter(|email| email.starts_with("session-") && email.ends_with("@ket.invalid"))
             .collect())
+    }
+
+    async fn inbound_emails(&self, tag: &str) -> Result<BTreeSet<String>, DataPlaneError> {
+        let mut arguments = self.api_arguments("inbounduser");
+        arguments.push(format!("-tag={tag}"));
+        let output = self.run(&arguments).await?;
+        let value: Value = serde_json::from_str(&output)?;
+        let mut emails = BTreeSet::new();
+        collect_emails(&value, &mut emails);
+        Ok(emails)
     }
 }
 
 #[async_trait]
 impl DataPlaneControl for XrayControl {
     async fn healthy(&self) -> bool {
-        let mut arguments = self.api_arguments("inboundusercount");
-        arguments.push(format!("-tag={}", self.config.inbound_tag));
-        self.run(&arguments).await.is_ok()
+        for tag in xray::inbound_tags(&self.config) {
+            let mut arguments = self.api_arguments("inboundusercount");
+            arguments.push(format!("-tag={tag}"));
+            if self.run(&arguments).await.is_err() {
+                return false;
+            }
+        }
+        true
     }
 
     async fn provision(&self, session_id: &str) -> Result<(), DataPlaneError> {

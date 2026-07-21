@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     if let Some(xray) = &config.xray {
         ket_server::xray::write_runtime_config(xray)
             .await
-            .context("failed to render Xray REALITY configuration")?;
+            .context("failed to render Xray configuration")?;
     }
     let access = AccessService::load_from_file(
         config.state_path.clone(),

@@ -404,8 +404,7 @@ fn session_transports(state: &AppState, created: &CreatedSession) -> Vec<Session
                     .config
                     .xray
                     .as_ref()
-                    .filter(|config| config.transport_id == profile.id)
-                    .map(|config| xray::session_credential(config, &created.id))
+                    .and_then(|config| xray::session_credential(config, &profile.id, &created.id))
             };
             SessionTransport {
                 credential,
@@ -620,7 +619,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::{HysteriaConfig, HysteriaObfuscation, XrayConfig},
+        config::{
+            HysteriaConfig, HysteriaObfuscation, XrayConfig, XrayRealityConfig, XrayXhttpConfig,
+        },
         data_plane::DataPlaneError,
         model::PersistedState,
         repository::{RepositoryError, StateRepository},
@@ -1090,7 +1091,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn xray_session_provisions_and_revokes_a_reality_user() {
+    async fn xray_session_provisions_and_revokes_all_transport_credentials() {
         let repository = Arc::new(MemoryRepository::default());
         let service = AccessService::load(repository, Duration::from_secs(300), 4)
             .await
@@ -1137,7 +1138,11 @@ mod tests {
         assert_eq!(session_response.status(), StatusCode::CREATED);
         let session: SessionManifest = response_json(session_response).await;
         let session_id = session.session_token.expose_secret()[..12].to_owned();
-        let transport = session.transports.first().expect("REALITY transport");
+        let transport = session
+            .transports
+            .iter()
+            .find(|transport| transport.profile.protocol == TransportProtocol::VlessXtlsReality)
+            .expect("REALITY transport");
         let credential = transport.credential.as_ref().expect("REALITY credential");
         let uuid = credential.auth.expose_secret();
         assert_eq!(uuid.len(), 36);
@@ -1162,6 +1167,14 @@ mod tests {
                 .expose_secret(),
             "0123456789abcdef"
         );
+        let stealth = session
+            .transports
+            .iter()
+            .find(|transport| transport.profile.protocol == TransportProtocol::Stealth)
+            .expect("Stealth transport");
+        let stealth_credential = stealth.credential.as_ref().expect("Stealth credential");
+        assert_eq!(stealth_credential.auth.expose_secret(), uuid);
+        assert!(stealth_credential.secrets.is_empty());
         assert_eq!(
             data_plane
                 .provision_attempts
@@ -1317,13 +1330,8 @@ mod tests {
     }
 
     fn xray_test_config() -> ServerConfig {
-        let xray = XrayConfig {
+        let reality = XrayRealityConfig {
             transport_id: "vless-reality-primary".to_owned(),
-            runtime_config_path: PathBuf::from("unused-xray-test.json"),
-            binary_path: PathBuf::from("unused-xray-test-binary"),
-            api_server: "127.0.0.1:10085".to_owned(),
-            api_listen: "127.0.0.1".to_owned(),
-            api_port: 10085,
             inbound_tag: "vless-reality".to_owned(),
             listen_host: "0.0.0.0".to_owned(),
             listen_port: 8444,
@@ -1335,26 +1343,63 @@ mod tests {
             private_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
             public_key: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB".to_owned(),
             short_id: "0123456789abcdef".to_owned(),
-            credential_key: "test-credential-key-with-at-least-32-characters".to_owned(),
             fingerprint: "chrome".to_owned(),
+        };
+        let xray = XrayConfig {
+            runtime_config_path: PathBuf::from("unused-xray-test.json"),
+            binary_path: PathBuf::from("unused-xray-test-binary"),
+            api_server: "127.0.0.1:10085".to_owned(),
+            api_listen: "127.0.0.1".to_owned(),
+            api_port: 10085,
+            credential_key: "test-credential-key-with-at-least-32-characters".to_owned(),
+            reality: Some(reality.clone()),
+            xhttp: Some(XrayXhttpConfig {
+                transport_id: "https-stealth-primary".to_owned(),
+                inbound_tag: "vless-xhttp".to_owned(),
+                listen_host: "0.0.0.0".to_owned(),
+                listen_port: 8445,
+                public_host: "stealth.example.test".to_owned(),
+                public_port: 443,
+                sni: "stealth.example.test".to_owned(),
+                path: "/a1b2c3d4e5f6g7h8".to_owned(),
+                fingerprint: "chrome".to_owned(),
+            }),
         };
         let options = BTreeMap::from([
             ("encryption".to_owned(), "none".to_owned()),
-            ("fingerprint".to_owned(), xray.fingerprint.clone()),
+            ("fingerprint".to_owned(), reality.fingerprint.clone()),
             ("flow".to_owned(), "xtls-rprx-vision".to_owned()),
             ("transport".to_owned(), "raw".to_owned()),
         ]);
         let mut config = test_config();
         config.transports.push(TransportProfile {
-            id: xray.transport_id.clone(),
+            id: reality.transport_id.clone(),
             display_name: "VLESS + REALITY".to_owned(),
             protocol: TransportProtocol::VlessXtlsReality,
-            endpoint: xray.public_host.clone(),
-            port: xray.public_port,
+            endpoint: reality.public_host.clone(),
+            port: reality.public_port,
             network: Network::Tcp,
             priority: 5,
-            tls_server_name: Some(xray.sni.clone()),
+            tls_server_name: Some(reality.sni.clone()),
             options,
+        });
+        config.transports.push(TransportProfile {
+            id: "https-stealth-primary".to_owned(),
+            display_name: "HTTPS Stealth".to_owned(),
+            protocol: TransportProtocol::Stealth,
+            endpoint: "stealth.example.test".to_owned(),
+            port: 443,
+            network: Network::Tcp,
+            priority: 1,
+            tls_server_name: Some("stealth.example.test".to_owned()),
+            options: BTreeMap::from([
+                ("encryption".to_owned(), "none".to_owned()),
+                ("fingerprint".to_owned(), "chrome".to_owned()),
+                ("mode".to_owned(), "packet-up".to_owned()),
+                ("path".to_owned(), "/a1b2c3d4e5f6g7h8".to_owned()),
+                ("security".to_owned(), "tls".to_owned()),
+                ("transport".to_owned(), "xhttp".to_owned()),
+            ]),
         });
         config.xray = Some(xray);
         config

@@ -14,12 +14,12 @@ class RealityTransport private constructor(
     override val endpoint: String,
     override val port: Int,
     override val priority: Int,
-    val tlsServerName: String,
-    val userId: String,
+    override val tlsServerName: String,
+    override val userId: String,
     val password: String,
     val shortId: String,
-    val fingerprint: String,
-) : AndroidTransport {
+    override val fingerprint: String,
+) : AndroidXrayTransport {
     override val displayName: String = "VLESS + REALITY"
 
     override fun toString(): String =

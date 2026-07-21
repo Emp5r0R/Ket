@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use ket_client_core::{ActiveTunnel, Hysteria2Adapter, TransportAdapter, XrayRealityAdapter};
+use ket_client_core::{ActiveTunnel, Hysteria2Adapter, TransportAdapter, XrayAdapter};
 use ket_tunnel_protocol::{
     BrokerFault, BrokerRequest, BrokerResponse, BrokerToken, BrokerTunnelStatus, HandshakeProof,
     HandshakeResult, challenge, read_frame, write_frame,
@@ -258,7 +258,7 @@ pub async fn serve_until(
         )));
     }
     if config.xray_path.is_file() && config.bridge_path.is_file() {
-        adapters.push(Arc::new(XrayRealityAdapter::new(
+        adapters.push(Arc::new(XrayAdapter::new(
             &config.xray_path,
             &config.bridge_path,
             &config.runtime_dir,

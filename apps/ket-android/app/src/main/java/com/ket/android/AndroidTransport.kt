@@ -11,6 +11,12 @@ interface AndroidTransport {
     val displayName: String
 }
 
+interface AndroidXrayTransport : AndroidTransport {
+    val tlsServerName: String
+    val userId: String
+    val fingerprint: String
+}
+
 internal object AndroidTransportSelector {
     private const val MAX_TRANSPORTS = 32
 
@@ -24,6 +30,7 @@ internal object AndroidTransportSelector {
                 validateTransportId(candidate.getString("id"))
                 when (candidate.optString("protocol")) {
                     "hysteria2" -> add(HysteriaTransport.parse(candidate))
+                    "stealth" -> add(StealthTransport.parse(candidate))
                     "vless_xtls_reality" -> add(RealityTransport.parse(candidate))
                 }
             }

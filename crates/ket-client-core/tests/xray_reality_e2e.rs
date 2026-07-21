@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use ket_client_core::{TransportAdapter, XrayRealityAdapter};
+use ket_client_core::{TransportAdapter, XrayAdapter};
 use ket_core::{SessionManifest, TransportProtocol};
 
 #[tokio::test]
@@ -17,7 +17,7 @@ async fn reality_transport_carries_full_route_traffic_when_configured() {
         .into_iter()
         .find(|transport| transport.profile.protocol == TransportProtocol::VlessXtlsReality)
         .expect("manifest contains Reality transport");
-    let adapter = XrayRealityAdapter::new(xray, bridge, "/tmp/ket-xray-e2e");
+    let adapter = XrayAdapter::new(xray, bridge, "/tmp/ket-xray-e2e");
     let probe = adapter
         .probe(&transport)
         .await

@@ -3,9 +3,54 @@ package com.ket.android
 import org.json.JSONObject
 
 internal object EngineConfig {
-    fun xray(transport: RealityTransport, resolvedAddress: String, socksPort: Int): String {
+    fun xray(transport: AndroidXrayTransport, resolvedAddress: String, socksPort: Int): String {
         require(socksPort in 1..65535) { "SOCKS port is invalid" }
         require(resolvedAddress.isNotBlank()) { "Resolved server address is missing" }
+        val user = JSONObject()
+            .put("id", transport.userId)
+            .put("encryption", "none")
+        val tag: String
+        val streamSettings: JSONObject
+        when (transport) {
+            is RealityTransport -> {
+                tag = "ket-reality"
+                user.put("flow", "xtls-rprx-vision")
+                streamSettings = JSONObject()
+                    .put("network", "raw")
+                    .put("security", "reality")
+                    .put(
+                        "realitySettings",
+                        JSONObject()
+                            .put("show", false)
+                            .put("fingerprint", transport.fingerprint)
+                            .put("serverName", transport.tlsServerName)
+                            .put("password", transport.password)
+                            .put("shortId", transport.shortId)
+                            .put("spiderX", "/"),
+                    )
+            }
+            is StealthTransport -> {
+                tag = "ket-stealth"
+                streamSettings = JSONObject()
+                    .put("network", "xhttp")
+                    .put("security", "tls")
+                    .put(
+                        "tlsSettings",
+                        JSONObject()
+                            .put("fingerprint", transport.fingerprint)
+                            .put("serverName", transport.tlsServerName)
+                            .put("alpn", org.json.JSONArray(listOf("h2", "http/1.1"))),
+                    )
+                    .put(
+                        "xhttpSettings",
+                        JSONObject()
+                            .put("host", transport.tlsServerName)
+                            .put("path", transport.path)
+                            .put("mode", "packet-up"),
+                    )
+            }
+            else -> throw IllegalArgumentException("Unsupported Xray transport")
+        }
         val document = JSONObject()
             .put("log", JSONObject().put("loglevel", "warning"))
             .put(
@@ -30,7 +75,7 @@ internal object EngineConfig {
                 "outbounds",
                 org.json.JSONArray().put(
                     JSONObject()
-                        .put("tag", "ket-reality")
+                        .put("tag", tag)
                         .put("protocol", "vless")
                         .put(
                             "settings",
@@ -42,32 +87,12 @@ internal object EngineConfig {
                                         .put("port", transport.port)
                                         .put(
                                             "users",
-                                            org.json.JSONArray().put(
-                                                JSONObject()
-                                                    .put("id", transport.userId)
-                                                    .put("encryption", "none")
-                                                    .put("flow", "xtls-rprx-vision"),
-                                            ),
+                                            org.json.JSONArray().put(user),
                                         ),
                                 ),
                             ),
                         )
-                        .put(
-                            "streamSettings",
-                            JSONObject()
-                                .put("network", "raw")
-                                .put("security", "reality")
-                                .put(
-                                    "realitySettings",
-                                    JSONObject()
-                                        .put("show", false)
-                                        .put("fingerprint", transport.fingerprint)
-                                        .put("serverName", transport.tlsServerName)
-                                        .put("password", transport.password)
-                                        .put("shortId", transport.shortId)
-                                        .put("spiderX", "/"),
-                                ),
-                        ),
+                        .put("streamSettings", streamSettings),
                 ),
             )
         return document.toString(2)

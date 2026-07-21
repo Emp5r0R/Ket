@@ -43,6 +43,8 @@ Protocol metadata under `options` is non-secret. Protocol-specific passwords or 
 
 A VLESS + REALITY profile uses `credential.auth` for its lease-scoped UUID, `credential.secrets.reality_password` for Xray's REALITY public key, and `credential.secrets.reality_short_id` for the short ID. Its non-secret options declare `flow=xtls-rprx-vision`, `transport=raw`, `encryption=none`, and the selected TLS fingerprint. The server installs this UUID in Xray before returning `201`; provisioning failure rolls back the lease and returns `data_plane_unavailable`.
 
+An HTTPS Stealth profile uses `protocol=stealth` for a concrete VLESS + XHTTP/TLS adapter. Its `credential.auth` is the same lease-scoped Xray UUID and its `credential.secrets` object must be empty. The exact option set is `encryption=none`, `transport=xhttp`, `security=tls`, `mode=packet-up`, a 16-128 character absolute `path`, and a supported browser `fingerprint`. Desktop and Android reject unknown options, additional secrets, invalid paths, certificate downgrades, and unsupported XHTTP modes.
+
 ## Session endpoints
 
 | Method | Path | Purpose |

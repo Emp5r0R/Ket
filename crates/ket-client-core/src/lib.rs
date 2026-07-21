@@ -21,4 +21,4 @@ pub use hysteria::Hysteria2Adapter;
 pub use state::{ClientPhase, ClientSnapshot, TransportSummary};
 pub use strategy::{SelectionPolicy, TransportHistory, TransportSelector};
 pub use transport::{ActiveTunnel, ProbeReport, StartedTunnel, TransportAdapter, TunnelStatus};
-pub use xray::XrayRealityAdapter;
+pub use xray::XrayAdapter;
