@@ -7,6 +7,8 @@ pub mod repository;
 pub mod service;
 pub mod shadowsocks;
 mod system;
+pub mod wireguard;
+pub mod wireguard_agent;
 pub mod xray;
 
 pub use api::{AppState, build_router};

@@ -96,7 +96,11 @@ impl TransportAdapter for BrokerTransportAdapter {
     fn supports(&self, transport: &SessionTransport) -> bool {
         matches!(
             transport.profile.protocol,
-            TransportProtocol::Hysteria2 | TransportProtocol::VlessXtlsReality
+            TransportProtocol::Hysteria2
+                | TransportProtocol::Shadowsocks2022
+                | TransportProtocol::Stealth
+                | TransportProtocol::VlessXtlsReality
+                | TransportProtocol::WireGuard
         )
     }
 

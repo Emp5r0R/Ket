@@ -217,7 +217,7 @@ impl TransportAdapter for XrayAdapter {
     }
 }
 
-async fn check_binary(
+pub(crate) async fn check_binary(
     path: &PathBuf,
     arguments: &[&str],
     transport_id: &str,
@@ -582,7 +582,7 @@ fn render_client_config(
     })
 }
 
-async fn wait_for_socks(
+pub(crate) async fn wait_for_socks(
     child: &mut Child,
     port: u16,
     startup_timeout: Duration,
@@ -613,7 +613,7 @@ async fn wait_for_socks(
     }
 }
 
-async fn verify_tunnel_path(
+pub(crate) async fn verify_tunnel_path(
     port: u16,
     target: &str,
     startup_timeout: Duration,

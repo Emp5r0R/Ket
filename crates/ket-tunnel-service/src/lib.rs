@@ -9,7 +9,8 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use ket_client_core::{
-    ActiveTunnel, Hysteria2Adapter, Shadowsocks2022Adapter, TransportAdapter, XrayAdapter,
+    ActiveTunnel, Hysteria2Adapter, Shadowsocks2022Adapter, TransportAdapter, WireGuardTlsAdapter,
+    XrayAdapter,
 };
 use ket_tunnel_protocol::{
     BrokerFault, BrokerRequest, BrokerResponse, BrokerToken, BrokerTunnelStatus, HandshakeProof,
@@ -33,6 +34,7 @@ pub struct ServiceConfig {
     pub hysteria_path: PathBuf,
     pub shadowsocks_path: PathBuf,
     pub xray_path: PathBuf,
+    pub wstunnel_path: PathBuf,
     pub bridge_path: PathBuf,
     pub runtime_dir: PathBuf,
     pub lease_ttl: Duration,
@@ -59,6 +61,9 @@ impl ServiceConfig {
         let xray_path = std::env::var_os("KET_XRAY_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(default_xray_path);
+        let wstunnel_path = std::env::var_os("KET_WSTUNNEL_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_wstunnel_path);
         let bridge_path = std::env::var_os("KET_TUN2PROXY_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(default_bridge_path);
@@ -71,6 +76,7 @@ impl ServiceConfig {
             hysteria_path,
             shadowsocks_path,
             xray_path,
+            wstunnel_path,
             bridge_path,
             runtime_dir,
             lease_ttl: Duration::from_secs(12),
@@ -256,7 +262,7 @@ pub async fn serve_until(
         BrokerToken::load(&config.token_file)
             .context("failed to load the tunnel broker installation token")?,
     );
-    let mut adapters: Vec<Arc<dyn TransportAdapter>> = Vec::with_capacity(3);
+    let mut adapters: Vec<Arc<dyn TransportAdapter>> = Vec::with_capacity(4);
     if config.hysteria_path.is_file() && config.bridge_path.is_file() {
         adapters.push(Arc::new(Hysteria2Adapter::new(
             &config.hysteria_path,
@@ -274,6 +280,15 @@ pub async fn serve_until(
     if config.shadowsocks_path.is_file() && config.bridge_path.is_file() {
         adapters.push(Arc::new(Shadowsocks2022Adapter::new(
             &config.shadowsocks_path,
+            &config.bridge_path,
+            &config.runtime_dir,
+        )));
+    }
+    if config.xray_path.is_file() && config.wstunnel_path.is_file() && config.bridge_path.is_file()
+    {
+        adapters.push(Arc::new(WireGuardTlsAdapter::new(
+            &config.xray_path,
+            &config.wstunnel_path,
             &config.bridge_path,
             &config.runtime_dir,
         )));
@@ -429,6 +444,16 @@ fn default_shadowsocks_path() -> PathBuf {
 #[cfg(target_os = "windows")]
 fn default_xray_path() -> PathBuf {
     default_windows_install_dir().join("xray.exe")
+}
+
+#[cfg(target_os = "windows")]
+fn default_wstunnel_path() -> PathBuf {
+    default_windows_install_dir().join("wstunnel.exe")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_wstunnel_path() -> PathBuf {
+    PathBuf::from("/usr/libexec/ket/wstunnel")
 }
 
 #[cfg(not(target_os = "windows"))]

@@ -411,6 +411,19 @@ fn session_transports(state: &AppState, created: &CreatedSession) -> Vec<Session
                     .session_port(created.resource_slot)
                     .expect("validated Shadowsocks pool covers every session resource slot");
                 Some(shadowsocks::session_credential(shadowsocks, &created.id))
+            } else if let Some(wireguard) = state
+                .config
+                .wireguard
+                .as_ref()
+                .filter(|config| config.transport_id == profile.id)
+            {
+                profile.options.insert(
+                    "client_address".to_owned(),
+                    wireguard
+                        .client_address(created.resource_slot)
+                        .expect("validated WireGuard capacity covers every session resource slot"),
+                );
+                Some(crate::wireguard::session_credential(wireguard, &created.id))
             } else {
                 state
                     .config
@@ -638,7 +651,7 @@ mod tests {
     use crate::{
         config::{
             HysteriaConfig, HysteriaObfuscation, SHADOWSOCKS_2022_METHOD, ShadowsocksConfig,
-            XrayConfig, XrayRealityConfig, XrayXhttpConfig,
+            WireGuardConfig, XrayConfig, XrayRealityConfig, XrayXhttpConfig,
         },
         data_plane::DataPlaneError,
         model::PersistedState,
@@ -1317,6 +1330,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wireguard_sessions_receive_distinct_keys_and_addresses() {
+        let repository = Arc::new(MemoryRepository::default());
+        let service = AccessService::load(repository.clone(), Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let state = AppState {
+            config: Arc::new(wireguard_test_config()),
+            access: Arc::new(service),
+            data_plane: Arc::new(RecordingDataPlane::default()),
+            data_plane_ready: Arc::new(AtomicBool::new(true)),
+            metrics: Arc::new(AppMetrics::default()),
+        };
+        let app = build_router(state);
+
+        let grant_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({
+                    "label": "WireGuard test",
+                    "max_connections": 2,
+                    "expires_at_epoch_seconds": null
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        let grant: CreateAccessGrantResponse = response_json(grant_response).await;
+
+        let mut transports = Vec::new();
+        for client_name in ["First WireGuard client", "Second WireGuard client"] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/v1/sessions",
+                    None,
+                    serde_json::json!({
+                        "access_code": grant.access_code,
+                        "client_name": client_name
+                    }),
+                ))
+                .await
+                .expect("request should complete");
+            assert_eq!(response.status(), StatusCode::CREATED);
+            let session: SessionManifest = response_json(response).await;
+            transports.push(
+                session
+                    .transports
+                    .into_iter()
+                    .find(|transport| transport.profile.protocol == TransportProtocol::WireGuard)
+                    .expect("WireGuard transport"),
+            );
+        }
+
+        let first_credential = transports[0].credential.as_ref().expect("first credential");
+        let second_credential = transports[1]
+            .credential
+            .as_ref()
+            .expect("second credential");
+        assert_ne!(first_credential.auth, second_credential.auth);
+        assert_ne!(
+            first_credential.secrets["preshared_key"],
+            second_credential.secrets["preshared_key"]
+        );
+        assert_eq!(
+            first_credential.secrets["server_public_key"],
+            second_credential.secrets["server_public_key"]
+        );
+        assert_eq!(transports[0].profile.options["client_address"], "10.66.0.2");
+        assert_eq!(transports[1].profile.options["client_address"], "10.66.0.3");
+        for credential in [first_credential, second_credential] {
+            assert_eq!(credential.auth.expose_secret().len(), 44);
+            assert_eq!(
+                credential.secrets["preshared_key"].expose_secret().len(),
+                44
+            );
+            assert!(
+                !repository
+                    .encoded_state()
+                    .contains(credential.auth.expose_secret())
+            );
+            assert!(
+                !repository
+                    .encoded_state()
+                    .contains(credential.secrets["preshared_key"].expose_secret())
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn failed_data_plane_provision_rolls_back_the_session() {
         let repository = Arc::new(MemoryRepository::default());
         let service = AccessService::load(repository, Duration::from_secs(300), 4)
@@ -1407,6 +1512,7 @@ mod tests {
             transports: Vec::new(),
             hysteria: None,
             shadowsocks: None,
+            wireguard: None,
             xray: None,
         }
     }
@@ -1469,6 +1575,45 @@ mod tests {
             ]),
         });
         config.shadowsocks = Some(shadowsocks);
+        config
+    }
+
+    fn wireguard_test_config() -> ServerConfig {
+        let wireguard = WireGuardConfig {
+            transport_id: "wireguard-tls-primary".to_owned(),
+            manager_url: "http://127.0.0.1:8788".to_owned(),
+            manager_token: "test-manager-token-with-at-least-32-characters".to_owned(),
+            credential_key: "test-wireguard-key-with-at-least-32-characters".to_owned(),
+            server_public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned(),
+            public_host: "wireguard.example.test".to_owned(),
+            public_port: 443,
+            sni: "wireguard.example.test".to_owned(),
+            path_prefix: "ket-wireguard-test".to_owned(),
+        };
+        let mut config = test_config();
+        config.transports.push(TransportProfile {
+            id: wireguard.transport_id.clone(),
+            display_name: "WireGuard TLS".to_owned(),
+            protocol: TransportProtocol::WireGuard,
+            endpoint: wireguard.public_host.clone(),
+            port: wireguard.public_port,
+            network: Network::Tcp,
+            priority: 2,
+            tls_server_name: Some(wireguard.sni.clone()),
+            options: BTreeMap::from([
+                ("address_allocation".to_owned(), "lease_slot".to_owned()),
+                ("allowed_ips".to_owned(), "0.0.0.0/0".to_owned()),
+                ("keepalive_seconds".to_owned(), "25".to_owned()),
+                ("mtu".to_owned(), "1280".to_owned()),
+                ("path_prefix".to_owned(), wireguard.path_prefix.clone()),
+                (
+                    "remote_address".to_owned(),
+                    "wireguard-agent:51820".to_owned(),
+                ),
+                ("transport".to_owned(), "websocket_tls".to_owned()),
+            ]),
+        });
+        config.wireguard = Some(wireguard);
         config
     }
 

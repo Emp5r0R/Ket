@@ -23,6 +23,10 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
+    [string]$WstunnelBinary,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$Tun2ProxyBinary,
 
     [Parameter(Mandatory = $true)]
@@ -40,6 +44,7 @@ $ServiceTarget = Join-Path $InstallDir "ket-tunnel-service.exe"
 $HysteriaTarget = Join-Path $InstallDir "hysteria.exe"
 $ShadowsocksTarget = Join-Path $InstallDir "sslocal.exe"
 $XrayTarget = Join-Path $InstallDir "xray.exe"
+$WstunnelTarget = Join-Path $InstallDir "wstunnel.exe"
 $Tun2ProxyTarget = Join-Path $InstallDir "tun2proxy.exe"
 $WintunTarget = Join-Path $InstallDir "wintun.dll"
 $TokenFile = Join-Path $DataDir "tunnel.token"
@@ -98,6 +103,7 @@ Copy-IfDifferent -Source $ServiceBinary -Destination $ServiceTarget
 Copy-IfDifferent -Source $HysteriaBinary -Destination $HysteriaTarget
 Copy-IfDifferent -Source $ShadowsocksBinary -Destination $ShadowsocksTarget
 Copy-IfDifferent -Source $XrayBinary -Destination $XrayTarget
+Copy-IfDifferent -Source $WstunnelBinary -Destination $WstunnelTarget
 Copy-IfDifferent -Source $Tun2ProxyBinary -Destination $Tun2ProxyTarget
 Copy-IfDifferent -Source $WintunLibrary -Destination $WintunTarget
 Write-InstallStage "Validating bundled tunnel engines."
@@ -107,6 +113,8 @@ if ($LASTEXITCODE -ne 0) { throw "The Hysteria engine failed its version check" 
 if ($LASTEXITCODE -ne 0) { throw "The Shadowsocks engine failed its version check" }
 & $XrayTarget "version" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "The Xray engine failed its version check" }
+& $WstunnelTarget "--version" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "The wstunnel engine failed its version check" }
 & $Tun2ProxyTarget "--version" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "The full-route bridge failed its version check" }
 

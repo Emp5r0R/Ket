@@ -47,6 +47,8 @@ An HTTPS Stealth profile uses `protocol=stealth` for a concrete VLESS + XHTTP/TL
 
 A Shadowsocks 2022 profile uses `protocol=shadowsocks2022`, `network=tcp_and_udp`, and the lease-specific public port. `credential.auth` is a standard-base64 32-byte SIP022 key and `credential.secrets` is empty. The exact option set is `method=2022-blake3-aes-256-gcm`, `mode=tcp_and_udp`, and `port_allocation=lease_slot`; there is no TLS name. The key and port are deterministic for a server key and persisted lease resource slot, but only the slot is stored. Unknown options, malformed keys, extra secrets, or a TLS field fail closed on desktop and Android.
 
+A WireGuard TLS profile uses `protocol=wire_guard`, `network=tcp`, and a certificate-verified TLS server name. `credential.auth` is a standard-base64 32-byte client private key; `credential.secrets` contains only `preshared_key` and `server_public_key`, both standard-base64 32-byte WireGuard keys. The exact options are `address_allocation=lease_slot`, `allowed_ips=0.0.0.0/0`, `keepalive_seconds=25`, `mtu=1280`, `transport=websocket_tls`, `client_address`, `path_prefix`, and the manager-restricted `remote_address`. Unknown fields, malformed keys or addresses, unsafe paths, extra secrets, TLS downgrades, and route changes fail closed on desktop and Android.
+
 ## Session endpoints
 
 | Method | Path | Purpose |
@@ -79,6 +81,8 @@ The plaintext `access_code` is available only in the creation response. Store it
 ## Data-plane endpoint
 
 `POST /internal/v1/hysteria2/auth` implements Hysteria2's HTTP authentication contract. It always returns HTTP `200` with `{"ok":true,"id":"session-id"}` or `{"ok":false,"id":""}`. The protocol container reaches it over the private Compose network. It is not a client API, and an ingress or reverse proxy must reject the entire `/internal/` namespace.
+
+The WireGuard agent exposes its own bearer-authenticated `/healthz` and `/v1/peers` manager API only on the dedicated private Compose network. It is not part of the public control API and must never be routed by cloudflared or a reverse proxy.
 
 The batch request uses `label_prefix`, `count`, `max_connections`, and optional `expires_at_epoch_seconds`. Labels receive `-1` through `-N` suffixes. Each response contains a distinct 32-character code, returned only once and never persisted in plaintext.
 

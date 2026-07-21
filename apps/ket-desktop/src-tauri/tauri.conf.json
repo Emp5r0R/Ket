@@ -47,7 +47,9 @@
           "/usr/libexec/ket/hysteria": "binaries/hysteria",
           "/usr/libexec/ket/sslocal": "binaries/sslocal",
           "/usr/libexec/ket/xray": "binaries/xray",
+          "/usr/libexec/ket/wstunnel": "binaries/wstunnel",
           "/usr/libexec/ket/tun2proxy": "binaries/tun2proxy",
+          "/usr/share/doc/ket/THIRD_PARTY_NOTICES.md": "../../../THIRD_PARTY_NOTICES.md",
           "/usr/lib/systemd/system/ket-tunnel.service": "../../../packaging/linux/ket-tunnel.service"
         },
         "postInstallScript": "../../../packaging/linux/postinst",
