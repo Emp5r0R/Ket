@@ -38,14 +38,41 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 | VLESS + REALITY | Implemented | Implemented | Implemented on 64-bit | Physical arm64 traffic verified |
 | HTTPS Stealth (VLESS + XHTTP/TLS) | Implemented | Implemented | Implemented on 64-bit | Local real-engine TLS traffic/revocation verified; CDN and restricted-network gates pending |
 | Shadowsocks 2022 | Implemented | Implemented | Implemented on 64-bit API 28+ | Local real-engine TCP traffic/revocation verified; UDP and restricted-network physical gates pending |
-| WireGuard over WebSocket/TLS | Implemented | Implemented | Implemented on arm64 API 28+ | Local engine/package validation complete; kernel-server and restricted-network gates pending |
+| WireGuard over WebSocket/TLS | Implemented | Implemented | Implemented on arm64 API 28+ | Oracle ARM64 kernel deployment, enrollment, and peer revocation verified; restricted-network traffic pending |
 | OpenVPN over stunnel TLS | Implemented | Implemented | Implemented on API 26+ | Local code/engine/package/container validation; deployment and Android physical traffic pending |
 | IKEv2 | Identifier only | Not implemented | Not implemented | Future adapter |
 | XOR scrambling | Obfuscation identifier only | Not standalone security | Not standalone security | May only wrap authenticated encryption |
 
 The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and data-plane deployment in the [Hysteria2](docs/HYSTERIA2.md), [VLESS + REALITY](docs/XRAY_REALITY.md), [HTTPS Stealth](docs/XHTTP_STEALTH.md), [Shadowsocks 2022](docs/SHADOWSOCKS2022.md), [WireGuard TLS](docs/WIREGUARD_TLS.md), and [OpenVPN over stunnel](docs/OPENVPN_STUNNEL.md) guides.
 
-## Run with Docker
+## One-command server install
+
+The installer provisions Docker, certificates, renewal, all six implemented transports, the hardened HTTPS edge, host-firewall rules, and a first 32-character access code on Debian 12+ or Ubuntu 22.04+. For a normal VPS, point the hostname directly at the server, open the listed cloud-firewall ports, then run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+  --mode direct \
+  --domain ket.example.com \
+  --email operator@example.com \
+  --country-code IN --country-name India --city Hyderabad \
+  --latitude 17.3850 --longitude 78.4867
+```
+
+For Cloudflare, create `ket.example.com` as a proxied record and `direct-ket.example.com` as a DNS-only record to the same VPS. The direct record is required because ordinary Cloudflare HTTP proxying cannot carry raw Hysteria2, REALITY, Shadowsocks, or OpenVPN traffic:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+  --mode cloudflare \
+  --domain ket.example.com \
+  --direct-host direct-ket.example.com \
+  --email operator@example.com \
+  --country-code IN --country-name India --city Hyderabad \
+  --latitude 17.3850 --longitude 78.4867
+```
+
+Cloudflare SSL/TLS mode must be **Full (strict)** and WebSockets must remain enabled. Before making changes, append `--plan` to validate arguments and print the exact TCP/UDP ingress range. The complete prerequisites, port map, certificate lifecycle, operations, and limitations are in the [server installation guide](docs/SERVER_INSTALL.md).
+
+## Run with Docker manually
 
 ```bash
 cp .env.example .env
