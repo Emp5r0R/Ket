@@ -120,7 +120,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-            libxdo-dev patchelf
+            build-essential libcap-ng-dev libssl-dev libxdo-dev patchelf pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.88.0
@@ -133,7 +133,9 @@ jobs:
         working-directory: apps/ket-desktop
       - run: cargo build --locked -p ket-tunnel-service --release
       - run: ./packaging/fetch-hysteria.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/hysteria
+      - run: ./packaging/fetch-openvpn.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/openvpn
       - run: ./packaging/fetch-shadowsocks.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/sslocal
+      - run: ./packaging/fetch-stunnel.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/stunnel
       - run: ./packaging/fetch-xray.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/xray
       - run: ./packaging/fetch-wstunnel.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/wstunnel
       - run: ./packaging/fetch-tun2proxy.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/tun2proxy
@@ -194,13 +196,19 @@ jobs:
       - shell: bash
         run: ./packaging/fetch-hysteria.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/hysteria.exe
       - shell: bash
+        run: ./packaging/fetch-openvpn.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/openvpn
+      - shell: bash
         run: ./packaging/fetch-shadowsocks.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/sslocal.exe
+      - shell: bash
+        run: ./packaging/fetch-stunnel.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/stunnel
       - shell: bash
         run: ./packaging/fetch-xray.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/xray.exe
       - shell: bash
         run: ./packaging/fetch-wstunnel.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/wstunnel.exe
       - shell: bash
         run: ./packaging/fetch-tun2proxy.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/tun2proxy.exe apps/ket-desktop/src-tauri/binaries/wintun.dll
+      - shell: bash
+        run: cp apps/ket-desktop/src-tauri/binaries/wintun.dll apps/ket-desktop/src-tauri/binaries/openvpn/wintun.dll
       - shell: bash
         run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray.exe cargo test --locked -p ket-client-core xray::tests::pinned_xray_binary_accepts_rendered_config_when_supplied
       - shell: bash
@@ -322,11 +330,40 @@ jobs:
           KET_XHTTP_ORIGIN_PORT=8445
           KET_XRAY_CREDENTIAL_KEY=credential-key-with-at-least-32-characters
           ./packaging/validate-env.sh
+      - name: Validate OpenVPN over stunnel environment
+        run: |
+          set -euo pipefail
+          pki="$RUNNER_TEMP/openvpn-pki"
+          tls="$RUNNER_TEMP/openvpn-stunnel-tls"
+          mkdir -p "$pki" "$tls"
+          printf '%s\n' '-----BEGIN CERTIFICATE-----' TEST '-----END CERTIFICATE-----' > "$pki/ca.crt"
+          cp "$pki/ca.crt" "$pki/stunnel-ca.crt"
+          cp "$pki/ca.crt" "$pki/server.crt"
+          printf '%s\n' '-----BEGIN PRIVATE KEY-----' TEST '-----END PRIVATE KEY-----' > "$pki/server.key"
+          printf '%s\n' '-----BEGIN OpenVPN Static key V1-----' TEST '-----END OpenVPN Static key V1-----' > "$pki/tls-crypt.key"
+          cp "$pki/ca.crt" "$tls/fullchain.pem"
+          cp "$pki/server.key" "$tls/privkey.pem"
+          KET_ADMIN_TOKEN=01234567890123456789012345678901 \
+          KET_SESSION_TTL_SECONDS=1800 \
+          KET_MAX_SESSIONS=100 \
+          KET_COUNTRY_CODE=US \
+          KET_OPENVPN_ENABLED=true \
+          KET_OPENVPN_PUBLIC_HOST=openvpn.example.test \
+          KET_OPENVPN_PUBLIC_PORT=443 \
+          KET_OPENVPN_SNI=openvpn.example.test \
+          KET_OPENVPN_MANAGER_TOKEN=manager-token-with-at-least-32-characters \
+          KET_OPENVPN_AUTH_TOKEN=auth-token-with-at-least-32-characters \
+          KET_OPENVPN_PKI_DIR="$pki" \
+          KET_OPENVPN_STUNNEL_TLS_DIR="$tls" \
+          ./packaging/validate-env.sh
       - run: cp .env.example .env
       - run: docker compose -f compose.yaml -f compose.hysteria.yaml config --quiet
       - run: docker compose -f compose.yaml -f compose.xray.yaml config --quiet
       - run: docker compose -f compose.yaml -f compose.xhttp.yaml config --quiet
+      - run: docker compose -f compose.yaml -f compose.openvpn.yaml config --quiet
       - run: docker compose -f compose.yaml -f compose.xray.yaml -f compose.xhttp.yaml config --quiet
       - run: docker build --pull --tag ket-control-plane:ci .
       - run: docker run --rm --entrypoint /usr/local/bin/xray ket-control-plane:ci version
+      - run: docker run --rm --entrypoint /usr/local/bin/openvpn ket-control-plane:ci --version
+      - run: docker run --rm --entrypoint /usr/local/bin/stunnel ket-control-plane:ci -version
       - run: docker image inspect ket-control-plane:ci

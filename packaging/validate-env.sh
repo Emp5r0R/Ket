@@ -21,6 +21,13 @@ valid_wireguard_key() {
   local value=${!1:-}
   [[ "$value" =~ ^[A-Za-z0-9+/]{43}=$ ]]
 }
+valid_material_file() {
+  local path=$1 begin=$2 end=$3 size
+  [[ -f "$path" && -r "$path" ]] || return 1
+  size=$(wc -c < "$path")
+  (( size > 0 && size <= 3072 )) || return 1
+  grep -Fqx -- "$begin" "$path" && grep -Fqx -- "$end" "$path"
+}
 valid_public_url() {
   local value=${KET_PUBLIC_URL:-http://127.0.0.1:8787} authority
   [[ -n "$value" && ${#value} -le 2048 ]] || return 1
@@ -158,6 +165,41 @@ if [[ "${KET_WIREGUARD_ENABLED:-false}" == true ]]; then
   required KET_WIREGUARD_CREDENTIAL_KEY
   (( ${#KET_WIREGUARD_CREDENTIAL_KEY} >= 32 )) || fail 'KET_WIREGUARD_CREDENTIAL_KEY must contain at least 32 characters'
   (( ${KET_MAX_SESSIONS:-1000} <= 65533 )) || fail 'KET_MAX_SESSIONS cannot exceed 65533 when WireGuard TLS is enabled'
+fi
+
+if [[ "${KET_OPENVPN_ENABLED:-false}" == true ]]; then
+  required KET_OPENVPN_PUBLIC_HOST
+  valid_host KET_OPENVPN_PUBLIC_HOST || fail 'KET_OPENVPN_PUBLIC_HOST must be a bounded hostname or IP address'
+  valid_port KET_OPENVPN_PUBLIC_PORT 443 || fail 'KET_OPENVPN_PUBLIC_PORT must be between 1 and 65535'
+  required KET_OPENVPN_SNI
+  valid_host KET_OPENVPN_SNI || fail 'KET_OPENVPN_SNI must be a bounded hostname'
+  [[ "$KET_OPENVPN_SNI" =~ [A-Za-z] ]] || fail 'KET_OPENVPN_SNI must be a hostname, not an IP address'
+  required KET_OPENVPN_MANAGER_TOKEN
+  (( ${#KET_OPENVPN_MANAGER_TOKEN} >= 32 )) || fail 'KET_OPENVPN_MANAGER_TOKEN must contain at least 32 characters'
+  required KET_OPENVPN_AUTH_TOKEN
+  (( ${#KET_OPENVPN_AUTH_TOKEN} >= 32 )) || fail 'KET_OPENVPN_AUTH_TOKEN must contain at least 32 characters'
+  [[ "$KET_OPENVPN_MANAGER_TOKEN" != "$KET_OPENVPN_AUTH_TOKEN" ]] || fail 'KET_OPENVPN_MANAGER_TOKEN and KET_OPENVPN_AUTH_TOKEN must be independent'
+  (( ${KET_MAX_SESSIONS:-1000} <= 65533 )) || fail 'KET_MAX_SESSIONS cannot exceed 65533 when OpenVPN is enabled'
+
+  openvpn_pki_dir=${KET_OPENVPN_PKI_DIR:-./secrets/openvpn}
+  openvpn_stunnel_tls_dir=${KET_OPENVPN_STUNNEL_TLS_DIR:-./secrets/openvpn-stunnel}
+  for path in \
+    "$openvpn_pki_dir/ca.crt" \
+    "$openvpn_pki_dir/server.crt" \
+    "$openvpn_pki_dir/server.key" \
+    "$openvpn_stunnel_tls_dir/fullchain.pem" \
+    "$openvpn_stunnel_tls_dir/privkey.pem"; do
+    [[ -f "$path" && -r "$path" ]] || fail "missing readable $path"
+  done
+  valid_material_file "$openvpn_pki_dir/ca.crt" '-----BEGIN CERTIFICATE-----' '-----END CERTIFICATE-----' || fail 'OpenVPN ca.crt must be a non-empty PEM certificate no larger than 3 KiB'
+  valid_material_file "$openvpn_pki_dir/stunnel-ca.crt" '-----BEGIN CERTIFICATE-----' '-----END CERTIFICATE-----' || fail 'OpenVPN stunnel-ca.crt must be a non-empty PEM certificate no larger than 3 KiB'
+  valid_material_file "$openvpn_pki_dir/tls-crypt.key" '-----BEGIN OpenVPN Static key V1-----' '-----END OpenVPN Static key V1-----' || fail 'OpenVPN tls-crypt.key must be a non-empty V1 key no larger than 3 KiB'
+
+  if [[ "${KET_XRAY_ENABLED:-false}" == true \
+    && "${KET_OPENVPN_PUBLIC_PORT:-443}" == "${KET_XRAY_PUBLIC_PORT:-443}" \
+    && "${KET_OPENVPN_BIND_ADDRESS:-0.0.0.0}" == "${KET_XRAY_BIND_ADDRESS:-0.0.0.0}" ]]; then
+    fail 'OpenVPN/stunnel and VLESS + REALITY cannot bind the same TCP address and port'
+  fi
 fi
 
 printf 'Ket configuration preflight passed.\n'

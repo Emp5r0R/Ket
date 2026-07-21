@@ -1,5 +1,17 @@
 # Third-party notices
 
+## OpenVPN
+
+Ket server and Linux/Windows desktop distributions bundle OpenVPN 2.7.5. OpenVPN is licensed under GNU GPL version 2. Ket uses the unmodified upstream source archive whose version, URL, and SHA-256 digest are recorded in `Dockerfile` and `packaging/fetch-openvpn.sh`.
+
+The complete license is available in the upstream source archive as `COPYING` and at <https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt>. Corresponding source is available from <https://build.openvpn.net/downloads/releases/>.
+
+## stunnel
+
+Ket server and Linux/Windows desktop distributions bundle stunnel 5.79. stunnel is licensed under GNU GPL version 2 or later with its OpenSSL exception. Ket uses the unmodified upstream source archive whose version, URL, and SHA-256 digest are recorded in `Dockerfile` and `packaging/fetch-stunnel.sh`. The upstream 5.79 release accidentally retained `VERSION_MINOR 78`, so its executable banner reports 5.78 even though the verified 5.79 archive is installed.
+
+The complete license and OpenSSL exception are available in the upstream source archive as `COPYING.md` and `COPYRIGHT.md`. Corresponding source is available from <https://www.stunnel.org/downloads.html>.
+
 ## wstunnel
 
 Ket server, desktop, and Android distributions bundle wstunnel 10.6.2 under the BSD 3-Clause license.

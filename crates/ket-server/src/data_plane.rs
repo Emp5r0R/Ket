@@ -25,8 +25,10 @@ use zeroize::Zeroizing;
 
 use crate::{
     config::{
-        SHADOWSOCKS_2022_METHOD, ServerConfig, ShadowsocksConfig, WireGuardConfig, XrayConfig,
+        OpenVpnConfig, SHADOWSOCKS_2022_METHOD, ServerConfig, ShadowsocksConfig, WireGuardConfig,
+        XrayConfig,
     },
+    openvpn,
     service::{SessionAllocation, unix_time},
     shadowsocks, wireguard, xray,
 };
@@ -92,10 +94,152 @@ pub(crate) fn from_config(
     if let Some(wireguard) = &config.wireguard {
         controls.push(Arc::new(WireGuardControl::new(wireguard.clone())?));
     }
+    if let Some(openvpn) = &config.openvpn {
+        controls.push(Arc::new(OpenVpnControl::new(openvpn.clone())?));
+    }
     match controls.len() {
         0 => Ok(Arc::new(NoDataPlane)),
         1 => Ok(controls.remove(0)),
         _ => Ok(Arc::new(CompositeDataPlane { controls })),
+    }
+}
+
+struct OpenVpnControl {
+    client: HttpClient,
+    config: OpenVpnConfig,
+}
+
+impl OpenVpnControl {
+    fn new(config: OpenVpnConfig) -> Result<Self, DataPlaneError> {
+        let uri: Uri = config
+            .manager_url
+            .parse()
+            .map_err(|_| DataPlaneError::InvalidUrl)?;
+        if uri.scheme_str() != Some("http") || uri.authority().is_none() {
+            return Err(DataPlaneError::InvalidUrl);
+        }
+        let mut connector = HttpConnector::new();
+        connector.enforce_http(true);
+        Ok(Self {
+            client: Client::builder(TokioExecutor::new()).build(connector),
+            config,
+        })
+    }
+
+    async fn request<T: Serialize + ?Sized>(
+        &self,
+        method: Method,
+        path: &str,
+        body: &T,
+    ) -> Result<Bytes, DataPlaneError> {
+        let request = Request::builder()
+            .method(method)
+            .uri(self.uri(path)?)
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", self.config.manager_token),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(serde_json::to_vec(body)?)))?;
+        self.send(request).await
+    }
+
+    async fn get(&self, path: &str) -> Result<Bytes, DataPlaneError> {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(self.uri(path)?)
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", self.config.manager_token),
+            )
+            .body(Full::new(Bytes::new()))?;
+        self.send(request).await
+    }
+
+    async fn send(&self, request: Request<Full<Bytes>>) -> Result<Bytes, DataPlaneError> {
+        let response = tokio::time::timeout(Duration::from_secs(5), self.client.request(request))
+            .await
+            .map_err(|_| DataPlaneError::Timeout)??;
+        if !response.status().is_success() {
+            return Err(DataPlaneError::Status(response.status()));
+        }
+        let bytes = response.into_body().collect().await?.to_bytes();
+        if bytes.len() > MAX_STATS_RESPONSE_BYTES * 8 {
+            return Err(DataPlaneError::ResponseTooLarge);
+        }
+        Ok(bytes)
+    }
+
+    fn uri(&self, path: &str) -> Result<Uri, DataPlaneError> {
+        format!("{}{path}", self.config.manager_url)
+            .parse()
+            .map_err(|_| DataPlaneError::InvalidUrl)
+    }
+
+    async fn sessions(&self) -> Result<Vec<openvpn::OpenVpnSessionStatus>, DataPlaneError> {
+        Ok(serde_json::from_slice(&self.get("/v1/sessions").await?)?)
+    }
+}
+
+#[async_trait]
+impl DataPlaneControl for OpenVpnControl {
+    async fn healthy(&self) -> bool {
+        self.get("/healthz").await.is_ok()
+    }
+
+    async fn provision(&self, _session: &SessionAllocation) -> Result<(), DataPlaneError> {
+        if self.healthy().await {
+            Ok(())
+        } else {
+            Err(DataPlaneError::Command(
+                "OpenVPN manager is unavailable".to_owned(),
+            ))
+        }
+    }
+
+    async fn reconcile(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        let usernames = sessions.iter().map(|session| session.id.clone()).collect();
+        self.request(
+            Method::PUT,
+            "/v1/sessions/reconcile",
+            &openvpn::ReconcileOpenVpnSessions { usernames },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn traffic(&self, session: &SessionAllocation) -> Result<SessionTraffic, DataPlaneError> {
+        let status = self
+            .sessions()
+            .await?
+            .into_iter()
+            .find(|status| status.username == session.id);
+        Ok(openvpn_session_traffic(status.as_ref(), unix_time()))
+    }
+
+    async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        let usernames = sessions.iter().map(|session| session.id.clone()).collect();
+        self.request(
+            Method::POST,
+            "/v1/sessions/remove",
+            &openvpn::RemoveOpenVpnSessions { usernames },
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+fn openvpn_session_traffic(
+    status: Option<&openvpn::OpenVpnSessionStatus>,
+    observed_at_epoch_seconds: u64,
+) -> SessionTraffic {
+    SessionTraffic {
+        available: true,
+        // OpenVPN management counters are from the server's perspective.
+        bytes_sent: status.map_or(0, |status| status.bytes_received),
+        bytes_received: status.map_or(0, |status| status.bytes_sent),
+        online_connections: u32::from(status.is_some()),
+        observed_at_epoch_seconds,
     }
 }
 
@@ -1066,6 +1210,22 @@ mod tests {
             wireguard_session_traffic(Some(&peer), 1_081).online_connections,
             0
         );
+    }
+
+    #[test]
+    fn openvpn_server_counters_map_to_the_client_perspective() {
+        let status = openvpn::OpenVpnSessionStatus {
+            username: "AbCdEf123456".to_owned(),
+            virtual_address: "10.67.0.2".to_owned(),
+            connected_since_epoch_seconds: 900,
+            bytes_received: 42,
+            bytes_sent: 19,
+        };
+        let traffic = openvpn_session_traffic(Some(&status), 1_000);
+        assert_eq!(traffic.bytes_sent, 42);
+        assert_eq!(traffic.bytes_received, 19);
+        assert_eq!(traffic.online_connections, 1);
+        assert_eq!(openvpn_session_traffic(None, 1_000).online_connections, 0);
     }
 
     #[test]

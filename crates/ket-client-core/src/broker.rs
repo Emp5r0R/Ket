@@ -97,6 +97,7 @@ impl TransportAdapter for BrokerTransportAdapter {
         matches!(
             transport.profile.protocol,
             TransportProtocol::Hysteria2
+                | TransportProtocol::OpenVpnStunnel
                 | TransportProtocol::Shadowsocks2022
                 | TransportProtocol::Stealth
                 | TransportProtocol::VlessXtlsReality

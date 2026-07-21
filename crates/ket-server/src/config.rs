@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    env,
+    env, fs,
     net::SocketAddr,
     path::PathBuf,
     time::Duration,
@@ -20,6 +20,7 @@ const MAX_OPTION_ENTRIES: usize = 32;
 const MAX_OPTION_KEY_CHARS: usize = 64;
 const MAX_OPTION_VALUE_CHARS: usize = 2_048;
 const MAX_SHADOWSOCKS_MANAGER_SERVERS: u32 = 1_500;
+const MAX_OPENVPN_MATERIAL_BYTES: u64 = 3 * 1024;
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -34,6 +35,7 @@ pub struct ServerConfig {
     pub session_ttl: Duration,
     pub transports: Vec<TransportProfile>,
     pub hysteria: Option<HysteriaConfig>,
+    pub openvpn: Option<OpenVpnConfig>,
     pub shadowsocks: Option<ShadowsocksConfig>,
     pub wireguard: Option<WireGuardConfig>,
     pub xray: Option<XrayConfig>,
@@ -61,6 +63,20 @@ pub enum HysteriaObfuscation {
     Disabled,
     Salamander { password: String },
     Gecko { password: String },
+}
+
+#[derive(Clone)]
+pub struct OpenVpnConfig {
+    pub transport_id: String,
+    pub manager_url: String,
+    pub manager_token: String,
+    pub auth_token: String,
+    pub public_host: String,
+    pub public_port: u16,
+    pub sni: String,
+    pub ca_certificate: String,
+    pub stunnel_ca_certificate: String,
+    pub tls_crypt_key: String,
 }
 
 pub const SHADOWSOCKS_2022_METHOD: &str = "2022-blake3-aes-256-gcm";
@@ -160,6 +176,10 @@ impl ServerConfig {
         if let Some(config) = &hysteria {
             transports.push(config.transport_profile());
         }
+        let openvpn = OpenVpnConfig::from_env(max_sessions)?;
+        if let Some(config) = &openvpn {
+            transports.push(config.transport_profile());
+        }
         let xray = XrayConfig::from_env()?;
         if let Some(config) = &xray {
             if let Some(reality) = &config.reality {
@@ -209,10 +229,86 @@ impl ServerConfig {
             session_ttl: Duration::from_secs(session_ttl_seconds),
             transports,
             hysteria,
+            openvpn,
             shadowsocks,
             wireguard,
             xray,
         })
+    }
+}
+
+impl OpenVpnConfig {
+    fn from_env(max_sessions: u32) -> Result<Option<Self>> {
+        if !parse_value("KET_OPENVPN_ENABLED", false)? {
+            return Ok(None);
+        }
+        if max_sessions > 65_533 {
+            bail!("KET_MAX_SESSIONS cannot exceed 65533 when OpenVPN is enabled");
+        }
+
+        let manager_url = required("KET_OPENVPN_MANAGER_URL")?;
+        validate_http_manager_url(&manager_url, "KET_OPENVPN_MANAGER_URL")?;
+        let manager_token = required("KET_OPENVPN_MANAGER_TOKEN")?;
+        if manager_token.len() < 32 {
+            bail!("KET_OPENVPN_MANAGER_TOKEN must contain at least 32 characters");
+        }
+        let auth_token = required("KET_OPENVPN_AUTH_TOKEN")?;
+        if auth_token.len() < 32 {
+            bail!("KET_OPENVPN_AUTH_TOKEN must contain at least 32 characters");
+        }
+        if auth_token == manager_token {
+            bail!("KET_OPENVPN_AUTH_TOKEN and KET_OPENVPN_MANAGER_TOKEN must be independent");
+        }
+
+        let ca_certificate = read_openvpn_material(
+            "KET_OPENVPN_CA_CERT_PATH",
+            "-----BEGIN CERTIFICATE-----",
+            "-----END CERTIFICATE-----",
+        )?;
+        let stunnel_ca_certificate = read_openvpn_material(
+            "KET_OPENVPN_STUNNEL_CA_CERT_PATH",
+            "-----BEGIN CERTIFICATE-----",
+            "-----END CERTIFICATE-----",
+        )?;
+        let tls_crypt_key = read_openvpn_material(
+            "KET_OPENVPN_TLS_CRYPT_KEY_PATH",
+            "-----BEGIN OpenVPN Static key V1-----",
+            "-----END OpenVPN Static key V1-----",
+        )?;
+
+        Ok(Some(Self {
+            transport_id: value("KET_OPENVPN_TRANSPORT_ID", "openvpn-stunnel-primary"),
+            manager_url: manager_url.trim_end_matches('/').to_owned(),
+            manager_token,
+            auth_token,
+            public_host: required_hostname("KET_OPENVPN_PUBLIC_HOST")?,
+            public_port: nonzero_port("KET_OPENVPN_PUBLIC_PORT", 443)?,
+            sni: required_dns_name("KET_OPENVPN_SNI")?,
+            ca_certificate,
+            stunnel_ca_certificate,
+            tls_crypt_key,
+        }))
+    }
+
+    fn transport_profile(&self) -> TransportProfile {
+        TransportProfile {
+            id: self.transport_id.clone(),
+            display_name: "OpenVPN TLS".to_owned(),
+            protocol: TransportProtocol::OpenVpnStunnel,
+            endpoint: self.public_host.clone(),
+            port: self.public_port,
+            network: Network::Tcp,
+            priority: 8,
+            tls_server_name: Some(self.sni.clone()),
+            options: BTreeMap::from([
+                ("auth_mode".to_owned(), "session_token".to_owned()),
+                ("cipher".to_owned(), "aes_256_gcm".to_owned()),
+                ("remote_cert_tls".to_owned(), "server".to_owned()),
+                ("tls_crypt".to_owned(), "v1".to_owned()),
+                ("tls_minimum".to_owned(), "1.2".to_owned()),
+                ("transport".to_owned(), "stunnel_tls".to_owned()),
+            ]),
+        }
     }
 }
 
@@ -810,6 +906,40 @@ fn validate_wireguard_path_prefix(prefix: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn validate_http_manager_url(value: &str, name: &str) -> Result<()> {
+    let parsed = Url::parse(value).with_context(|| format!("{name} must be an absolute URL"))?;
+    if parsed.scheme() != "http"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        bail!("{name} must be an HTTP URL without credentials, a query, or a fragment");
+    }
+    Ok(())
+}
+
+fn read_openvpn_material(name: &str, begin: &str, end: &str) -> Result<String> {
+    let path = PathBuf::from(required(name)?);
+    let metadata = fs::metadata(&path)
+        .with_context(|| format!("{name} does not reference a readable regular file"))?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_OPENVPN_MATERIAL_BYTES {
+        bail!("{name} must reference a non-empty regular file no larger than 3 KiB");
+    }
+    let material = fs::read_to_string(&path)
+        .with_context(|| format!("{name} must reference UTF-8 PEM material"))?;
+    let material = material.trim().to_owned();
+    if !material.starts_with(begin)
+        || !material.ends_with(end)
+        || material.contains('\0')
+        || material.lines().any(|line| line.len() > 256)
+    {
+        bail!("{name} contains invalid OpenVPN key material");
+    }
+    Ok(format!("{material}\n"))
 }
 
 fn nonzero_port(name: &str, default: u16) -> Result<u16> {

@@ -39,6 +39,53 @@ RUN apt-get update \
     && tar --extract --gzip --file "/tmp/${archive}" --directory /tmp wstunnel \
     && install --mode=0755 /tmp/wstunnel /usr/local/bin/wstunnel
 
+FROM debian:bookworm-slim AS native-builder
+ARG DEBIAN_MIRROR=http://deb.debian.org/debian
+RUN sed --in-place \
+         "s|^URIs: http://deb.debian.org/debian$|URIs: ${DEBIAN_MIRROR}|" \
+         /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install --no-install-recommends --yes \
+         build-essential ca-certificates curl libcap-ng-dev libssl-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM native-builder AS openvpn
+ARG OPENVPN_VERSION=2.7.5
+RUN archive="openvpn-${OPENVPN_VERSION}.tar.gz" \
+    && curl --fail --location --proto '=https' --tlsv1.2 \
+         --output "/tmp/${archive}" \
+         "https://github.com/OpenVPN/openvpn/releases/download/v${OPENVPN_VERSION}/${archive}" \
+    && printf '%s  %s\n' \
+         'c6864b3c7d4e059c7d6ce22d1b5fa646c8b379a06af872eeb9792b6083a44ac4' \
+         "/tmp/${archive}" | sha256sum --check --strict - \
+    && tar --extract --gzip --file "/tmp/${archive}" --directory /tmp \
+    && cd "/tmp/openvpn-${OPENVPN_VERSION}" \
+    && ./configure \
+         --prefix=/usr/local \
+         --disable-dco \
+         --disable-lzo \
+         --disable-lz4 \
+         --disable-plugin-auth-pam \
+         --disable-systemd \
+    && make -j"$(nproc)" \
+    && make install-strip DESTDIR=/out
+
+FROM native-builder AS stunnel
+ARG STUNNEL_VERSION=5.79
+RUN archive="stunnel-${STUNNEL_VERSION}.tar.gz" \
+    && curl --fail --location --proto '=https' --tlsv1.2 \
+         --output "/tmp/${archive}" \
+         "https://www.stunnel.org/downloads/${archive}" \
+    && printf '%s  %s\n' \
+         '8ea0de6e5ea76f38ea987fa831c7fd47f7a1f1e7dd465fd6fa8622edf30d3a45' \
+         "/tmp/${archive}" | sha256sum --check --strict - \
+    && tar --extract --gzip --file "/tmp/${archive}" --directory /tmp \
+    && cd "/tmp/stunnel-${STUNNEL_VERSION}" \
+    && ./configure --prefix=/usr/local --disable-libwrap \
+    && make -j"$(nproc)" \
+    && make install DESTDIR=/out \
+    && strip /out/usr/local/bin/stunnel
+
 FROM rust:1.88-bookworm AS builder
 
 WORKDIR /build
@@ -51,18 +98,25 @@ RUN cargo build --locked --release --package ket-server --bins
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends --yes ca-certificates curl iproute2 iptables wireguard-tools \
+    && apt-get install --no-install-recommends --yes ca-certificates curl iproute2 iptables libcap-ng0 libssl3 wireguard-tools \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 ket \
     && useradd --uid 10001 --gid ket --system --no-create-home ket \
     && install --directory --owner=ket --group=ket --mode=0700 /var/lib/ket /var/lib/ket-dataplane
+RUN install --directory --mode=0755 /etc/openvpn/pki /etc/stunnel/tls
 
 COPY --from=builder /build/target/release/ket-server /usr/local/bin/ket-server
 COPY --from=builder /build/target/release/ket-wireguard-agent /usr/local/bin/ket-wireguard-agent
+COPY --from=builder /build/target/release/ket-openvpn-agent /usr/local/bin/ket-openvpn-agent
+COPY --from=builder /build/target/release/ket-openvpn-auth /usr/local/bin/ket-openvpn-auth
 COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
 COPY --from=shadowsocks /usr/local/bin/ssmanager /usr/local/bin/ssmanager
 COPY --from=wstunnel /usr/local/bin/wstunnel /usr/local/bin/wstunnel
+COPY --from=openvpn /out/usr/local/sbin/openvpn /usr/local/bin/openvpn
+COPY --from=stunnel /out/usr/local/bin/stunnel /usr/local/bin/stunnel
 COPY packaging/shadowsocks-server.acl /etc/shadowsocks/ket-server.acl
+COPY packaging/openvpn/ket-server.conf /etc/openvpn/ket-server.conf
+COPY packaging/openvpn/stunnel-server.conf /etc/stunnel/ket-openvpn.conf
 COPY THIRD_PARTY_NOTICES.md /usr/share/doc/ket/THIRD_PARTY_NOTICES.md
 
 USER ket

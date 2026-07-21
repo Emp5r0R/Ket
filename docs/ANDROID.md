@@ -2,6 +2,8 @@
 
 Ket Android consumes the versioned control API directly and implements platform-owned Hysteria2, VLESS + REALITY, XHTTP/TLS Stealth, Shadowsocks 2022, and WireGuard TLS adapters. It does not run the desktop broker or attempt desktop-style privileged route changes.
 
+The server may also advertise OpenVPN/stunnel. Android deliberately ignores that unsupported profile and ranks the five native adapters that it can safely own; it does not attempt to run a desktop OpenVPN process. Android parity requires a future native OpenVPN management bridge that passes the TUN descriptor from `VpnService` without granting route ownership to a subprocess.
+
 ## Packet path
 
 1. The UI obtains Android VPN permission before exchanging the 32-character access code.

@@ -61,7 +61,9 @@ required_payloads=(
   usr/bin/ket-desktop
   usr/libexec/ket/ket-tunnel-service
   usr/libexec/ket/hysteria
+  usr/libexec/ket/openvpn
   usr/libexec/ket/sslocal
+  usr/libexec/ket/stunnel
   usr/libexec/ket/xray
   usr/libexec/ket/wstunnel
   usr/libexec/ket/tun2proxy
@@ -108,7 +110,9 @@ verify_installation() {
     fail "desktop executable has unresolved shared libraries"
   fi
   /usr/libexec/ket/hysteria version >/dev/null
+  /usr/libexec/ket/openvpn --version >/dev/null
   /usr/libexec/ket/sslocal --version >/dev/null
+  /usr/libexec/ket/stunnel -version >/dev/null 2>&1
   /usr/libexec/ket/xray version >/dev/null
   /usr/libexec/ket/wstunnel --version >/dev/null
   /usr/libexec/ket/tun2proxy --version >/dev/null

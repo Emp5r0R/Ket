@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows clients implement authenticated Hysteria2, VLESS + REALITY, CDN-carried VLESS + XHTTP/TLS Stealth, Shadowsocks 2022, and WireGuard over WebSocket/TLS data planes with lease revocation. Android implements the same ranked five-transport contract on 64-bit API 28+ where upstream binaries are available and retains Hysteria2 fallback elsewhere. Hysteria2 and REALITY have carried traffic on a physical current arm64 device; the other three transports have local parser, engine, package, and upstream-binary validation rather than restricted-network device results. Physical lifecycle and network tests remain before this is a complete end-user VPN.
+> **Current state:** the Docker server and Linux/Windows clients implement six authenticated data planes with lease revocation: Hysteria2, VLESS + REALITY, CDN-carried VLESS + XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard over WebSocket/TLS, and OpenVPN over stunnel TLS. Android implements the ranked first five transports on supported devices and safely skips OpenVPN profiles until its native management bridge exists. Hysteria2 and REALITY have carried traffic on a physical current arm64 device; the remaining transports have local code, engine, package, or container validation rather than restricted-network end-to-end results. Physical lifecycle and network tests remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -14,7 +14,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Shared Rust client controller with hardened HTTPS enrollment, bounded and identity-bound control-response validation, UI-safe last-known-good state snapshots, lease renewal, metrics refresh, bounded fallback, persistent reconnect intent across fully blocked rounds, and clean release.
 - Map-first Tauri 2 desktop UI with secure enrollment, node geography, connection control, health/capacity telemetry, traffic history, and responsive Linux/Windows layouts.
 - Authenticated loopback privilege broker with HMAC-SHA-256 installation identity, bounded framing, one-tunnel ownership, heartbeat expiry, and redacted diagnostics.
-- Privileged desktop transport service with strict Hysteria2, VLESS + REALITY, XHTTP/TLS Stealth, Shadowsocks 2022, and WireGuard TLS validation, shared full-route TUN and virtual-DNS ownership, every resolved server IP excluded, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
+- Privileged desktop transport service with strict Hysteria2, VLESS + REALITY, XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard TLS, and OpenVPN/stunnel validation, full-route ownership, every resolved server IP excluded, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
 - Hardened `systemd` and Windows Service Control Manager installers with read-only desktop token access and non-destructive upgrades.
 - Exactly 32-character access grants with Argon2-protected at-rest storage.
 - Per-grant connection limits, global capacity, expiry, renewal, release, and revocation.
@@ -23,9 +23,10 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Generated Xray-core 26.3.27 VLESS + REALITY and VLESS + XHTTP configurations with deterministic lease-scoped UUIDs, atomic multi-inbound reconciliation/revocation, traffic statistics, and abuse-resistant routing rules.
 - Maintained `shadowsocks-rust` 1.24.0 SIP022 AEAD-2022 server manager with deterministic lease-scoped keys, crash-safe per-lease TCP/UDP ports, reconciliation/revocation, and abuse-resistant ACLs.
 - Maintained WireGuard kernel server and Xray userspace clients carried through checksum-pinned `wstunnel` 10.6.2, with deterministic lease-scoped keys, preshared keys, addresses, peer reconciliation/revocation, and certificate-verified WSS.
+- Checksum-pinned OpenVPN 2.7.5 inside stunnel 5.79 TLS, with two independent certificate chains, `tls-crypt`, scoped username/password authentication, session reconciliation/revocation, traffic counters, and a capability-limited Linux agent.
 - Android Compose client with a real Natural Earth server map, coordinate-based location marker, node health/capacity/CPU/memory/uptime telemetry, bounded and identity-bound HTTPS control responses, Keystore-sealed durable credentials, process/reboot-safe lease restoration, system always-on entry, ranked WireGuard TLS, Shadowsocks 2022, XHTTP/TLS Stealth, VLESS + REALITY, and Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, collision-safe dual-stack VPN DNS, a fail-closed replacement-route guard, Doze-aware lease validation, graceful VPN-permission revocation, protected Hysteria QUIC sockets, server-route exclusion for upstream engines, maintained hev TUN-to-SOCKS forwarding, local traffic metrics, and engine supervision.
 - Fail-closed Android release signing with operator-supplied version metadata and signer-certificate pinning; CI exercises the complete release path with a disposable identity that is never published as a trusted release.
-- Typed discovery identifiers for future IKEv2, OpenVPN/stunnel, and XOR-wrapped adapters. These identifiers are not executable protocol support.
+- Typed discovery identifiers remain for future IKEv2 and XOR-wrapped adapters. These identifiers are not executable protocol support.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
 - Fail-fast server configuration that structurally validates the public URL and bounds node, location, transport, TLS-name, and option metadata before any manifest is issued.
 - Atomic persistent state and graceful shutdown.
@@ -38,10 +39,11 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 | HTTPS Stealth (VLESS + XHTTP/TLS) | Implemented | Implemented | Implemented on 64-bit | Local validation complete; restricted-network physical gate pending |
 | Shadowsocks 2022 | Implemented | Implemented | Implemented on 64-bit API 28+ | Local upstream-engine validation complete; restricted-network physical gate pending |
 | WireGuard over WebSocket/TLS | Implemented | Implemented | Implemented on arm64 API 28+ | Local engine/package validation complete; kernel-server and restricted-network gates pending |
-| IKEv2, OpenVPN/stunnel | Identifier only | Not implemented | Not implemented | Future adapters |
+| OpenVPN over stunnel TLS | Implemented | Implemented | Safely skipped | Local code/package/container validation; deployment and Android native bridge pending |
+| IKEv2 | Identifier only | Not implemented | Not implemented | Future adapter |
 | XOR scrambling | Obfuscation identifier only | Not standalone security | Not standalone security | May only wrap authenticated encryption |
 
-The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and data-plane deployment in the [Hysteria2](docs/HYSTERIA2.md), [VLESS + REALITY](docs/XRAY_REALITY.md), [HTTPS Stealth](docs/XHTTP_STEALTH.md), [Shadowsocks 2022](docs/SHADOWSOCKS2022.md), and [WireGuard TLS](docs/WIREGUARD_TLS.md) guides.
+The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and data-plane deployment in the [Hysteria2](docs/HYSTERIA2.md), [VLESS + REALITY](docs/XRAY_REALITY.md), [HTTPS Stealth](docs/XHTTP_STEALTH.md), [Shadowsocks 2022](docs/SHADOWSOCKS2022.md), [WireGuard TLS](docs/WIREGUARD_TLS.md), and [OpenVPN over stunnel](docs/OPENVPN_STUNNEL.md) guides.
 
 ## Run with Docker
 
@@ -115,15 +117,24 @@ docker compose -f compose.yaml -f compose.wireguard.yaml up --build -d
 
 The overlay runs a capability-limited WireGuard kernel agent and an unprivileged `wstunnel` origin published only on host loopback port `8446`. Route the configured WebSocket path from Cloudflare Tunnel to `http://localhost:8446`; clients connect to certificate-verified `wss://` on the public hostname. This path needs no public OCI ingress rule. It is a self-hosted transport inspired by the same general WireGuard-over-TLS strategy as Proton Stealth, but it is not Proton-compatible. Exact setup and validation commands are in [the WireGuard TLS guide](docs/WIREGUARD_TLS.md).
 
-Hysteria2 and REALITY can share port `443` because they use UDP and TCP respectively. HTTPS Stealth and WireGuard TLS use separate Cloudflare hostnames and loopback-only origins, while Shadowsocks uses its own TCP+UDP range. To run all five implemented transports, enable all five sets of environment values and include all overlays:
+To enable OpenVPN over stunnel, create the OpenVPN and stunnel PKI material, generate two independent server tokens, and start its overlay:
 
 ```bash
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml config --quiet
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml up --build -d
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml ps
+docker compose -f compose.yaml -f compose.openvpn.yaml config --quiet
+docker compose -f compose.yaml -f compose.openvpn.yaml up --build -d
 ```
 
-The control, XHTTP, and WireGuard TLS hostnames may remain behind Cloudflare Tunnel, but Hysteria2, REALITY, and Shadowsocks session profiles must advertise a direct server IP or DNS-only hostname. Open stateful TCP `443`, UDP `443`, and the Shadowsocks TCP+UDP range in both the cloud network policy and host firewall only for those raw transports; keep all Cloudflare Tunnel origin ports closed publicly.
+The outer stunnel connection is certificate-verified TLS and the inner OpenVPN connection independently verifies its server certificate and `tls-crypt` key. This is direct generic TLS, not HTTP, so use a DNS-only record and open the configured TCP port. The OpenVPN agent owns only `NET_ADMIN` and `/dev/net/tun`; its management API and the authentication callback remain on a private Compose network. Exact PKI, ingress, port-collision, and revocation details are in [the OpenVPN/stunnel guide](docs/OPENVPN_STUNNEL.md).
+
+Hysteria2 and REALITY can share port `443` because they use UDP and TCP respectively. OpenVPN/stunnel is also TCP and therefore needs a different host bind address or public port from REALITY. HTTPS Stealth and WireGuard TLS use separate Cloudflare hostnames and loopback-only origins, while Shadowsocks uses its own TCP+UDP range. To run all six server/desktop transports, enable every environment section, assign OpenVPN a non-conflicting TCP listener, and include all overlays:
+
+```bash
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml -f compose.openvpn.yaml config --quiet
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml -f compose.openvpn.yaml up --build -d
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml -f compose.openvpn.yaml ps
+```
+
+The control, XHTTP, and WireGuard TLS hostnames may remain behind Cloudflare Tunnel, but Hysteria2, REALITY, Shadowsocks, and OpenVPN/stunnel session profiles must advertise a direct server IP or DNS-only hostname. Open only the exact raw-transport ports in both the cloud network policy and host firewall; keep all Cloudflare Tunnel origin ports closed publicly.
 
 Create an access grant:
 
@@ -165,8 +176,9 @@ Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting
 1. Sign the implemented Linux/Windows packages and exercise their signed artifacts on target machines; the unsigned Linux and Windows installer, service, reinstall, and removal lifecycles are CI-gated.
 2. Retest fail-closed network handover on the current API 36 device, repeat the Android matrix on physical API 26, then complete Doze, revoke, connected-state DNS-leak, and owner-signed installation tests.
 3. Exercise the implemented Android process/reboot restoration and always-on/lockdown lifecycle on physical API 36 and API 26 devices.
-4. Exercise HTTPS Stealth, Shadowsocks 2022, and WireGuard TLS on restricted Wi-Fi, cellular, desktop, and Android, including startup fallback and live revocation.
-5. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.
-6. Implement the remaining IKEv2 and OpenVPN/stunnel adapters without weakening the existing authenticated fallback contract.
+4. Exercise HTTPS Stealth, Shadowsocks 2022, WireGuard TLS, and OpenVPN/stunnel on restricted networks, including desktop startup fallback and live revocation.
+5. Implement the Android OpenVPN management/TUN bridge, then repeat Android parity tests without weakening ranked fallback.
+6. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.
+7. Implement the remaining IKEv2 adapter without weakening the existing authenticated fallback contract.
 
 Ket must use maintained protocol implementations and authenticated encryption. Obfuscation such as XOR is never treated as security on its own.

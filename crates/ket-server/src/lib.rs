@@ -3,6 +3,8 @@ pub mod config;
 mod data_plane;
 pub mod hysteria;
 mod model;
+pub mod openvpn;
+pub mod openvpn_agent;
 pub mod repository;
 pub mod service;
 pub mod shadowsocks;
