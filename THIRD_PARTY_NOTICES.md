@@ -6,6 +6,8 @@ Ket server and Linux/Windows desktop distributions bundle OpenVPN 2.7.5. OpenVPN
 
 The complete license is available in the upstream source archive as `COPYING` and at <https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt>. Corresponding source is available from <https://build.openvpn.net/downloads/releases/>.
 
+Ket Android bundles the unmodified OpenVPN 2 native executable and library from OpenVPN for Android 0.7.64 for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. The release APK URL and SHA-256 digest are pinned in `packaging/prepare-android-engines.sh`. OpenVPN for Android is distributed under GNU GPL version 2 with the exceptions and additional terms in its `doc/LICENSE.txt`; Ket communicates with the executable only through OpenVPN's management protocol and does not copy its Java class hierarchy. Corresponding source and submodule revisions are available from the `v0.7.64` tag at <https://github.com/schwabe/ics-openvpn>.
+
 ## stunnel
 
 Ket server and Linux/Windows desktop distributions bundle stunnel 5.79. stunnel is licensed under GNU GPL version 2 or later with its OpenSSL exception. Ket uses the unmodified upstream source archive whose version, URL, and SHA-256 digest are recorded in `Dockerfile` and `packaging/fetch-stunnel.sh`. The upstream 5.79 release accidentally retained `VERSION_MINOR 78`, so its executable banner reports 5.78 even though the verified 5.79 archive is installed.

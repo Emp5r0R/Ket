@@ -58,7 +58,7 @@ android { namespace = "com.ket.android"; compileSdk = 34
         named("main") { jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-engines/jniLibs")) }
         named("test") { resources.srcDir("src/main/res/raw") }
     }
-    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libsslocal.so", "**/libxray.so", "**/libwstunnel.so") } }
+    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libsslocal.so", "**/libxray.so", "**/libwstunnel.so", "**/libopenvpn.so", "**/libovpnexec.so") } }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.11" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

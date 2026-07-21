@@ -1,6 +1,6 @@
 # OpenVPN over stunnel TLS
 
-Ket carries OpenVPN TCP inside a certificate-verified stunnel TLS connection. The server and Linux/Windows desktop adapter are implemented. Android deliberately skips this profile until Ket has a native OpenVPN management and TUN-descriptor bridge; the other Android transports remain eligible for ranked fallback.
+Ket carries OpenVPN TCP inside a certificate-verified stunnel TLS connection. The server and Linux/Windows/Android adapters are implemented. Android uses Ket's certificate-pinned TLS socket carrier, which is wire-compatible with the server stunnel listener, and a private OpenVPN management/TUN-descriptor bridge.
 
 ## Security model
 
@@ -9,6 +9,7 @@ Ket carries OpenVPN TCP inside a certificate-verified stunnel TLS connection. Th
 - The client receives a lease-scoped 12-character username and a distinct 44-character data-plane password. Releasing, expiring, or revoking the lease makes authentication fail and the agent removes any matching connected client.
 - The OpenVPN management socket is Unix-only inside the capability-limited agent container. Its bearer-authenticated reconciliation API and the control-plane auth callback exist only on the private `openvpn-control` network.
 - Client credentials, both CA documents, `tls-crypt` material, the stunnel configuration, and the password-protected OpenVPN management file are mode `0600` ephemeral files removed after shutdown.
+- Android never writes the scoped username/password into the OpenVPN profile. It supplies them only over a mode-`0600` private Unix management socket, validates pushed interface/DNS settings, and keeps the established TUN under the foreground `VpnService` fail-closed guard.
 
 This transport looks like generic TLS on the wire, but it is not HTTP and makes no Proton Stealth compatibility claim. Networks that actively fingerprint or require a real HTTP exchange may block it; Ket should then prefer XHTTP/TLS Stealth or WireGuard WebSocket/TLS.
 

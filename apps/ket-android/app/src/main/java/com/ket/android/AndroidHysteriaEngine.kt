@@ -61,7 +61,7 @@ internal class AndroidHysteriaEngine(
                 configFile?.delete()
                 configFile = null
                 return AndroidEngineStarted(
-                    socksPort,
+                    AndroidEngineRoute.Socks(socksPort),
                     TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
                     resolved,
                 )

@@ -63,7 +63,7 @@ internal class AndroidXrayEngine(
                     configFile?.delete()
                     configFile = null
                     return AndroidEngineStarted(
-                        socksPort,
+                        AndroidEngineRoute.Socks(socksPort),
                         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
                         resolvedEndpoint,
                     )

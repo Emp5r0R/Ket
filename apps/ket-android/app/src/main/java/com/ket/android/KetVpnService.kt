@@ -74,6 +74,8 @@ class KetVpnService : VpnService() {
     private val vpnRoute = FailClosedVpnRouteGuard<ParcelFileDescriptor>()
     private var bridgeConfig: File? = null
     @Volatile
+    private var bridgeActive = false
+    @Volatile
     private var launchSpec: TunnelLaunchSpec? = null
     private var transportAddresses: Map<String, InetAddress> = emptyMap()
     private var healthTask: ScheduledFuture<*>? = null
@@ -191,7 +193,7 @@ class KetVpnService : VpnService() {
                     reconnectAttempt = reconnectAttempt,
                 )
             }
-            val candidate = engineFor(transport)
+            val candidate = engineFor(spec, transport)
             if (candidate == null) {
                 transportHistory.recordFailure(transport.id, SystemClock.elapsedRealtime())
                 failures += "${transport.displayName}: endpoint did not resolve before VPN routing"
@@ -221,7 +223,10 @@ class KetVpnService : VpnService() {
         )
     }
 
-    private fun engineFor(transport: AndroidTransport): AndroidTransportEngine? = when (transport) {
+    private fun engineFor(
+        spec: TunnelLaunchSpec,
+        transport: AndroidTransport,
+    ): AndroidTransportEngine? = when (transport) {
         is HysteriaTransport -> AndroidHysteriaEngine(this, transport)
         is ShadowsocksTransport -> transportAddresses[transport.id]?.let {
             AndroidShadowsocksEngine(this, transport, it)
@@ -232,6 +237,11 @@ class KetVpnService : VpnService() {
         is AndroidXrayTransport -> transportAddresses[transport.id]?.let {
             AndroidXrayEngine(this, transport, it)
         }
+        is OpenVpnStunnelTransport -> transportAddresses[transport.id]?.let { resolved ->
+            AndroidOpenVpnEngine(this, transport, resolved) { request ->
+                establishOpenVpnRoute(spec, resolved, request)
+            }
+        }
         else -> null
     }
 
@@ -240,6 +250,13 @@ class KetVpnService : VpnService() {
         selectedEngine: AndroidTransportEngine,
         selected: AndroidEngineStarted,
     ) {
+        if (selected.route == AndroidEngineRoute.NativeTun) {
+            require(vpnRoute.isActive()) { "OpenVPN did not attach its Android tunnel interface" }
+            require(selectedEngine.isAlive()) { "OpenVPN stopped while attaching the VPN interface" }
+            bridgeActive = false
+            return
+        }
+        val socks = selected.route as AndroidEngineRoute.Socks
         val bypassAddresses =
             (transportAddresses.values + listOfNotNull(selected.bypassAddress)).distinct()
         val dnsServers = AndroidVpnDnsPolicy.serversFor(bypassAddresses)
@@ -256,12 +273,43 @@ class KetVpnService : VpnService() {
         val established = builder.establish()
             ?: throw IllegalStateException("Android could not establish the VPN interface")
         vpnRoute.replace(established)
-        bridgeConfig = writeBridgeConfig(EngineConfig.tunToSocks(selected.socksPort))
+        bridgeConfig = writeBridgeConfig(EngineConfig.tunToSocks(socks.port))
         bridge.start(bridgeConfig!!.absolutePath, established.fd)
+        bridgeActive = true
         Thread.sleep(BRIDGE_SETTLE_MILLIS)
         if (!selectedEngine.isAlive()) {
             throw IllegalStateException("${selectedEngine.displayName} stopped while attaching the VPN interface")
         }
+    }
+
+    private fun establishOpenVpnRoute(
+        spec: TunnelLaunchSpec,
+        resolvedEndpoint: InetAddress,
+        request: OpenVpnTunRequest,
+    ): ParcelFileDescriptor {
+        val bypassAddresses = (transportAddresses.values + resolvedEndpoint).distinct()
+        val builder = Builder()
+            .setSession("Ket - ${spec.node.displayName}")
+            .setMtu(request.mtu)
+            .setBlocking(false)
+            .addAddress(requireNotNull(request.ipv4Address.hostAddress), request.ipv4PrefixLength)
+            .apply {
+                val ipv6 = request.ipv6Address
+                val prefix = request.ipv6PrefixLength
+                if (ipv6 != null && prefix != null) {
+                    addAddress(requireNotNull(ipv6.hostAddress), prefix)
+                } else {
+                    // Route IPv6 into the TUN even when the server intentionally blocks it.
+                    addAddress(TUN_IPV6, 128)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setMetered(false)
+            }
+        request.dnsServers.forEach(builder::addDnsServer)
+        addVpnRoutes(builder, bypassAddresses)
+        val established = builder.establish()
+            ?: throw IllegalStateException("Android could not establish the OpenVPN interface")
+        vpnRoute.replace(established)
+        return ParcelFileDescriptor.dup(established.fileDescriptor)
     }
 
     private fun publishConnected(spec: TunnelLaunchSpec, selected: SelectedTransport) {
@@ -423,7 +471,11 @@ class KetVpnService : VpnService() {
             val local = if (reconnecting.get()) {
                 null
             } else {
-                runCatching { bridge.stats() }.getOrNull()
+                engine?.trafficStats() ?: if (bridgeActive) {
+                    runCatching { bridge.stats() }.getOrNull()
+                } else {
+                    null
+                }
             }
             if (stopping.get()) return
             if (remote != null || local != null) {
@@ -475,7 +527,8 @@ class KetVpnService : VpnService() {
 
     @Synchronized
     private fun stopTransportAndBridge() {
-        runCatching { bridge.stop() }
+        if (bridgeActive) runCatching { bridge.stop() }
+        bridgeActive = false
         runCatching { engine?.close() }
         engine = null
         activeTransportId = null

@@ -17,7 +17,7 @@ This separation keeps the API and user experience consistent while allowing a no
 | Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Six implemented transports with bounded fallback |
 | Desktop privilege broker | Authenticated TUN/route ownership and engine supervision | Rust system service | Implemented for Linux/Windows |
 | Linux/Windows desktop | Map-first connection UI and native packaging | Tauri 2 plus shared Rust core | UI, service installers, and unsigned lifecycle gates implemented; signed bundles pending |
-| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Natural Earth, Android Keystore, Hysteria2, Xray, shadowsocks-rust, wstunnel, hev-socks5-tunnel | Five-transport parity on arm64 API 28+; current arm64 Hysteria2/REALITY packet flow verified; WireGuard TLS/Shadowsocks/XHTTP restricted-network, corrected handover, Doze/revoke, API 26, DNS leak, always-on/reboot, and owner-signing physical gates pending |
+| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Natural Earth, Android Keystore, Hysteria2, Xray, shadowsocks-rust, wstunnel, OpenVPN 2, hev-socks5-tunnel | Six-transport implementation; current arm64 Hysteria2/REALITY packet flow verified; OpenVPN/WireGuard TLS/Shadowsocks/XHTTP restricted-network, corrected handover, Doze/revoke, API 26, DNS leak, always-on/reboot, and owner-signing physical gates pending |
 
 ## Control flow
 
@@ -69,7 +69,7 @@ Clients use a policy engine rather than a hard-coded default. The implemented se
 
 `WireGuard` is a concrete WireGuard-over-WebSocket/TLS adapter. The server uses Linux WireGuard behind an authenticated manager and loopback-only wstunnel origin; desktop and Android use Xray's userspace WireGuard outbound behind a certificate-verifying wstunnel client. It is independently self-hosted and deliberately makes no Proton Stealth compatibility claim. Android support is currently arm64 API 28+ because that is the available upstream wstunnel payload.
 
-`OpenVpnStunnel` is a concrete desktop/server adapter. OpenVPN TCP runs through certificate-verified stunnel TLS, then independently verifies its own CA and `tls-crypt` key. The authenticated manager exposes directional counters and immediate revocation. Android intentionally skips the profile until a native management and TUN-descriptor bridge is implemented.
+`OpenVpnStunnel` is a concrete desktop/server/Android adapter. OpenVPN TCP runs through certificate-verified stunnel-compatible TLS, then independently verifies its own CA and `tls-crypt` key. The authenticated manager exposes directional counters and immediate revocation. Android runs the maintained OpenVPN 2 executable as a separate process, answers its private Unix management channel, passes a `VpnService` TUN descriptor with `SCM_RIGHTS`, and keeps route ownership in Ket.
 
 `Ikev2` remains a discovery identifier rather than an executable adapter. A future implementation must use a maintained engine while preserving lease-scoped credentials, live revocation, accounting, and platform parity.
 
