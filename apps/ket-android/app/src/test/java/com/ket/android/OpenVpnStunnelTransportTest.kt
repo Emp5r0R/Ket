@@ -25,6 +25,7 @@ class OpenVpnStunnelTransportTest {
         assertTrue(config.contains("verify-x509-name openvpn.example.test name"))
         assertTrue(config.contains("tls-version-min 1.2"))
         assertTrue(config.contains("allow-compression no"))
+        assertTrue(config.contains("auth-retry none"))
         assertFalse(config.contains(transport.username))
         assertFalse(config.contains(transport.password))
         assertFalse(transport.toString().contains(transport.password))

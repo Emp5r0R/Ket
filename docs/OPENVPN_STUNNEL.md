@@ -8,6 +8,7 @@ Ket carries OpenVPN TCP inside a certificate-verified stunnel TLS connection. Th
 - OpenVPN 2.7.5 independently verifies the inner server certificate, requires `remote-cert-tls server`, uses `tls-crypt`, disables compression, and permits only AEAD data ciphers.
 - The client receives a lease-scoped 12-character username and a distinct 44-character data-plane password. Releasing, expiring, or revoking the lease makes authentication fail and the agent removes any matching connected client.
 - The OpenVPN management socket is Unix-only inside the capability-limited agent container. Its bearer-authenticated reconciliation API and the control-plane auth callback exist only on the private `openvpn-control` network.
+- The agent writes a root-only mode-`0600` runtime config under `/run` so OpenVPN can pass the internal auth URL and bearer to its restricted script environment. The bearer is absent from the image and process arguments.
 - Client credentials, both CA documents, `tls-crypt` material, the stunnel configuration, and the password-protected OpenVPN management file are mode `0600` ephemeral files removed after shutdown.
 - Android never writes the scoped username/password into the OpenVPN profile. It supplies them only over a mode-`0600` private Unix management socket, validates pushed interface/DNS settings, and keeps the established TUN under the foreground `VpnService` fail-closed guard.
 
@@ -71,6 +72,16 @@ REALITY also defaults to raw TCP `443`. Two containers cannot bind the same host
 
 ## Runtime checks
 
+Before deployment, run the host-local nested TLS and lease lifecycle check:
+
+```bash
+./packaging/verify-openvpn-handshake.sh
+```
+
+It requires `openvpn`, `stunnel`, `openssl`, `curl`, `jq`, `nc`, `shuf`, and `socat`; it builds the two Ket server binaries when needed. The disposable test generates independent inner and outer CAs, enrolls through the real control API, connects a real OpenVPN client through certificate-pinned stunnel, verifies scoped authentication and nonzero management counters, then proves that session release and grant revocation disconnect the client. It uses OpenVPN `dev null` because it is designed to run without host network mutation. It therefore proves the nested handshake and control lifecycle, not TUN creation, routing, NAT, DNS, or Internet packet flow.
+
+On the deployment host, follow with the container and manager checks:
+
 ```bash
 docker compose -f compose.yaml -f compose.openvpn.yaml logs --tail=100 openvpn-agent openvpn-stunnel
 docker compose -f compose.yaml -f compose.openvpn.yaml exec openvpn-agent \
@@ -79,4 +90,4 @@ docker compose -f compose.yaml -f compose.openvpn.yaml exec openvpn-agent \
   http://127.0.0.1:8789/healthz
 ```
 
-The manager health endpoint is intentionally not host-published. Verify end-to-end traffic and revocation from a packaged Linux or Windows client before production use. Docker builds the OpenVPN/stunnel binaries natively, so the same image definition supports `linux/amd64` and `linux/arm64`.
+The manager health endpoint is intentionally not host-published. Verify TUN-backed end-to-end Internet traffic, DNS, counters, and revocation from a packaged Linux, Windows, or Android client before production use. Docker builds the OpenVPN/stunnel binaries natively, so the same image definition supports `linux/amd64` and `linux/arm64`.

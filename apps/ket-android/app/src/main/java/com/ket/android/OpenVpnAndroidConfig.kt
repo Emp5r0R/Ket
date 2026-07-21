@@ -30,7 +30,7 @@ internal object OpenVpnAndroidConfig {
             appendLine("data-ciphers-fallback AES-256-GCM")
             appendLine("auth SHA256")
             appendLine("allow-compression no")
-            appendLine("auth-retry nointeract")
+            appendLine("auth-retry none")
             appendLine("redirect-gateway def1 bypass-dhcp")
             appendLine("block-ipv6")
             appendLine("persist-key")

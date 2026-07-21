@@ -22,7 +22,8 @@ struct AuthRequest {
 
 #[tokio::main]
 async fn main() {
-    if run().await.is_err() {
+    if let Err(error) = run().await {
+        eprintln!("OpenVPN authentication failed: {error:#}");
         std::process::exit(1);
     }
 }

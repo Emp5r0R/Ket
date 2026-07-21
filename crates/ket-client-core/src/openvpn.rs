@@ -469,7 +469,7 @@ fn render_openvpn_config(
     let management_password_path =
         quote_openvpn_path(management_password_path, &transport.profile.id)?;
     let mut document = format!(
-        "client\ndev tun\nproto tcp-client\nremote 127.0.0.1 {carrier_port}\nnobind\nconnect-retry 2 5\nconnect-retry-max 3\nconnect-timeout 10\nresolv-retry 0\nremote-cert-tls server\nverify-x509-name {sni} name\ntls-version-min 1.2\ntls-cert-profile preferred\ndata-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\ndata-ciphers-fallback AES-256-GCM\nauth SHA256\nallow-compression no\nauth-retry nointeract\nredirect-gateway def1 bypass-dhcp\nblock-ipv6\npersist-key\npersist-tun\nmanagement 127.0.0.1 {management_port} {management_password_path}\nmanagement-log-cache 50\nverb 3\nmute 10\n"
+        "client\ndev tun\nproto tcp-client\nremote 127.0.0.1 {carrier_port}\nnobind\nconnect-retry 2 5\nconnect-retry-max 3\nconnect-timeout 10\nresolv-retry 0\nremote-cert-tls server\nverify-x509-name {sni} name\ntls-version-min 1.2\ntls-cert-profile preferred\ndata-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\ndata-ciphers-fallback AES-256-GCM\nauth SHA256\nallow-compression no\nauth-retry none\nredirect-gateway def1 bypass-dhcp\nblock-ipv6\npersist-key\npersist-tun\nmanagement 127.0.0.1 {management_port} {management_password_path}\nmanagement-log-cache 50\nverb 3\nmute 10\n"
     );
     #[cfg(windows)]
     document.push_str("windows-driver wintun\nblock-outside-dns\n");
@@ -774,6 +774,7 @@ mod tests {
             "verify-x509-name openvpn.example.test name",
             "tls-version-min 1.2",
             "allow-compression no",
+            "auth-retry none",
             "redirect-gateway def1 bypass-dhcp",
             "block-ipv6",
             "route 203.0.113.9 255.255.255.255 net_gateway",
