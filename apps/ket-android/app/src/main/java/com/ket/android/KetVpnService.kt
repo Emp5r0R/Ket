@@ -178,7 +178,11 @@ class KetVpnService : VpnService() {
 
     private fun startLocalRoute(spec: TunnelLaunchSpec, reconnectAttempt: Int): SelectedTransport {
         val failures = mutableListOf<String>()
-        val candidates = transportHistory.rank(spec.transports, SystemClock.elapsedRealtime())
+        val candidates = transportHistory.rank(
+            spec.transports,
+            SystemClock.elapsedRealtime(),
+            spec.preferredProtocol,
+        )
         for (transport in candidates) {
             if (stopping.get()) throw IllegalStateException("Tunnel stop was requested")
             KetTunnelRuntime.update {

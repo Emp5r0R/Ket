@@ -1,7 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use ket_core::{
-    ACCESS_CODE_LENGTH, SecretString, SessionManifest, SessionStatus, split_session_token,
+    ACCESS_CODE_LENGTH, SecretString, SessionManifest, SessionStatus, TransportProtocol,
+    split_session_token,
 };
 use tokio::{
     sync::{Mutex, oneshot, watch},
@@ -19,6 +20,7 @@ struct RuntimeState {
     session: Option<SessionManifest>,
     tunnel: Option<Arc<dyn ActiveTunnel>>,
     connection_requested: bool,
+    preferred_protocol: Option<TransportProtocol>,
     history: TransportHistory,
 }
 
@@ -62,6 +64,7 @@ impl KetClient {
                 session: None,
                 tunnel: None,
                 connection_requested: false,
+                preferred_protocol: None,
                 history: TransportHistory::default(),
             }),
             snapshot,
@@ -117,10 +120,21 @@ impl KetClient {
 
         let node = manifest.node.clone();
         let expires_at = manifest.session_expires_at_epoch_seconds;
+        let available_transports = manifest
+            .transports
+            .iter()
+            .filter(|transport| {
+                self.adapters
+                    .iter()
+                    .any(|adapter| adapter.supports(transport))
+            })
+            .map(|transport| TransportSummary::from(&transport.profile))
+            .collect();
         self.runtime.lock().await.session = Some(manifest);
         self.update_snapshot(|snapshot| {
             snapshot.phase = ClientPhase::Enrolled;
             snapshot.node = Some(node);
+            snapshot.available_transports = available_transports;
             snapshot.session_expires_at_epoch_seconds = Some(expires_at);
             snapshot.issue = None;
         });
@@ -128,6 +142,13 @@ impl KetClient {
     }
 
     pub async fn connect(&self) -> Result<ClientSnapshot, ClientError> {
+        self.connect_with_protocol(None).await
+    }
+
+    pub async fn connect_with_protocol(
+        &self,
+        preferred_protocol: Option<TransportProtocol>,
+    ) -> Result<ClientSnapshot, ClientError> {
         let _operation = self.operation.lock().await;
         {
             let mut runtime = self.runtime.lock().await;
@@ -135,7 +156,9 @@ impl KetClient {
                 return Err(ClientError::NotEnrolled);
             }
             runtime.connection_requested = true;
+            runtime.preferred_protocol = preferred_protocol.clone();
         }
+        self.update_snapshot(|snapshot| snapshot.preferred_protocol = preferred_protocol);
         self.connect_locked(false).await
     }
 
@@ -190,6 +213,7 @@ impl KetClient {
         let (tunnel, token) = {
             let mut runtime = self.runtime.lock().await;
             runtime.connection_requested = false;
+            runtime.preferred_protocol = None;
             (
                 runtime.tunnel.take(),
                 runtime
@@ -201,7 +225,11 @@ impl KetClient {
         if tunnel.is_none() && token.is_none() {
             self.update_snapshot(|snapshot| {
                 snapshot.phase = ClientPhase::Disconnected;
+                snapshot.node = None;
                 snapshot.active_transport = None;
+                snapshot.available_transports.clear();
+                snapshot.preferred_protocol = None;
+                snapshot.traffic = None;
                 snapshot.issue = None;
             });
             return Ok(self.snapshot());
@@ -228,7 +256,11 @@ impl KetClient {
         let error = stop_error.or(release_error);
         self.update_snapshot(|snapshot| {
             snapshot.phase = ClientPhase::Disconnected;
+            snapshot.node = None;
             snapshot.active_transport = None;
+            snapshot.available_transports.clear();
+            snapshot.preferred_protocol = None;
+            snapshot.traffic = None;
             snapshot.session_expires_at_epoch_seconds = None;
             snapshot.connected_at_epoch_seconds = None;
             snapshot.handshake_latency_ms = None;
@@ -329,11 +361,12 @@ impl KetClient {
             let runtime = self.runtime.lock().await;
             let session = runtime.session.as_ref().ok_or(ClientError::NotEnrolled)?;
             self.selector
-                .rank(
+                .rank_with_preference(
                     &session.transports,
                     &self.adapters,
                     &runtime.history,
                     unix_time(),
+                    runtime.preferred_protocol.as_ref(),
                 )
                 .into_iter()
                 .cloned()
@@ -466,6 +499,7 @@ impl KetClient {
                 let tunnel = {
                     let mut runtime = self.runtime.lock().await;
                     runtime.connection_requested = false;
+                    runtime.preferred_protocol = None;
                     runtime.tunnel.take()
                 };
                 if let Some(tunnel) = tunnel {
@@ -475,6 +509,8 @@ impl KetClient {
                 self.update_snapshot(|snapshot| {
                     snapshot.phase = ClientPhase::Error;
                     snapshot.active_transport = None;
+                    snapshot.available_transports.clear();
+                    snapshot.preferred_protocol = None;
                     snapshot.session_expires_at_epoch_seconds = None;
                     snapshot.connected_at_epoch_seconds = None;
                     snapshot.issue = Some(error.issue());
@@ -655,6 +691,61 @@ mod tests {
         .unwrap();
         assert!(client.enroll("short").await.is_err());
         assert_eq!(api.enrollments.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn runtime_protocol_preference_is_visible_and_keeps_fallback_available() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![
+            test_reality_transport("reality-primary", 1),
+            test_transport("hy2-preferred", 2),
+        ];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+
+        let enrolled = client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        assert_eq!(enrolled.available_transports.len(), 2);
+
+        let connected = client
+            .connect_with_protocol(Some(TransportProtocol::Hysteria2))
+            .await
+            .unwrap();
+        assert_eq!(
+            connected.preferred_protocol,
+            Some(TransportProtocol::Hysteria2)
+        );
+        assert_eq!(
+            connected
+                .active_transport
+                .as_ref()
+                .map(|item| item.id.as_str()),
+            Some("hy2-preferred")
+        );
+
+        client.stop_tunnel().await.unwrap();
+        adapter.set_blocked(["hy2-preferred"]);
+        let fallback = client
+            .connect_with_protocol(Some(TransportProtocol::Hysteria2))
+            .await
+            .unwrap();
+        assert_eq!(
+            fallback
+                .active_transport
+                .as_ref()
+                .map(|item| item.id.as_str()),
+            Some("reality-primary")
+        );
     }
 
     #[tokio::test]

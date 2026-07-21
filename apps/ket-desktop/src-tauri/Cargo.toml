@@ -19,6 +19,7 @@ tauri-build = "2.6.3"
 
 [dependencies]
 ket-client-core = { path = "../../../crates/ket-client-core" }
+ket-core = { path = "../../../crates/ket-core" }
 serde.workspace = true
 tauri = "2.11.5"
 tokio.workspace = true

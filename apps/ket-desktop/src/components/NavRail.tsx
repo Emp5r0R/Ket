@@ -1,6 +1,6 @@
-import { Activity, Settings, Shield } from "lucide-react";
+import { Activity, BookOpen, Settings, Shield } from "lucide-react";
 
-export type AppView = "connection" | "metrics" | "settings";
+export type AppView = "connection" | "metrics" | "protocols" | "settings";
 
 interface NavRailProps {
   active: AppView;
@@ -10,6 +10,7 @@ interface NavRailProps {
 const items = [
   { id: "connection" as const, label: "Connection", icon: Shield },
   { id: "metrics" as const, label: "Metrics", icon: Activity },
+  { id: "protocols" as const, label: "Protocols", icon: BookOpen },
   { id: "settings" as const, label: "Settings", icon: Settings },
 ];
 
@@ -39,4 +40,3 @@ export function NavRail({ active, onChange }: NavRailProps) {
     </nav>
   );
 }
-

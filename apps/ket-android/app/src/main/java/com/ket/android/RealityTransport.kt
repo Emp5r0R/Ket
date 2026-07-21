@@ -21,6 +21,7 @@ class RealityTransport private constructor(
     override val fingerprint: String,
 ) : AndroidXrayTransport {
     override val displayName: String = "VLESS + REALITY"
+    override val protocol: KetProtocol = KetProtocol.Reality
 
     override fun toString(): String =
         "RealityTransport(id=$id, endpoint=$endpoint, port=$port, tlsServerName=$tlsServerName, userId=[REDACTED], password=[REDACTED], shortId=[REDACTED], fingerprint=$fingerprint)"

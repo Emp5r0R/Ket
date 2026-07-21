@@ -14,6 +14,7 @@ class ShadowsocksTransport private constructor(
     val key: String,
 ) : AndroidTransport {
     override val displayName: String = "Shadowsocks 2022"
+    override val protocol: KetProtocol = KetProtocol.Shadowsocks2022
 
     override fun toString(): String =
         "ShadowsocksTransport(id=$id, endpoint=$endpoint, port=$port, key=[REDACTED])"

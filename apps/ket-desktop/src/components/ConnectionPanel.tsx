@@ -2,25 +2,45 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  BookOpen,
   LoaderCircle,
   MapPin,
   Power,
   Radio,
 } from "lucide-react";
 import { formatDuration } from "../lib/format";
+import {
+  autoProtocol,
+  isProtocolId,
+  protocolInfo,
+  type ProtocolId,
+  type ProtocolPreference,
+} from "../lib/protocols";
 import type { ClientSnapshot, EngineReadiness } from "../types";
 
 interface ConnectionPanelProps {
   snapshot: ClientSnapshot;
   engine: EngineReadiness;
   busy: boolean;
+  preference: ProtocolPreference;
+  onPreferenceChange: (preference: ProtocolPreference) => void;
+  onLearnMore: (protocol: ProtocolId) => void;
   onConnect: () => Promise<void>;
   onStop: () => Promise<void>;
 }
 
 const workingPhases = new Set(["probing", "connecting", "reconnecting", "disconnecting"]);
 
-export function ConnectionPanel({ snapshot, engine, busy, onConnect, onStop }: ConnectionPanelProps) {
+export function ConnectionPanel({
+  snapshot,
+  engine,
+  busy,
+  preference,
+  onPreferenceChange,
+  onLearnMore,
+  onConnect,
+  onStop,
+}: ConnectionPanelProps) {
   const node = snapshot.node;
   if (!node) return null;
   const connected = snapshot.phase === "connected";
@@ -30,6 +50,15 @@ export function ConnectionPanel({ snapshot, engine, busy, onConnect, onStop }: C
     ? snapshot.session_expires_at_epoch_seconds - Math.floor(Date.now() / 1000)
     : null;
   const location = [node.location.city, node.location.country_name].filter(Boolean).join(", ");
+  const offeredProtocols = Array.from(
+    new Set(
+      snapshot.available_transports
+        .map((transport) => transport.protocol)
+        .filter(isProtocolId),
+    ),
+  );
+  const selectedInfo = preference === "auto" ? autoProtocol : protocolInfo(preference);
+  const guideProtocol = preference === "auto" ? (offeredProtocols[0] ?? "stealth") : preference;
 
   return (
     <aside className="connection-panel" aria-label="Connection controls">
@@ -57,6 +86,28 @@ export function ConnectionPanel({ snapshot, engine, busy, onConnect, onStop }: C
           <Radio size={16} aria-hidden="true" />
           <span>{snapshot.active_transport?.display_name ?? "Automatic transport"}</span>
         </div>
+      </div>
+
+      <div className="protocol-choice">
+        <div className="protocol-choice-heading">
+          <label htmlFor="protocol-preference">Preferred protocol</label>
+          <button type="button" onClick={() => onLearnMore(guideProtocol)}>
+            <BookOpen size={14} aria-hidden="true" />
+            Learn more
+          </button>
+        </div>
+        <select
+          id="protocol-preference"
+          value={preference}
+          disabled={working || connected}
+          onChange={(event) => onPreferenceChange(event.target.value as ProtocolPreference)}
+        >
+          <option value="auto">Automatic</option>
+          {offeredProtocols.map((protocol) => (
+            <option key={protocol} value={protocol}>{protocolInfo(protocol).label}</option>
+          ))}
+        </select>
+        <p>{selectedInfo.shortInstruction}</p>
       </div>
 
       {!engine.broker_available ? (

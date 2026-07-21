@@ -9,6 +9,7 @@ interface AndroidTransport {
     val port: Int
     val priority: Int
     val displayName: String
+    val protocol: KetProtocol
 }
 
 interface AndroidXrayTransport : AndroidTransport {

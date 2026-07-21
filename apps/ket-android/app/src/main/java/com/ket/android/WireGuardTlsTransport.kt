@@ -31,6 +31,7 @@ class WireGuardTlsTransport private constructor(
     val serverPublicKey: String,
 ) : AndroidTransport {
     override val displayName: String = "WireGuard TLS"
+    override val protocol: KetProtocol = KetProtocol.WireGuardTls
 
     override fun toString(): String =
         "WireGuardTlsTransport(id=$id, endpoint=$endpoint, port=$port, tlsServerName=$tlsServerName, clientAddress=$clientAddress, pathPrefix=[REDACTED], remoteAddress=$remoteAddress, keys=[REDACTED])"

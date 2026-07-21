@@ -16,6 +16,7 @@ class HysteriaTransport private constructor(
     val obfuscation: HysteriaObfuscation,
 ) : AndroidTransport {
     override val displayName: String = "Hysteria 2"
+    override val protocol: KetProtocol = KetProtocol.Hysteria2
 
     override fun toString(): String =
         "HysteriaTransport(id=$id, endpoint=$endpoint, port=$port, tlsServerName=$tlsServerName, auth=[REDACTED], obfuscation=${obfuscation.redactedName})"

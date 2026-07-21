@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/ket-mark.svg" width="104" height="104" alt="Ket wave function mark">
+  <img src="assets/ket-mark.svg" width="104" height="104" alt="Ket Dirac wavefunction mark">
 </p>
 
 # Ket
@@ -12,7 +12,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 
 - Rust workspace with shared, serializable client/server contracts.
 - Shared Rust client controller with hardened HTTPS enrollment, bounded and identity-bound control-response validation, UI-safe last-known-good state snapshots, lease renewal, metrics refresh, bounded fallback, persistent reconnect intent across fully blocked rounds, and clean release.
-- Map-first Tauri 2 desktop UI with secure enrollment, node geography, connection control, health/capacity telemetry, traffic history, and responsive Linux/Windows layouts.
+- Map-first Tauri 2 desktop UI with secure enrollment, explicit or automatic protocol choice, an in-app guide for every implemented protocol, node geography, connection control, health/capacity telemetry, traffic history, and responsive Linux/Windows layouts.
 - Authenticated loopback privilege broker with HMAC-SHA-256 installation identity, bounded framing, one-tunnel ownership, heartbeat expiry, and redacted diagnostics.
 - Privileged desktop transport service with strict Hysteria2, VLESS + REALITY, XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard TLS, and OpenVPN/stunnel validation, full-route ownership, every resolved server IP excluded, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
 - Hardened `systemd` and Windows Service Control Manager installers with read-only desktop token access and non-destructive upgrades.
@@ -24,7 +24,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Maintained `shadowsocks-rust` 1.24.0 SIP022 AEAD-2022 server manager with deterministic lease-scoped keys, crash-safe per-lease TCP/UDP ports, reconciliation/revocation, and abuse-resistant ACLs.
 - Maintained WireGuard kernel server and Xray userspace clients carried through checksum-pinned `wstunnel` 10.6.2, with deterministic lease-scoped keys, preshared keys, addresses, peer reconciliation/revocation, and certificate-verified WSS.
 - Checksum-pinned OpenVPN 2.7.5 inside stunnel 5.79 TLS, with two independent certificate chains, `tls-crypt`, scoped username/password authentication, session reconciliation/revocation, traffic counters, and a capability-limited Linux agent.
-- Android Compose client with a real Natural Earth server map, coordinate-based location marker, node health/capacity/CPU/memory/uptime telemetry, bounded and identity-bound HTTPS control responses, Keystore-sealed durable credentials, process/reboot-safe lease restoration, system always-on entry, ranked OpenVPN TLS, WireGuard TLS, Shadowsocks 2022, XHTTP/TLS Stealth, VLESS + REALITY, and Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, collision-safe dual-stack VPN DNS, a fail-closed replacement-route guard, Doze-aware lease validation, graceful VPN-permission revocation, protected carrier sockets, server-route exclusion for upstream engines, maintained hev TUN-to-SOCKS forwarding, OpenVPN management/TUN descriptor handoff, local traffic metrics, and engine supervision.
+- Android Compose client with explicit or automatic protocol choice, an in-app guide for every implemented protocol, a real Natural Earth server map, coordinate-based location marker, node health/capacity/CPU/memory/uptime telemetry, bounded and identity-bound HTTPS control responses, Keystore-sealed durable credentials including the selected preference, process/reboot-safe lease restoration, system always-on entry, ranked OpenVPN TLS, WireGuard TLS, Shadowsocks 2022, XHTTP/TLS Stealth, VLESS + REALITY, and Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, collision-safe dual-stack VPN DNS, a fail-closed replacement-route guard, Doze-aware lease validation, graceful VPN-permission revocation, protected carrier sockets, server-route exclusion for upstream engines, maintained hev TUN-to-SOCKS forwarding, OpenVPN management/TUN descriptor handoff, local traffic metrics, and engine supervision.
 - Fail-closed Android release signing with operator-supplied version metadata and signer-certificate pinning; CI exercises the complete release path with a disposable identity that is never published as a trusted release.
 - Typed discovery identifiers remain for future IKEv2 and XOR-wrapped adapters. These identifiers are not executable protocol support.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.

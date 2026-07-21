@@ -35,6 +35,24 @@ class AndroidTransportHistoryTest {
     }
 
     @Test
+    fun `preferred protocol leads while cooldown still permits healthy fallback`() {
+        val history = AndroidTransportHistory(baseCooldownMillis = 1_000, maximumCooldownMillis = 8_000)
+        val primary = TestTransport("reality", priority = 1, protocol = KetProtocol.Reality)
+        val preferred = TestTransport("hysteria", priority = 10, protocol = KetProtocol.Hysteria2)
+
+        assertEquals(
+            listOf("hysteria", "reality"),
+            history.rank(listOf(primary, preferred), 0, KetProtocol.Hysteria2).map { it.id },
+        )
+
+        history.recordFailure(preferred.id, nowMillis = 0)
+        assertEquals(
+            listOf("reality", "hysteria"),
+            history.rank(listOf(primary, preferred), 500, KetProtocol.Hysteria2).map { it.id },
+        )
+    }
+
+    @Test
     fun `repeated failures apply bounded exponential cooldown`() {
         val history = AndroidTransportHistory(baseCooldownMillis = 1_000, maximumCooldownMillis = 4_000)
         val primary = TestTransport("primary", priority = 5)
@@ -79,6 +97,7 @@ class AndroidTransportHistoryTest {
     private data class TestTransport(
         override val id: String,
         override val priority: Int,
+        override val protocol: KetProtocol = KetProtocol.Reality,
     ) : AndroidTransport {
         override val endpoint: String = "vpn.example.test"
         override val port: Int = 443

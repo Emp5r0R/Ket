@@ -4,6 +4,7 @@ use ket_client_core::{
     BrokerConfig, BrokerTransportAdapter, ClientIssue, ClientSnapshot, ControlEndpoint,
     HttpControlPlane, KetClient, MaintenanceTask, SelectionPolicy,
 };
+use ket_core::TransportProtocol;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{sync::Mutex, task::JoinHandle};
@@ -133,14 +134,40 @@ async fn enroll(
 }
 
 #[tauri::command]
-async fn connect(controller: State<'_, DesktopController>) -> Result<ClientSnapshot, ClientIssue> {
+async fn connect(
+    controller: State<'_, DesktopController>,
+    preferred_protocol: Option<String>,
+) -> Result<ClientSnapshot, ClientIssue> {
     let mut session = controller.session.lock().await;
     let session = session.as_mut().ok_or_else(not_enrolled)?;
-    let result = session.client.connect().await;
+    let preferred_protocol = preferred_protocol
+        .as_deref()
+        .map(parse_protocol)
+        .transpose()?;
+    let result = session
+        .client
+        .connect_with_protocol(preferred_protocol)
+        .await;
     if session.maintenance.is_none() {
         session.maintenance = Some(session.client.spawn_maintenance(Duration::from_secs(15)));
     }
     result.map_err(issue)
+}
+
+fn parse_protocol(value: &str) -> Result<TransportProtocol, ClientIssue> {
+    match value {
+        "hysteria2" => Ok(TransportProtocol::Hysteria2),
+        "open_vpn_stunnel" => Ok(TransportProtocol::OpenVpnStunnel),
+        "shadowsocks2022" => Ok(TransportProtocol::Shadowsocks2022),
+        "stealth" => Ok(TransportProtocol::Stealth),
+        "vless_xtls_reality" => Ok(TransportProtocol::VlessXtlsReality),
+        "wire_guard" => Ok(TransportProtocol::WireGuard),
+        _ => Err(ClientIssue {
+            code: "invalid_protocol".to_owned(),
+            message: "choose a protocol offered by this server".to_owned(),
+            retryable: false,
+        }),
+    }
 }
 
 #[tauri::command]

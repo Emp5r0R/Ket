@@ -6,13 +6,14 @@ import type {
   DesktopState,
   EnrollmentInput,
 } from "../types";
+import type { ProtocolId } from "./protocols";
 
 type SnapshotListener = (snapshot: ClientSnapshot) => void;
 
 export interface DesktopBridge {
   state(): Promise<DesktopState>;
   enroll(input: EnrollmentInput): Promise<ClientSnapshot>;
-  connect(): Promise<ClientSnapshot>;
+  connect(preferredProtocol: ProtocolId | null): Promise<ClientSnapshot>;
   stop(): Promise<ClientSnapshot>;
   refresh(): Promise<ClientSnapshot>;
   forget(): Promise<ClientSnapshot>;
@@ -27,7 +28,7 @@ const tauriBridge: DesktopBridge = {
       accessCode: input.accessCode,
       deviceName: input.deviceName,
     }),
-  connect: () => invoke<ClientSnapshot>("connect"),
+  connect: (preferredProtocol) => invoke<ClientSnapshot>("connect", { preferredProtocol }),
   stop: () => invoke<ClientSnapshot>("stop_tunnel"),
   refresh: () => invoke<ClientSnapshot>("refresh"),
   forget: () => invoke<ClientSnapshot>("forget"),
@@ -37,8 +38,23 @@ const tauriBridge: DesktopBridge = {
 
 const now = () => Math.floor(Date.now() / 1000);
 
-function demoSnapshot(phase: ClientSnapshot["phase"]): ClientSnapshot {
+const demoTransports: ClientSnapshot["available_transports"] = [
+  { id: "xhttp-primary", display_name: "HTTPS Stealth", protocol: "stealth", network: "tcp" },
+  { id: "wg-primary", display_name: "WireGuard TLS", protocol: "wire_guard", network: "tcp" },
+  { id: "hy2-primary", display_name: "Hysteria 2", protocol: "hysteria2", network: "udp" },
+  { id: "reality-primary", display_name: "VLESS + REALITY", protocol: "vless_xtls_reality", network: "tcp" },
+  { id: "ss-primary", display_name: "Shadowsocks 2022", protocol: "shadowsocks2022", network: "tcp_and_udp" },
+  { id: "ovpn-primary", display_name: "OpenVPN TLS", protocol: "open_vpn_stunnel", network: "tcp" },
+];
+
+function demoSnapshot(
+  phase: ClientSnapshot["phase"],
+  preferredProtocol: ProtocolId | null = null,
+): ClientSnapshot {
   const connected = phase === "connected";
+  const activeTransport = demoTransports.find(
+    (transport) => transport.protocol === (preferredProtocol ?? "hysteria2"),
+  ) ?? demoTransports[0];
   return {
     phase,
     node: phase === "disconnected" ? null : {
@@ -62,9 +78,9 @@ function demoSnapshot(phase: ClientSnapshot["phase"]): ClientSnapshot {
       uptime_seconds: 1_247_820,
       observed_at_epoch_seconds: now(),
     },
-    active_transport: connected
-      ? { id: "hy2-primary", display_name: "Hysteria 2", protocol: "hysteria2", network: "udp" }
-      : null,
+    available_transports: phase === "disconnected" ? [] : demoTransports,
+    preferred_protocol: preferredProtocol,
+    active_transport: connected ? activeTransport : null,
     traffic: connected
       ? {
           available: true,
@@ -112,8 +128,8 @@ function mockBridge(): DesktopBridge {
       configured = true;
       return publish(demoSnapshot("enrolled"));
     },
-    connect: async () => publish(demoSnapshot("connected")),
-    stop: async () => publish(demoSnapshot("enrolled")),
+    connect: async (preferredProtocol) => publish(demoSnapshot("connected", preferredProtocol)),
+    stop: async () => publish(demoSnapshot("enrolled", snapshot.preferred_protocol)),
     refresh: async () => {
       if (snapshot.traffic) {
         snapshot = {
