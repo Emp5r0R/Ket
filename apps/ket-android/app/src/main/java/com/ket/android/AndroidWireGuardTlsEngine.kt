@@ -82,7 +82,7 @@ internal class AndroidWireGuardTlsEngine(
                     configFile?.delete()
                     configFile = null
                     return AndroidEngineStarted(
-                        socksPort,
+                        AndroidEngineRoute.Socks(socksPort),
                         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
                         resolvedEndpoint,
                     )

@@ -44,6 +44,13 @@ for abi in armeabi-v7a arm64-v8a x86 x86_64; do
       exit 1
     fi
   done
+  for library in libopenvpn.so libovpnexec.so; do
+    entry="lib/$abi/$library"
+    if ! unzip -Z1 "$apk" "$entry" | grep -Fxq "$entry"; then
+      printf 'APK is missing %s\n' "$entry" >&2
+      exit 1
+    fi
+  done
 done
 
 entry="lib/arm64-v8a/libwstunnel.so"
@@ -99,4 +106,4 @@ if [[ -n "$apksigner" ]]; then
   fi
 fi
 
-printf 'Validated Android Hysteria payloads for four ABIs, Shadowsocks/Xray payloads for arm64-v8a and x86_64, and wstunnel for arm64-v8a.\n'
+printf 'Validated Android Hysteria and OpenVPN payloads for four ABIs, Shadowsocks/Xray payloads for arm64-v8a and x86_64, and wstunnel for arm64-v8a.\n'

@@ -12,6 +12,9 @@ internal class FailClosedVpnRouteGuard<T : AutoCloseable> : AutoCloseable {
     }
 
     @Synchronized
+    fun isActive(): Boolean = active != null
+
+    @Synchronized
     override fun close() {
         val previous = active
         active = null

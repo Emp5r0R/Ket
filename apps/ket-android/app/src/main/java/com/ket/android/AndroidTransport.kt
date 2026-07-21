@@ -34,6 +34,7 @@ internal object AndroidTransportSelector {
                     "stealth" -> add(StealthTransport.parse(candidate))
                     "vless_xtls_reality" -> add(RealityTransport.parse(candidate))
                     "wire_guard" -> add(WireGuardTlsTransport.parse(candidate))
+                    "open_vpn_stunnel" -> add(OpenVpnStunnelTransport.parse(candidate))
                 }
             }
         }.sortedWith(compareBy(AndroidTransport::priority, AndroidTransport::id))

@@ -8,15 +8,21 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 internal data class AndroidEngineStarted(
-    val socksPort: Int,
+    val route: AndroidEngineRoute,
     val handshakeLatencyMs: Long,
     val bypassAddress: InetAddress?,
 )
+
+internal sealed interface AndroidEngineRoute {
+    data class Socks(val port: Int) : AndroidEngineRoute
+    data object NativeTun : AndroidEngineRoute
+}
 
 internal interface AndroidTransportEngine : AutoCloseable {
     val displayName: String
     fun start(cancelled: () -> Boolean = { false }): AndroidEngineStarted
     fun isAlive(): Boolean
+    fun trafficStats(): LongArray? = null
 }
 
 internal fun ensureEngineStartActive(cancelled: () -> Boolean) {
