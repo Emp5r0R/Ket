@@ -106,9 +106,11 @@ verify_installation() {
     [[ $(stat -c '%U:%G:%a' "/${payload}") == root:root:755 ]] || fail "invalid payload ownership or mode: /${payload}"
   done
   id -nG "${test_user}" | tr ' ' '\n' | grep -qx ket || fail "test user was not added to the ket group"
-  if ldd /usr/bin/ket-desktop | grep -q 'not found'; then
-    fail "desktop executable has unresolved shared libraries"
-  fi
+  for payload in "${required_payloads[@]}"; do
+    if ldd "/${payload}" 2>&1 | grep -q 'not found'; then
+      fail "executable has unresolved shared libraries: /${payload}"
+    fi
+  done
   /usr/libexec/ket/hysteria version >/dev/null
   /usr/libexec/ket/openvpn --version >/dev/null
   /usr/libexec/ket/sslocal --version >/dev/null

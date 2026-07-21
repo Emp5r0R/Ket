@@ -14,17 +14,21 @@ RUN apt-get update \
     && apt-get install --no-install-recommends --yes \
       curl \
       file \
+      build-essential \
       libayatana-appindicator3-dev \
+      libcap-ng-dev \
       librsvg2-dev \
       libssl-dev \
       libwebkit2gtk-4.1-dev \
       libxdo-dev \
       patchelf \
+      pkg-config \
       unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /source
 COPY Cargo.toml Cargo.lock ./
+COPY THIRD_PARTY_NOTICES.md ./
 COPY crates ./crates
 COPY vendor ./vendor
 COPY apps/ket-desktop ./apps/ket-desktop
@@ -34,10 +38,16 @@ RUN npm --prefix apps/ket-desktop ci
 RUN cargo build --locked --release --package ket-tunnel-service
 RUN packaging/fetch-hysteria.sh "linux-${TARGETARCH}" \
     apps/ket-desktop/src-tauri/binaries/hysteria
+RUN packaging/fetch-openvpn.sh "linux-${TARGETARCH}" \
+    apps/ket-desktop/src-tauri/binaries/openvpn
 RUN packaging/fetch-shadowsocks.sh "linux-${TARGETARCH}" \
     apps/ket-desktop/src-tauri/binaries/sslocal
+RUN packaging/fetch-stunnel.sh "linux-${TARGETARCH}" \
+    apps/ket-desktop/src-tauri/binaries/stunnel
 RUN packaging/fetch-xray.sh "linux-${TARGETARCH}" \
     apps/ket-desktop/src-tauri/binaries/xray
+RUN packaging/fetch-wstunnel.sh "linux-${TARGETARCH}" \
+    apps/ket-desktop/src-tauri/binaries/wstunnel
 RUN packaging/fetch-tun2proxy.sh "linux-${TARGETARCH}" \
     apps/ket-desktop/src-tauri/binaries/tun2proxy
 RUN packaging/validate-desktop-assets.sh linux
