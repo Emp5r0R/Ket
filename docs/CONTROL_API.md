@@ -49,6 +49,8 @@ A Shadowsocks 2022 profile uses `protocol=shadowsocks2022`, `network=tcp_and_udp
 
 A WireGuard TLS profile uses `protocol=wire_guard`, `network=tcp`, and a certificate-verified TLS server name. `credential.auth` is a standard-base64 32-byte client private key; `credential.secrets` contains only `preshared_key` and `server_public_key`, both standard-base64 32-byte WireGuard keys. The exact options are `address_allocation=lease_slot`, `allowed_ips=0.0.0.0/0`, `keepalive_seconds=25`, `mtu=1280`, `transport=websocket_tls`, `client_address`, `path_prefix`, and the manager-restricted `remote_address`. Unknown fields, malformed keys or addresses, unsafe paths, extra secrets, TLS downgrades, and route changes fail closed on desktop and Android.
 
+An OpenVPN/stunnel profile uses `protocol=open_vpn_stunnel`, `network=tcp`, and a certificate-verified TLS server name. `credential.auth` is the 44-character scoped OpenVPN password. Its secret keys are exactly `username`, `ca_certificate_pem_b64`, `stunnel_ca_certificate_pem_b64`, and `tls_crypt_key_b64`; the username must equal the public 12-character prefix of the scoped password. The exact options are `auth_mode=session_token`, `cipher=aes_256_gcm`, `remote_cert_tls=server`, `tls_crypt=v1`, `tls_minimum=1.2`, and `transport=stunnel_tls`. Linux/Windows reject unknown fields, malformed key envelopes, extra secrets, certificate identity mismatches, and downgrade-shaped values. Android currently skips this unsupported profile and continues ranked fallback.
+
 ## Session endpoints
 
 | Method | Path | Purpose |
@@ -82,7 +84,11 @@ The plaintext `access_code` is available only in the creation response. Store it
 
 `POST /internal/v1/hysteria2/auth` implements Hysteria2's HTTP authentication contract. It always returns HTTP `200` with `{"ok":true,"id":"session-id"}` or `{"ok":false,"id":""}`. The protocol container reaches it over the private Compose network. It is not a client API, and an ingress or reverse proxy must reject the entire `/internal/` namespace.
 
+`POST /internal/v1/openvpn/auth` accepts OpenVPN's scoped username/password pair only from the auth helper. It additionally requires the independent `KET_OPENVPN_AUTH_TOKEN` bearer and returns `204` on success or `401` on rejection. The username must match the token's session prefix; release, expiry, and revocation reject it immediately.
+
 The WireGuard agent exposes its own bearer-authenticated `/healthz` and `/v1/peers` manager API only on the dedicated private Compose network. It is not part of the public control API and must never be routed by cloudflared or a reverse proxy.
+
+The OpenVPN agent similarly exposes bearer-authenticated `/healthz`, `GET /v1/sessions`, `PUT /v1/sessions/reconcile`, and `POST /v1/sessions/remove` endpoints only on `openvpn-control`. They wrap a Unix OpenVPN management socket and must never be publicly routed.
 
 The batch request uses `label_prefix`, `count`, `max_connections`, and optional `expires_at_epoch_seconds`. Labels receive `-1` through `-N` suffixes. Each response contains a distinct 32-character code, returned only once and never persisted in plaintext.
 

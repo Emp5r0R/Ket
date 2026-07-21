@@ -1,6 +1,6 @@
 # Privileged tunnel service
 
-Ket keeps the desktop UI and control-plane client unprivileged. A small system service owns the selected Hysteria2, Xray, Shadowsocks, or Xray-plus-wstunnel process group together with `tun2proxy`, the TUN device, DNS setup, and route changes. The desktop reaches it only through `127.0.0.1:39731`.
+Ket keeps the desktop UI and control-plane client unprivileged. A small system service owns the selected Hysteria2, Xray, Shadowsocks, Xray-plus-wstunnel, or OpenVPN-plus-stunnel process group together with the required TUN, DNS, and route changes. The desktop reaches it only through `127.0.0.1:39731`.
 
 ## Trust boundary
 
@@ -10,19 +10,21 @@ Ket keeps the desktop UI and control-plane client unprivileged. A small system s
 - The service permits one full-route tunnel at a time. A desktop heartbeat renews a 12-second lease; a crashed client therefore cannot leave routing under an unmanaged process indefinitely.
 - Tunnel IDs, HMAC proofs, access codes, and transport credentials use redacted debug implementations. The broker token is never sent over the socket.
 - The selected engine receives an ephemeral `0600` configuration under the service runtime directory. Ket removes that file after engine and bridge readiness and disables Hysteria update checks.
-- All implemented transports expose only an unauthenticated loopback SOCKS endpoint to the same supervised bridge. The bridge requires virtual DNS, captures IPv4 and IPv6, and bypasses every pre-resolved data-plane or CDN IP.
+- SOCKS-backed transports expose only an unauthenticated loopback endpoint to the same supervised bridge. OpenVPN instead owns its native TUN behind a loopback-only stunnel carrier and a password-protected management endpoint. Both paths bypass every pre-resolved data-plane or CDN IP.
 
-The token authenticates a local desktop installation; it does not elevate arbitrary requests. The service exposes a fixed command set and validates the server transport description before it starts Hysteria, Xray, `sslocal`, or wstunnel. Administrators and root remain trusted by the operating-system security model.
+The token authenticates a local desktop installation; it does not elevate arbitrary requests. The service exposes a fixed command set and validates the server transport description before it starts Hysteria, Xray, `sslocal`, wstunnel, OpenVPN, or stunnel. Administrators and root remain trusted by the operating-system security model.
 
 ## Linux installation
 
-Build `ket-tunnel-service`, obtain the pinned Hysteria, Shadowsocks, Xray, wstunnel, and `tun2proxy` executables for the target architecture, then run:
+Build `ket-tunnel-service`, obtain the pinned Hysteria, OpenVPN, Shadowsocks, stunnel, Xray, wstunnel, and `tun2proxy` executables for the target architecture, then run:
 
 ```bash
 sudo packaging/linux/install-tunnel-service.sh \
   target/release/ket-tunnel-service \
   /path/to/hysteria \
+  /path/to/openvpn \
   /path/to/sslocal \
+  /path/to/stunnel \
   /path/to/xray \
   /path/to/wstunnel \
   /path/to/tun2proxy \
@@ -42,7 +44,9 @@ Build the service for Windows and run an elevated PowerShell session:
   -InstallDir "$env:ProgramFiles\Ket" `
   -ServiceBinary .\ket-tunnel-service.exe `
   -HysteriaBinary .\hysteria.exe `
+  -OpenVpnBinary .\openvpn\openvpn.exe `
   -ShadowsocksBinary .\sslocal.exe `
+  -StunnelBinary .\stunnel\stunnel.exe `
   -XrayBinary .\xray.exe `
   -WstunnelBinary .\wstunnel.exe `
   -Tun2ProxyBinary .\tun2proxy.exe `
@@ -62,7 +66,9 @@ Development builds accept these process environment variables on both sides of t
 | `KET_BROKER_ADDRESS` | `127.0.0.1:39731` | Loopback broker address |
 | `KET_BROKER_TOKEN_FILE` | `/etc/ket/tunnel.token` or `%ProgramData%\Ket\tunnel.token` | Installation token |
 | `KET_HYSTERIA_BINARY` | `/usr/libexec/ket/hysteria` or `%ProgramFiles%\Ket\hysteria.exe` | Managed Hysteria engine |
+| `KET_OPENVPN_BINARY` | `/usr/libexec/ket/openvpn` or `%ProgramFiles%\Ket\openvpn\openvpn.exe` | Managed OpenVPN engine |
 | `KET_SHADOWSOCKS_BINARY` | `/usr/libexec/ket/sslocal` or `%ProgramFiles%\Ket\sslocal.exe` | Managed Shadowsocks engine |
+| `KET_STUNNEL_BINARY` | `/usr/libexec/ket/stunnel` or `%ProgramFiles%\Ket\stunnel\stunnel.exe` | Managed OpenVPN TLS carrier |
 | `KET_WSTUNNEL_BINARY` | `/usr/libexec/ket/wstunnel` or `%ProgramFiles%\Ket\wstunnel.exe` | Managed WireGuard TLS carrier |
 | `KET_XRAY_BINARY` | `/usr/libexec/ket/xray` or `%ProgramFiles%\Ket\xray.exe` | Managed Xray engine |
 | `KET_TUN2PROXY_BINARY` | `/usr/libexec/ket/tun2proxy` or `%ProgramFiles%\Ket\tun2proxy.exe` | Managed full-route bridge |

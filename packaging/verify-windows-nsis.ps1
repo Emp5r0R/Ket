@@ -42,7 +42,19 @@ $RequiredFiles = @(
     (Join-Path $InstallDir "ket-desktop.exe"),
     (Join-Path $InstallDir "ket-tunnel-service.exe"),
     (Join-Path $InstallDir "hysteria.exe"),
+    (Join-Path $InstallDir "openvpn\openvpn.exe"),
+    (Join-Path $InstallDir "openvpn\libcrypto_3_x64.dll"),
+    (Join-Path $InstallDir "openvpn\libssl_3_x64.dll"),
+    (Join-Path $InstallDir "openvpn\libpkcs11_helper_1.dll"),
+    (Join-Path $InstallDir "openvpn\legacy.dll"),
+    (Join-Path $InstallDir "openvpn\vcruntime140.dll"),
+    (Join-Path $InstallDir "openvpn\wintun.dll"),
     (Join-Path $InstallDir "sslocal.exe"),
+    (Join-Path $InstallDir "stunnel\stunnel.exe"),
+    (Join-Path $InstallDir "stunnel\libssp-0.dll"),
+    (Join-Path $InstallDir "stunnel\libcrypto-3-x64.dll"),
+    (Join-Path $InstallDir "stunnel\libssl-3-x64.dll"),
+    (Join-Path $InstallDir "stunnel\ossl-modules\legacy.dll"),
     (Join-Path $InstallDir "xray.exe"),
     (Join-Path $InstallDir "wstunnel.exe"),
     (Join-Path $InstallDir "tun2proxy.exe"),
@@ -237,7 +249,16 @@ function Assert-KetInstallation {
     Assert-TokenAcl
 
     Invoke-CheckedNative (Join-Path $InstallDir "hysteria.exe") @("version")
+    Invoke-CheckedNative (Join-Path $InstallDir "openvpn\openvpn.exe") @("--version")
     Invoke-CheckedNative (Join-Path $InstallDir "sslocal.exe") @("--version")
+    $PreviousOpenSslModules = $env:OPENSSL_MODULES
+    $env:OPENSSL_MODULES = Join-Path $InstallDir "stunnel\ossl-modules"
+    try {
+        Invoke-CheckedNative (Join-Path $InstallDir "stunnel\stunnel.exe") @("-version")
+    }
+    finally {
+        $env:OPENSSL_MODULES = $PreviousOpenSslModules
+    }
     Invoke-CheckedNative (Join-Path $InstallDir "xray.exe") @("version")
     Invoke-CheckedNative (Join-Path $InstallDir "tun2proxy.exe") @("--version")
 

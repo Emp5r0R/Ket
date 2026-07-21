@@ -16,18 +16,18 @@
 
 The privileged service delegates protocol logic to maintained upstream engines. The desktop process uses `BrokerTransportAdapter`, which authenticates to that service over loopback and never launches engines directly.
 
-Hysteria2 uses its official UDP-capable [SOCKS5 mode](https://v2.hysteria.network/docs/advanced/Full-Client-Config/#socks5). VLESS + REALITY and HTTPS Stealth use strict Xray-core loopback SOCKS configurations; Stealth selects XHTTP `packet-up` with browser-fingerprinted, certificate-verified TLS. Shadowsocks 2022 uses the official shadowsocks-rust `sslocal` in TCP+UDP SOCKS mode with a strict SIP022 profile. WireGuard TLS uses Xray's userspace WireGuard outbound connected to a loopback UDP wstunnel client with pinned public SNI, certificate verification, Host header, and WebSocket path. All upstream engines feed one shared, pinned `tun2proxy` lifecycle for full-route TUN and [virtual-DNS](https://github.com/tun2proxy/tun2proxy#manual-setup) ownership. Ket does not reimplement QUIC, REALITY, XHTTP, Shadowsocks, WireGuard, WebSocket, proxy translation, or their cryptography.
+Hysteria2 uses its official UDP-capable [SOCKS5 mode](https://v2.hysteria.network/docs/advanced/Full-Client-Config/#socks5). VLESS + REALITY and HTTPS Stealth use strict Xray-core loopback SOCKS configurations; Stealth selects XHTTP `packet-up` with browser-fingerprinted, certificate-verified TLS. Shadowsocks 2022 uses the official shadowsocks-rust `sslocal` in TCP+UDP SOCKS mode with a strict SIP022 profile. WireGuard TLS uses Xray's userspace WireGuard outbound connected to a loopback UDP wstunnel client with pinned public SNI, certificate verification, Host header, and WebSocket path. Those engines feed one shared, pinned `tun2proxy` lifecycle for full-route TUN and [virtual-DNS](https://github.com/tun2proxy/tun2proxy#manual-setup) ownership. OpenVPN uses its native full-route TUN behind a loopback stunnel carrier, with independent certificate verification at both layers and a password-protected management channel for readiness. Ket does not reimplement any tunnel protocol or its cryptography.
 
 - TLS verification is mandatory and uses the server-provided SNI.
 - Each adapter resolves the server before route setup, pins the engine to the selected IP, and excludes every resolved server IP from full IPv4/IPv6 routes, preventing both a routing loop and data-plane DNS outside the tunnel.
 - The bridge runs with automated system setup and virtual DNS. Hostname queries are intercepted inside the TUN and delivered to the selected SOCKS engine as names for remote resolution instead of being forwarded to a local or LAN resolver.
 - Only known transport options are accepted. Unknown fields, missing credentials, invalid Gecko bounds, invalid REALITY or SIP022 keys, unsafe XHTTP paths, unsupported flows/modes, extra secrets, and downgrade-shaped fields fail closed.
 - BBR defaults are preserved; the client does not invent unsafe bandwidth values.
-- Configuration files are created in a private directory with mode `0600` on Unix, zeroed in the writer buffer, and removed after both engine and full-route bridge readiness are observed.
+- Configuration files are created in a private directory with mode `0600` on Unix, zeroed in the writer buffer, and removed after the complete process group and route are ready.
 - Raw engine output is discarded after extracting an allowlisted diagnostic category, preventing share URIs or credentials from entering app logs.
 - The child process is supervised and killed on explicit disconnect, terminal failure, service shutdown, or desktop heartbeat expiry.
 
-The desktop package bundles verified Hysteria, Xray, `sslocal`, wstunnel, and `tun2proxy` binaries with the service installer. The GUI deliberately does not self-elevate. The SOCKS/TUN bridge carries TCP and UDP, not arbitrary IP protocols such as ICMP; UI diagnostics must state that limitation accurately.
+The desktop package bundles verified Hysteria, Xray, `sslocal`, wstunnel, OpenVPN, stunnel, and `tun2proxy` binaries with the service installer. The GUI deliberately does not self-elevate. The SOCKS-backed transports carry TCP and UDP rather than arbitrary IP protocols such as ICMP; OpenVPN owns a native IP TUN instead.
 
 ## Integration sketch
 

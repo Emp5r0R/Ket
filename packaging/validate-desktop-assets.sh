@@ -13,7 +13,9 @@ notice="$repo_root/THIRD_PARTY_NOTICES.md"
 case "$platform" in
   linux)
     engine="$repo_root/apps/ket-desktop/src-tauri/binaries/hysteria"
+    openvpn="$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn"
     shadowsocks="$repo_root/apps/ket-desktop/src-tauri/binaries/sslocal"
+    stunnel="$repo_root/apps/ket-desktop/src-tauri/binaries/stunnel"
     xray="$repo_root/apps/ket-desktop/src-tauri/binaries/xray"
     wstunnel="$repo_root/apps/ket-desktop/src-tauri/binaries/wstunnel"
     bridge="$repo_root/apps/ket-desktop/src-tauri/binaries/tun2proxy"
@@ -21,7 +23,9 @@ case "$platform" in
     ;;
   windows)
     engine="$repo_root/apps/ket-desktop/src-tauri/binaries/hysteria.exe"
+    openvpn="$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/openvpn.exe"
     shadowsocks="$repo_root/apps/ket-desktop/src-tauri/binaries/sslocal.exe"
+    stunnel="$repo_root/apps/ket-desktop/src-tauri/binaries/stunnel/stunnel.exe"
     xray="$repo_root/apps/ket-desktop/src-tauri/binaries/xray.exe"
     wstunnel="$repo_root/apps/ket-desktop/src-tauri/binaries/wstunnel.exe"
     bridge="$repo_root/apps/ket-desktop/src-tauri/binaries/tun2proxy.exe"
@@ -36,7 +40,7 @@ case "$platform" in
     ;;
 esac
 
-for asset in "$engine" "$shadowsocks" "$xray" "$wstunnel" "$bridge" "$service"; do
+for asset in "$engine" "$openvpn" "$shadowsocks" "$stunnel" "$xray" "$wstunnel" "$bridge" "$service"; do
   if [[ ! -f "$asset" ]]; then
     printf 'Missing desktop bundle asset: %s\n' "$asset" >&2
     exit 1
@@ -48,7 +52,19 @@ for asset in "$engine" "$shadowsocks" "$xray" "$wstunnel" "$bridge" "$service"; 
 done
 
 if [[ "$platform" == windows ]]; then
-  for asset in "$wintun" "$installer" "$hooks"; do
+  windows_dependencies=(
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/libcrypto_3_x64.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/libssl_3_x64.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/libpkcs11_helper_1.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/legacy.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/vcruntime140.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/wintun.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/stunnel/libssp-0.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/stunnel/libcrypto-3-x64.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/stunnel/libssl-3-x64.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/stunnel/ossl-modules/legacy.dll"
+  )
+  for asset in "$wintun" "$installer" "$hooks" "${windows_dependencies[@]}"; do
     if [[ ! -s "$asset" ]]; then
       printf 'Missing Windows installer asset: %s\n' "$asset" >&2
       exit 1
@@ -57,7 +73,7 @@ if [[ "$platform" == windows ]]; then
 fi
 
 if [[ "$platform" == linux ]]; then
-  for asset in "$service" "$engine" "$shadowsocks" "$xray" "$wstunnel" "$bridge"; do
+  for asset in "$service" "$engine" "$openvpn" "$shadowsocks" "$stunnel" "$xray" "$wstunnel" "$bridge"; do
     if [[ ! -x "$asset" ]]; then
       printf 'Linux tunnel asset is not executable: %s\n' "$asset" >&2
       exit 1

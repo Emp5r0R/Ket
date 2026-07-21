@@ -208,6 +208,38 @@ pub(crate) async fn wait_until_three_stable(
     }
 }
 
+pub(crate) async fn wait_until_pair_stable(
+    engine: &mut Child,
+    engine_name: &str,
+    carrier: &mut Child,
+    carrier_name: &str,
+    settle_time: Duration,
+    transport_id: &str,
+) -> Result<(), ClientError> {
+    let deadline = tokio::time::Instant::now() + settle_time;
+    loop {
+        for (child, name) in [(&mut *engine, engine_name), (&mut *carrier, carrier_name)] {
+            if child
+                .try_wait()
+                .map_err(|_| {
+                    ClientError::transport(transport_id, format!("failed to inspect {name}"), false)
+                })?
+                .is_some()
+            {
+                return Err(ClientError::transport(
+                    transport_id,
+                    format!("{name} stopped while enabling the tunnel"),
+                    true,
+                ));
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
 pub(crate) async fn stop_child(child: &mut Child) {
     let _ = child.start_kill();
     let _ = child.wait().await;
@@ -254,6 +286,32 @@ pub(crate) fn supervise_with_carrier(
         carrier_name,
         carrier,
         bridge,
+        command_rx,
+        status_tx,
+    ));
+    Arc::new(FullRouteTunnel {
+        transport_id,
+        command_tx,
+        status_rx,
+        stop_timeout,
+    })
+}
+
+pub(crate) fn supervise_pair(
+    transport_id: String,
+    engine_name: &'static str,
+    engine: Child,
+    carrier_name: &'static str,
+    carrier: Child,
+    stop_timeout: Duration,
+) -> Arc<dyn ActiveTunnel> {
+    let (command_tx, command_rx) = mpsc::channel(1);
+    let (status_tx, status_rx) = watch::channel(TunnelStatus::Connected);
+    tokio::spawn(supervise_two_processes(
+        engine_name,
+        engine,
+        carrier_name,
+        carrier,
         command_rx,
         status_tx,
     ));
@@ -342,6 +400,39 @@ async fn supervise_three_processes(
             stop_child(&mut bridge).await;
             stop_child(&mut carrier).await;
             stop_child(&mut engine).await;
+            status.send_replace(TunnelStatus::Stopped);
+        }
+    }
+}
+
+async fn supervise_two_processes(
+    engine_name: &'static str,
+    mut engine: Child,
+    carrier_name: &'static str,
+    mut carrier: Child,
+    mut commands: mpsc::Receiver<ProcessCommand>,
+    status: watch::Sender<TunnelStatus>,
+) {
+    tokio::select! {
+        result = engine.wait() => {
+            stop_child(&mut carrier).await;
+            let message = result.map_or_else(
+                |_| format!("failed to wait for {engine_name}"),
+                |exit| format!("{engine_name} exited unexpectedly ({exit})"),
+            );
+            status.send_replace(TunnelStatus::Failed(message));
+        }
+        result = carrier.wait() => {
+            stop_child(&mut engine).await;
+            let message = result.map_or_else(
+                |_| format!("failed to wait for {carrier_name}"),
+                |exit| format!("{carrier_name} exited unexpectedly ({exit})"),
+            );
+            status.send_replace(TunnelStatus::Failed(message));
+        }
+        _ = commands.recv() => {
+            stop_child(&mut engine).await;
+            stop_child(&mut carrier).await;
             status.send_replace(TunnelStatus::Stopped);
         }
     }

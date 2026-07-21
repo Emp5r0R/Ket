@@ -10,8 +10,11 @@ install -d -o root -g ket -m 0750 /etc/ket
 chmod 0755 \
   /usr/libexec/ket/ket-tunnel-service \
   /usr/libexec/ket/hysteria \
+  /usr/libexec/ket/openvpn \
   /usr/libexec/ket/sslocal \
+  /usr/libexec/ket/stunnel \
   /usr/libexec/ket/xray \
+  /usr/libexec/ket/wstunnel \
   /usr/libexec/ket/tun2proxy
 chmod 0644 /usr/lib/systemd/system/ket-tunnel.service
 

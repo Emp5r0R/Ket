@@ -2,11 +2,11 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: sudo %s <ket-tunnel-service> <hysteria> <sslocal> <xray> <wstunnel> <tun2proxy> [desktop-user]\n' "$0" >&2
+  printf 'Usage: sudo %s <ket-tunnel-service> <hysteria> <openvpn> <sslocal> <stunnel> <xray> <wstunnel> <tun2proxy> [desktop-user]\n' "$0" >&2
   exit 2
 }
 
-[[ $# -ge 6 && $# -le 7 ]] || usage
+[[ $# -ge 8 && $# -le 9 ]] || usage
 [[ ${EUID} -eq 0 ]] || {
   printf 'This installer must run as root.\n' >&2
   exit 1
@@ -14,11 +14,13 @@ usage() {
 
 service_source=$1
 engine_source=$2
-shadowsocks_source=$3
-xray_source=$4
-wstunnel_source=$5
-bridge_source=$6
-desktop_user=${7:-${SUDO_USER:-}}
+openvpn_source=$3
+shadowsocks_source=$4
+stunnel_source=$5
+xray_source=$6
+wstunnel_source=$7
+bridge_source=$8
+desktop_user=${9:-${SUDO_USER:-}}
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 notice_source=${script_dir}/../../THIRD_PARTY_NOTICES.md
 
@@ -30,8 +32,16 @@ notice_source=${script_dir}/../../THIRD_PARTY_NOTICES.md
   printf 'Hysteria is not an executable file: %s\n' "${engine_source}" >&2
   exit 1
 }
+[[ -f ${openvpn_source} && -x ${openvpn_source} ]] || {
+  printf 'OpenVPN is not an executable file: %s\n' "${openvpn_source}" >&2
+  exit 1
+}
 [[ -f ${shadowsocks_source} && -x ${shadowsocks_source} ]] || {
   printf 'sslocal is not an executable file: %s\n' "${shadowsocks_source}" >&2
+  exit 1
+}
+[[ -f ${stunnel_source} && -x ${stunnel_source} ]] || {
+  printf 'stunnel is not an executable file: %s\n' "${stunnel_source}" >&2
   exit 1
 }
 [[ -f ${xray_source} && -x ${xray_source} ]] || {
@@ -72,7 +82,9 @@ install -d -o root -g root -m 0755 /usr/share/doc/ket
 install -d -o root -g ket -m 0750 /etc/ket
 install -o root -g root -m 0755 "${service_source}" /usr/libexec/ket/ket-tunnel-service
 install -o root -g root -m 0755 "${engine_source}" /usr/libexec/ket/hysteria
+install -o root -g root -m 0755 "${openvpn_source}" /usr/libexec/ket/openvpn
 install -o root -g root -m 0755 "${shadowsocks_source}" /usr/libexec/ket/sslocal
+install -o root -g root -m 0755 "${stunnel_source}" /usr/libexec/ket/stunnel
 install -o root -g root -m 0755 "${xray_source}" /usr/libexec/ket/xray
 install -o root -g root -m 0755 "${wstunnel_source}" /usr/libexec/ket/wstunnel
 install -o root -g root -m 0755 "${bridge_source}" /usr/libexec/ket/tun2proxy

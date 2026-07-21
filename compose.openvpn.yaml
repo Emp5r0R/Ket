@@ -1,0 +1,89 @@
+services:
+  control-plane:
+    environment:
+      KET_OPENVPN_MANAGER_URL: http://openvpn-agent:8789
+      KET_OPENVPN_CA_CERT_PATH: /etc/openvpn/pki/ca.crt
+      KET_OPENVPN_STUNNEL_CA_CERT_PATH: /etc/openvpn/pki/stunnel-ca.crt
+      KET_OPENVPN_TLS_CRYPT_KEY_PATH: /etc/openvpn/pki/tls-crypt.key
+    volumes:
+      - "${KET_OPENVPN_PKI_DIR:-./secrets/openvpn}/ca.crt:/etc/openvpn/pki/ca.crt:ro"
+      - "${KET_OPENVPN_PKI_DIR:-./secrets/openvpn}/stunnel-ca.crt:/etc/openvpn/pki/stunnel-ca.crt:ro"
+      - "${KET_OPENVPN_PKI_DIR:-./secrets/openvpn}/tls-crypt.key:/etc/openvpn/pki/tls-crypt.key:ro"
+    networks:
+      - default
+      - openvpn-control
+    depends_on:
+      openvpn-agent:
+        condition: service_healthy
+        restart: true
+
+  openvpn-agent:
+    image: ket-control-plane:local
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/ket-openvpn-agent"]
+    env_file:
+      - .env
+    environment:
+      KET_OPENVPN_AGENT_BIND: 0.0.0.0:8789
+      KET_OPENVPN_AUTH_URL: http://control-plane:8787/internal/v1/openvpn/auth
+      KET_OPENVPN_EGRESS_INTERFACE: eth0
+      KET_OPENVPN_MAX_CLIENTS: ${KET_MAX_SESSIONS:-1000}
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    restart: unless-stopped
+    networks:
+      - openvpn-control
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /run:size=8m,mode=0755
+    volumes:
+      - "${KET_OPENVPN_PKI_DIR:-./secrets/openvpn}/ca.crt:/etc/openvpn/pki/ca.crt:ro"
+      - "${KET_OPENVPN_PKI_DIR:-./secrets/openvpn}/server.crt:/etc/openvpn/pki/server.crt:ro"
+      - "${KET_OPENVPN_PKI_DIR:-./secrets/openvpn}/server.key:/etc/openvpn/pki/server.key:ro"
+      - "${KET_OPENVPN_PKI_DIR:-./secrets/openvpn}/tls-crypt.key:/etc/openvpn/pki/tls-crypt.key:ro"
+    security_opt:
+      - no-new-privileges:true
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'curl --fail --silent --show-error -H "Authorization: Bearer $$KET_OPENVPN_MANAGER_TOKEN" http://127.0.0.1:8789/healthz'
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+
+  openvpn-stunnel:
+    image: ket-control-plane:local
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/stunnel"]
+    command: ["/etc/stunnel/ket-openvpn.conf"]
+    depends_on:
+      openvpn-agent:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
+    ports:
+      - "${KET_OPENVPN_BIND_ADDRESS:-0.0.0.0}:${KET_OPENVPN_PUBLIC_PORT:-443}:8447/tcp"
+    networks:
+      - openvpn-control
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+      - /var/lib/stunnel:size=4m,mode=0755
+    volumes:
+      - "${KET_OPENVPN_STUNNEL_TLS_DIR:-./secrets/openvpn-stunnel}/fullchain.pem:/etc/stunnel/tls/fullchain.pem:ro"
+      - "${KET_OPENVPN_STUNNEL_TLS_DIR:-./secrets/openvpn-stunnel}/privkey.pem:/etc/stunnel/tls/privkey.pem:ro"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+
+networks:
+  openvpn-control:

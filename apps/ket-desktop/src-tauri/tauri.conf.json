@@ -45,7 +45,9 @@
         "files": {
           "/usr/libexec/ket/ket-tunnel-service": "../../../target/release/ket-tunnel-service",
           "/usr/libexec/ket/hysteria": "binaries/hysteria",
+          "/usr/libexec/ket/openvpn": "binaries/openvpn",
           "/usr/libexec/ket/sslocal": "binaries/sslocal",
+          "/usr/libexec/ket/stunnel": "binaries/stunnel",
           "/usr/libexec/ket/xray": "binaries/xray",
           "/usr/libexec/ket/wstunnel": "binaries/wstunnel",
           "/usr/libexec/ket/tun2proxy": "binaries/tun2proxy",

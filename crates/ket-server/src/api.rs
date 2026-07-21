@@ -14,6 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ket_core::{
     AccessGrantSummary, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
     CreateAccessGrantResponse, CreateSessionRequest, ErrorResponse, HealthState, NodeStatus,
@@ -54,7 +55,10 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: ServerConfig, access: AccessService) -> anyhow::Result<Self> {
         let data_plane = data_plane::from_config(&config)?;
-        let data_plane_ready = config.xray.is_none() && config.shadowsocks.is_none();
+        let data_plane_ready = config.xray.is_none()
+            && config.shadowsocks.is_none()
+            && config.wireguard.is_none()
+            && config.openvpn.is_none();
         Ok(Self {
             config: Arc::new(config),
             access: Arc::new(access),
@@ -115,6 +119,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/metrics", get(metrics))
         .route("/v1/node/status", get(node_status))
         .route("/internal/v1/hysteria2/auth", post(authenticate_hysteria))
+        .route("/internal/v1/openvpn/auth", post(authenticate_openvpn))
         .route(
             "/v1/admin/access-grants",
             post(create_grant).get(list_grants),
@@ -330,6 +335,50 @@ async fn authenticate_hysteria(
     }
 }
 
+#[derive(Deserialize)]
+struct OpenVpnAuthRequest {
+    username: String,
+    password: SecretString,
+}
+
+async fn authenticate_openvpn(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<OpenVpnAuthRequest>,
+) -> StatusCode {
+    let Some(config) = &state.config.openvpn else {
+        return StatusCode::NOT_FOUND;
+    };
+    let authorized = bearer_token(&headers).is_ok_and(|candidate| {
+        let expected = config.auth_token.as_bytes();
+        let candidate = candidate.as_bytes();
+        expected.len() == candidate.len() && bool::from(expected.ct_eq(candidate))
+    });
+    let session = if authorized {
+        state
+            .access
+            .authenticate_data_plane(request.password.expose_secret())
+            .await
+            .ok()
+            .filter(|session| session.id == request.username)
+    } else {
+        None
+    };
+    if session.is_some() {
+        state
+            .metrics
+            .accepted_data_plane_auth
+            .fetch_add(1, Ordering::Relaxed);
+        StatusCode::NO_CONTENT
+    } else {
+        state
+            .metrics
+            .rejected_data_plane_auth
+            .fetch_add(1, Ordering::Relaxed);
+        StatusCode::UNAUTHORIZED
+    }
+}
+
 async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     let active_sessions = state.access.active_session_count().await;
     let session_capacity = state.config.max_sessions;
@@ -366,7 +415,7 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
          # TYPE ket_session_exchange_total counter\n\
          ket_session_exchange_total{{result=\"accepted\"}} {accepted}\n\
          ket_session_exchange_total{{result=\"rejected\"}} {rejected}\n\
-         # HELP ket_data_plane_auth_total Hysteria2 authentication attempts by result.\n\
+         # HELP ket_data_plane_auth_total Data-plane authentication attempts by result.\n\
          # TYPE ket_data_plane_auth_total counter\n\
          ket_data_plane_auth_total{{result=\"accepted\"}} {accepted_data_plane}\n\
          ket_data_plane_auth_total{{result=\"rejected\"}} {rejected_data_plane}\n"
@@ -424,6 +473,32 @@ fn session_transports(state: &AppState, created: &CreatedSession) -> Vec<Session
                         .expect("validated WireGuard capacity covers every session resource slot"),
                 );
                 Some(crate::wireguard::session_credential(wireguard, &created.id))
+            } else if let Some(openvpn) = state
+                .config
+                .openvpn
+                .as_ref()
+                .filter(|config| config.transport_id == profile.id)
+            {
+                Some(TransportCredential {
+                    auth: created.data_plane_token.clone(),
+                    secrets: BTreeMap::from([
+                        (
+                            "ca_certificate_pem_b64".to_owned(),
+                            STANDARD.encode(openvpn.ca_certificate.as_bytes()).into(),
+                        ),
+                        (
+                            "stunnel_ca_certificate_pem_b64".to_owned(),
+                            STANDARD
+                                .encode(openvpn.stunnel_ca_certificate.as_bytes())
+                                .into(),
+                        ),
+                        (
+                            "tls_crypt_key_b64".to_owned(),
+                            STANDARD.encode(openvpn.tls_crypt_key.as_bytes()).into(),
+                        ),
+                        ("username".to_owned(), created.id.as_str().into()),
+                    ]),
+                })
             } else {
                 state
                     .config
@@ -650,8 +725,8 @@ mod tests {
     use super::*;
     use crate::{
         config::{
-            HysteriaConfig, HysteriaObfuscation, SHADOWSOCKS_2022_METHOD, ShadowsocksConfig,
-            WireGuardConfig, XrayConfig, XrayRealityConfig, XrayXhttpConfig,
+            HysteriaConfig, HysteriaObfuscation, OpenVpnConfig, SHADOWSOCKS_2022_METHOD,
+            ShadowsocksConfig, WireGuardConfig, XrayConfig, XrayRealityConfig, XrayXhttpConfig,
         },
         data_plane::DataPlaneError,
         model::PersistedState,
@@ -1072,6 +1147,145 @@ mod tests {
             .expect("request should complete");
         let rejected: HysteriaAuthResponse = response_json(after_release).await;
         assert!(!rejected.ok);
+    }
+
+    #[tokio::test]
+    async fn openvpn_binds_scoped_credentials_to_session_usernames() {
+        let repository = Arc::new(MemoryRepository::default());
+        let service = AccessService::load(repository.clone(), Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let state = AppState {
+            config: Arc::new(openvpn_test_config()),
+            access: Arc::new(service),
+            data_plane: Arc::new(RecordingDataPlane::default()),
+            data_plane_ready: Arc::new(AtomicBool::new(true)),
+            metrics: Arc::new(AppMetrics::default()),
+        };
+        let app = build_router(state.clone());
+
+        let grant_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({
+                    "label": "OpenVPN test",
+                    "max_connections": 1,
+                    "expires_at_epoch_seconds": null
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        let grant: CreateAccessGrantResponse = response_json(grant_response).await;
+        let session_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/sessions",
+                None,
+                serde_json::json!({
+                    "access_code": grant.access_code,
+                    "client_name": "OpenVPN client"
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        let session: SessionManifest = response_json(session_response).await;
+        let transport = session
+            .transports
+            .iter()
+            .find(|transport| transport.profile.protocol == TransportProtocol::OpenVpnStunnel)
+            .expect("OpenVPN transport");
+        let credential = transport.credential.as_ref().expect("OpenVPN credential");
+        let username = credential.secrets["username"].expose_secret();
+        assert_eq!(username, &session.session_token.expose_secret()[..12]);
+        assert_eq!(&credential.auth.expose_secret()[..12], username);
+        assert_ne!(credential.auth, session.session_token);
+        assert!(
+            String::from_utf8(
+                STANDARD
+                    .decode(credential.secrets["ca_certificate_pem_b64"].expose_secret())
+                    .expect("base64 CA")
+            )
+            .expect("UTF-8 CA")
+            .starts_with("-----BEGIN CERTIFICATE-----")
+        );
+        assert!(
+            String::from_utf8(
+                STANDARD
+                    .decode(credential.secrets["tls_crypt_key_b64"].expose_secret())
+                    .expect("base64 tls-crypt key")
+            )
+            .expect("UTF-8 tls-crypt key")
+            .starts_with("-----BEGIN OpenVPN Static key V1-----")
+        );
+        assert!(
+            !repository
+                .encoded_state()
+                .contains(credential.auth.expose_secret())
+        );
+
+        let accepted = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/internal/v1/openvpn/auth",
+                Some("test-openvpn-auth-token-with-at-least-32-characters"),
+                serde_json::json!({
+                    "username": username,
+                    "password": credential.auth
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(accepted.status(), StatusCode::NO_CONTENT);
+
+        for (bearer, username) in [
+            (
+                Some("wrong-token-with-at-least-thirty-two-characters"),
+                username,
+            ),
+            (
+                Some("test-openvpn-auth-token-with-at-least-32-characters"),
+                "Z23456789012",
+            ),
+        ] {
+            let rejected = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/internal/v1/openvpn/auth",
+                    bearer,
+                    serde_json::json!({
+                        "username": username,
+                        "password": credential.auth
+                    }),
+                ))
+                .await
+                .expect("request should complete");
+            assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        state
+            .access
+            .release_session(session.session_token.expose_secret())
+            .await
+            .expect("release should succeed");
+        let rejected = app
+            .oneshot(json_request(
+                "POST",
+                "/internal/v1/openvpn/auth",
+                Some("test-openvpn-auth-token-with-at-least-32-characters"),
+                serde_json::json!({
+                    "username": username,
+                    "password": credential.auth
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -1511,6 +1725,7 @@ mod tests {
             session_ttl: Duration::from_secs(300),
             transports: Vec::new(),
             hysteria: None,
+            openvpn: None,
             shadowsocks: None,
             wireguard: None,
             xray: None,
@@ -1546,6 +1761,50 @@ mod tests {
             options: Default::default(),
         });
         config.hysteria = Some(hysteria);
+        config
+    }
+
+    fn openvpn_test_config() -> ServerConfig {
+        let openvpn = OpenVpnConfig {
+            transport_id: "openvpn-stunnel-primary".to_owned(),
+            manager_url: "http://127.0.0.1:8789".to_owned(),
+            manager_token: "test-openvpn-manager-token-with-at-least-32-characters".to_owned(),
+            auth_token: "test-openvpn-auth-token-with-at-least-32-characters".to_owned(),
+            public_host: "openvpn.example.test".to_owned(),
+            public_port: 443,
+            sni: "openvpn.example.test".to_owned(),
+            ca_certificate:
+                "-----BEGIN CERTIFICATE-----\ndGVzdC1jYQ==\n-----END CERTIFICATE-----\n".to_owned(),
+            stunnel_ca_certificate:
+                "-----BEGIN CERTIFICATE-----\ndGVzdC1vdXRlci1jYQ==\n-----END CERTIFICATE-----\n"
+                    .to_owned(),
+            tls_crypt_key: concat!(
+                "-----BEGIN OpenVPN Static key V1-----\n",
+                "dGVzdC10bHMtY3J5cHQta2V5\n",
+                "-----END OpenVPN Static key V1-----\n"
+            )
+            .to_owned(),
+        };
+        let mut config = test_config();
+        config.transports.push(TransportProfile {
+            id: openvpn.transport_id.clone(),
+            display_name: "OpenVPN TLS".to_owned(),
+            protocol: TransportProtocol::OpenVpnStunnel,
+            endpoint: openvpn.public_host.clone(),
+            port: openvpn.public_port,
+            network: Network::Tcp,
+            priority: 8,
+            tls_server_name: Some(openvpn.sni.clone()),
+            options: BTreeMap::from([
+                ("auth_mode".to_owned(), "session_token".to_owned()),
+                ("cipher".to_owned(), "aes_256_gcm".to_owned()),
+                ("remote_cert_tls".to_owned(), "server".to_owned()),
+                ("tls_crypt".to_owned(), "v1".to_owned()),
+                ("tls_minimum".to_owned(), "1.2".to_owned()),
+                ("transport".to_owned(), "stunnel_tls".to_owned()),
+            ]),
+        });
+        config.openvpn = Some(openvpn);
         config
     }
 

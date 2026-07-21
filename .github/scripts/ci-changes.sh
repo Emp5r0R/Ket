@@ -71,7 +71,7 @@ classify() {
     packaging/fetch-hysteria.sh | packaging/fetch-shadowsocks.sh | packaging/fetch-xray.sh | packaging/fetch-wstunnel.sh)
       enable linux_package windows_package android
       ;;
-    packaging/fetch-tun2proxy.sh | packaging/validate-desktop-assets.sh)
+    packaging/fetch-openvpn.sh | packaging/fetch-stunnel.sh | packaging/fetch-tun2proxy.sh | packaging/validate-desktop-assets.sh)
       enable linux_package windows_package
       ;;
     packaging/verify-linux-deb.sh)

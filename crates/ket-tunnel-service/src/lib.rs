@@ -9,8 +9,8 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use ket_client_core::{
-    ActiveTunnel, Hysteria2Adapter, Shadowsocks2022Adapter, TransportAdapter, WireGuardTlsAdapter,
-    XrayAdapter,
+    ActiveTunnel, Hysteria2Adapter, OpenVpnStunnelAdapter, Shadowsocks2022Adapter,
+    TransportAdapter, WireGuardTlsAdapter, XrayAdapter,
 };
 use ket_tunnel_protocol::{
     BrokerFault, BrokerRequest, BrokerResponse, BrokerToken, BrokerTunnelStatus, HandshakeProof,
@@ -32,7 +32,9 @@ pub struct ServiceConfig {
     pub address: SocketAddr,
     pub token_file: PathBuf,
     pub hysteria_path: PathBuf,
+    pub openvpn_path: PathBuf,
     pub shadowsocks_path: PathBuf,
+    pub stunnel_path: PathBuf,
     pub xray_path: PathBuf,
     pub wstunnel_path: PathBuf,
     pub bridge_path: PathBuf,
@@ -55,9 +57,15 @@ impl ServiceConfig {
         let hysteria_path = std::env::var_os("KET_HYSTERIA_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(default_hysteria_path);
+        let openvpn_path = std::env::var_os("KET_OPENVPN_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_openvpn_path);
         let shadowsocks_path = std::env::var_os("KET_SHADOWSOCKS_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(default_shadowsocks_path);
+        let stunnel_path = std::env::var_os("KET_STUNNEL_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_stunnel_path);
         let xray_path = std::env::var_os("KET_XRAY_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(default_xray_path);
@@ -74,7 +82,9 @@ impl ServiceConfig {
             address,
             token_file,
             hysteria_path,
+            openvpn_path,
             shadowsocks_path,
+            stunnel_path,
             xray_path,
             wstunnel_path,
             bridge_path,
@@ -262,7 +272,7 @@ pub async fn serve_until(
         BrokerToken::load(&config.token_file)
             .context("failed to load the tunnel broker installation token")?,
     );
-    let mut adapters: Vec<Arc<dyn TransportAdapter>> = Vec::with_capacity(4);
+    let mut adapters: Vec<Arc<dyn TransportAdapter>> = Vec::with_capacity(5);
     if config.hysteria_path.is_file() && config.bridge_path.is_file() {
         adapters.push(Arc::new(Hysteria2Adapter::new(
             &config.hysteria_path,
@@ -281,6 +291,13 @@ pub async fn serve_until(
         adapters.push(Arc::new(Shadowsocks2022Adapter::new(
             &config.shadowsocks_path,
             &config.bridge_path,
+            &config.runtime_dir,
+        )));
+    }
+    if config.openvpn_path.is_file() && config.stunnel_path.is_file() {
+        adapters.push(Arc::new(OpenVpnStunnelAdapter::new(
+            &config.openvpn_path,
+            &config.stunnel_path,
             &config.runtime_dir,
         )));
     }
@@ -426,6 +443,18 @@ fn default_hysteria_path() -> PathBuf {
         .join("hysteria.exe")
 }
 
+#[cfg(target_os = "windows")]
+fn default_openvpn_path() -> PathBuf {
+    default_windows_install_dir()
+        .join("openvpn")
+        .join("openvpn.exe")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_openvpn_path() -> PathBuf {
+    PathBuf::from("/usr/libexec/ket/openvpn")
+}
+
 #[cfg(not(target_os = "windows"))]
 fn default_hysteria_path() -> PathBuf {
     PathBuf::from("/usr/libexec/ket/hysteria")
@@ -434,6 +463,18 @@ fn default_hysteria_path() -> PathBuf {
 #[cfg(target_os = "windows")]
 fn default_shadowsocks_path() -> PathBuf {
     default_windows_install_dir().join("sslocal.exe")
+}
+
+#[cfg(target_os = "windows")]
+fn default_stunnel_path() -> PathBuf {
+    default_windows_install_dir()
+        .join("stunnel")
+        .join("stunnel.exe")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_stunnel_path() -> PathBuf {
+    PathBuf::from("/usr/libexec/ket/stunnel")
 }
 
 #[cfg(not(target_os = "windows"))]

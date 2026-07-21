@@ -84,6 +84,23 @@ class HysteriaTransportTest {
     }
 
     @Test
+    fun `unsupported openvpn profile is skipped without weakening fallback`() {
+        val openVpn = JSONObject()
+            .put("id", "openvpn-stunnel-primary")
+            .put("protocol", "open_vpn_stunnel")
+        val selected = AndroidTransportSelector.parse(
+            JSONArray()
+                .put(openVpn)
+                .put(validTransport("none")),
+        )
+
+        assertEquals(listOf("hy2-primary"), selected.map(AndroidTransport::id))
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidTransportSelector.parse(JSONArray().put(openVpn))
+        }
+    }
+
+    @Test
     fun `enrollment parser requires an implemented Android transport and redacts the token`() {
         val token = testSessionToken('H')
         val body = JSONObject()
