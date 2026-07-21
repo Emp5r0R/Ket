@@ -58,4 +58,10 @@ Linux and Windows packages bundle a checksum-pinned `sslocal`, validate the exac
 
 Android bundles the official 64-bit `sslocal` payload as `libsslocal.so` for `arm64-v8a` and `x86_64`. The upstream binaries target Android API 28, so Ket fails closed on API 26-27 and on 32-bit devices, allowing the ranked selector to fall back to Hysteria2. Before installing the VPN route, Android pins and excludes the resolved server address and verifies a certificate-authenticated TLS request through the local Shadowsocks SOCKS endpoint.
 
-Local engine and package validation proves configuration compatibility, startup, reconciliation, TCP+UDP listener creation, revocation, Android unit/lint behavior, and binary checksums. A restricted-network physical-device result remains a release gate.
+The disposable local traffic harness downloads checksum-pinned `ssmanager` and `sslocal` binaries, starts the real Ket control plane, rejects a wrong key, carries HTTP over the issued SOCKS endpoint, observes the manager byte counter, and proves both session release and grant revocation stop traffic:
+
+```bash
+./packaging/verify-shadowsocks-traffic.sh
+```
+
+The harness deliberately omits the production egress ACL so its loopback HTTP origin is reachable. It proves the shipped Shadowsocks 2022 TCP engine and lease lifecycle, not UDP forwarding, public ingress, ACL behavior, or restricted-network Android behavior. Those remain deployment release gates.

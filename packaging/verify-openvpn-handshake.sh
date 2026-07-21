@@ -130,7 +130,7 @@ for dependency in curl jq nc openssl shuf socat; do
 done
 [[ -n "$openvpn_bin" && -x "$openvpn_bin" ]] || { printf 'OpenVPN is required.\n' >&2; exit 1; }
 [[ -n "$stunnel_bin" && -x "$stunnel_bin" ]] || { printf 'stunnel is required.\n' >&2; exit 1; }
-if [[ ! -x "$server_bin" || ! -x "$auth_bin" ]]; then
+if [[ -z ${KET_E2E_SERVER_BIN:-} || -z ${KET_E2E_OPENVPN_AUTH_BIN:-} ]]; then
   cargo build --locked --package ket-server --bin ket-server --bin ket-openvpn-auth
 fi
 
