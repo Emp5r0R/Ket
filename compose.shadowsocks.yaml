@@ -1,0 +1,53 @@
+services:
+  control-plane:
+    environment:
+      KET_SHADOWSOCKS_MANAGER_ADDRESS: shadowsocks:6100
+    networks:
+      - default
+      - shadowsocks-control
+
+  shadowsocks:
+    image: ket-control-plane:local
+    user: "10001:10001"
+    entrypoint: ["/usr/local/bin/ssmanager"]
+    command:
+      - --manager-addr
+      - 0.0.0.0:6100
+      - --server-host
+      - 0.0.0.0
+      - --encrypt-method
+      - 2022-blake3-aes-256-gcm
+      - --acl
+      - /etc/shadowsocks/ket-server.acl
+      - --udp-timeout
+      - "300"
+      - --udp-max-associations
+      - "4096"
+      - --tcp-no-delay
+      - --tcp-keep-alive
+      - "30"
+      - --worker-threads
+      - "2"
+      - -U
+    depends_on:
+      control-plane:
+        condition: service_healthy
+        restart: true
+    restart: unless-stopped
+    ports:
+      - "${KET_SHADOWSOCKS_BIND_ADDRESS:-0.0.0.0}:${KET_SHADOWSOCKS_PORT_START:-20000}-${KET_SHADOWSOCKS_PORT_END:-20999}:${KET_SHADOWSOCKS_PORT_START:-20000}-${KET_SHADOWSOCKS_PORT_END:-20999}/tcp"
+      - "${KET_SHADOWSOCKS_BIND_ADDRESS:-0.0.0.0}:${KET_SHADOWSOCKS_PORT_START:-20000}-${KET_SHADOWSOCKS_PORT_END:-20999}:${KET_SHADOWSOCKS_PORT_START:-20000}-${KET_SHADOWSOCKS_PORT_END:-20999}/udp"
+    networks:
+      - shadowsocks-control
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+
+networks:
+  shadowsocks-control:

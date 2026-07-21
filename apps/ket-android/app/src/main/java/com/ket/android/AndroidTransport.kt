@@ -30,6 +30,7 @@ internal object AndroidTransportSelector {
                 validateTransportId(candidate.getString("id"))
                 when (candidate.optString("protocol")) {
                     "hysteria2" -> add(HysteriaTransport.parse(candidate))
+                    "shadowsocks2022" -> add(ShadowsocksTransport.parse(candidate))
                     "stealth" -> add(StealthTransport.parse(candidate))
                     "vless_xtls_reality" -> add(RealityTransport.parse(candidate))
                 }

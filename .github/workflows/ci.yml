@@ -133,9 +133,11 @@ jobs:
         working-directory: apps/ket-desktop
       - run: cargo build --locked -p ket-tunnel-service --release
       - run: ./packaging/fetch-hysteria.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/hysteria
+      - run: ./packaging/fetch-shadowsocks.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/sslocal
       - run: ./packaging/fetch-xray.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/xray
       - run: ./packaging/fetch-tun2proxy.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/tun2proxy
       - run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray cargo test --locked -p ket-client-core xray::tests::pinned_xray_binary_accepts_rendered_config_when_supplied
+      - run: KET_TEST_SHADOWSOCKS_LOCAL_BINARY=apps/ket-desktop/src-tauri/binaries/sslocal cargo test --locked -p ket-client-core shadowsocks::tests::pinned_sslocal_accepts_rendered_config_when_supplied
       - run: ./packaging/validate-desktop-assets.sh linux
       - run: npm exec tauri build -- --bundles deb
         working-directory: apps/ket-desktop
@@ -190,11 +192,15 @@ jobs:
       - shell: bash
         run: ./packaging/fetch-hysteria.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/hysteria.exe
       - shell: bash
+        run: ./packaging/fetch-shadowsocks.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/sslocal.exe
+      - shell: bash
         run: ./packaging/fetch-xray.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/xray.exe
       - shell: bash
         run: ./packaging/fetch-tun2proxy.sh windows-amd64 apps/ket-desktop/src-tauri/binaries/tun2proxy.exe apps/ket-desktop/src-tauri/binaries/wintun.dll
       - shell: bash
         run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray.exe cargo test --locked -p ket-client-core xray::tests::pinned_xray_binary_accepts_rendered_config_when_supplied
+      - shell: bash
+        run: KET_TEST_SHADOWSOCKS_LOCAL_BINARY=apps/ket-desktop/src-tauri/binaries/sslocal.exe cargo test --locked -p ket-client-core shadowsocks::tests::pinned_sslocal_accepts_rendered_config_when_supplied
       - shell: bash
         run: ./packaging/validate-desktop-assets.sh windows
       - run: npm exec tauri build -- --bundles nsis --config src-tauri/tauri.nsis.conf.json

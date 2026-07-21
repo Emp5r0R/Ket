@@ -58,7 +58,7 @@ android { namespace = "com.ket.android"; compileSdk = 34
         named("main") { jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-engines/jniLibs")) }
         named("test") { resources.srcDir("src/main/res/raw") }
     }
-    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libxray.so") } }
+    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libsslocal.so", "**/libxray.so") } }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.11" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -69,6 +69,7 @@ val prepareAndroidEngines by tasks.registering(Exec::class) {
     inputs.files(
         script,
         rootProject.layout.projectDirectory.dir("../..").file("packaging/fetch-hysteria.sh"),
+        rootProject.layout.projectDirectory.dir("../..").file("packaging/fetch-shadowsocks.sh"),
         rootProject.layout.projectDirectory.dir("../..").file("packaging/fetch-xray.sh"),
     )
     outputs.dir(layout.buildDirectory.dir("generated/ket-engines"))

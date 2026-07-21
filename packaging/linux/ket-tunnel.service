@@ -9,6 +9,7 @@ Type=exec
 User=root
 Group=root
 ExecStartPre=/usr/libexec/ket/hysteria version
+ExecStartPre=/usr/libexec/ket/sslocal --version
 ExecStartPre=/usr/libexec/ket/xray version
 ExecStartPre=/usr/libexec/ket/tun2proxy --version
 ExecStart=/usr/libexec/ket/ket-tunnel-service

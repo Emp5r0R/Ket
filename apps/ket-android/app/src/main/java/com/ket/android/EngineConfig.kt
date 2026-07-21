@@ -3,6 +3,28 @@ package com.ket.android
 import org.json.JSONObject
 
 internal object EngineConfig {
+    fun shadowsocks(
+        transport: ShadowsocksTransport,
+        resolvedAddress: String,
+        socksPort: Int,
+    ): String {
+        require(socksPort in 1..65535) { "SOCKS port is invalid" }
+        require(resolvedAddress.isNotBlank()) { "Resolved server address is missing" }
+        return JSONObject()
+            .put("server", resolvedAddress)
+            .put("server_port", transport.port)
+            .put("local_address", "127.0.0.1")
+            .put("local_port", socksPort)
+            .put("password", transport.key)
+            .put("method", SHADOWSOCKS_METHOD)
+            .put("mode", "tcp_and_udp")
+            .put("timeout", 300)
+            .put("udp_timeout", 300)
+            .put("no_delay", true)
+            .put("keep_alive", 30)
+            .toString(2)
+    }
+
     fun xray(transport: AndroidXrayTransport, resolvedAddress: String, socksPort: Int): String {
         require(socksPort in 1..65535) { "SOCKS port is invalid" }
         require(resolvedAddress.isNotBlank()) { "Resolved server address is missing" }

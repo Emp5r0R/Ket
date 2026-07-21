@@ -47,11 +47,13 @@ for abi in armeabi-v7a arm64-v8a x86 x86_64; do
 done
 
 for abi in arm64-v8a x86_64; do
-  entry="lib/$abi/libxray.so"
-  if ! unzip -Z1 "$apk" "$entry" | grep -Fxq "$entry"; then
-    printf 'APK is missing %s\n' "$entry" >&2
-    exit 1
-  fi
+  for library in libsslocal.so libxray.so; do
+    entry="lib/$abi/$library"
+    if ! unzip -Z1 "$apk" "$entry" | grep -Fxq "$entry"; then
+      printf 'APK is missing %s\n' "$entry" >&2
+      exit 1
+    fi
+  done
 done
 
 apksigner=${APKSIGNER:-}
@@ -91,4 +93,4 @@ if [[ -n "$apksigner" ]]; then
   fi
 fi
 
-printf 'Validated Android Hysteria payloads for four ABIs and Xray payloads for arm64-v8a and x86_64.\n'
+printf 'Validated Android Hysteria payloads for four ABIs and Shadowsocks/Xray payloads for arm64-v8a and x86_64.\n'

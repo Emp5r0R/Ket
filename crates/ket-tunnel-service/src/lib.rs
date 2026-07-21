@@ -8,7 +8,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use ket_client_core::{ActiveTunnel, Hysteria2Adapter, TransportAdapter, XrayAdapter};
+use ket_client_core::{
+    ActiveTunnel, Hysteria2Adapter, Shadowsocks2022Adapter, TransportAdapter, XrayAdapter,
+};
 use ket_tunnel_protocol::{
     BrokerFault, BrokerRequest, BrokerResponse, BrokerToken, BrokerTunnelStatus, HandshakeProof,
     HandshakeResult, challenge, read_frame, write_frame,
@@ -29,6 +31,7 @@ pub struct ServiceConfig {
     pub address: SocketAddr,
     pub token_file: PathBuf,
     pub hysteria_path: PathBuf,
+    pub shadowsocks_path: PathBuf,
     pub xray_path: PathBuf,
     pub bridge_path: PathBuf,
     pub runtime_dir: PathBuf,
@@ -50,6 +53,9 @@ impl ServiceConfig {
         let hysteria_path = std::env::var_os("KET_HYSTERIA_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(default_hysteria_path);
+        let shadowsocks_path = std::env::var_os("KET_SHADOWSOCKS_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_shadowsocks_path);
         let xray_path = std::env::var_os("KET_XRAY_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(default_xray_path);
@@ -63,6 +69,7 @@ impl ServiceConfig {
             address,
             token_file,
             hysteria_path,
+            shadowsocks_path,
             xray_path,
             bridge_path,
             runtime_dir,
@@ -249,7 +256,7 @@ pub async fn serve_until(
         BrokerToken::load(&config.token_file)
             .context("failed to load the tunnel broker installation token")?,
     );
-    let mut adapters: Vec<Arc<dyn TransportAdapter>> = Vec::with_capacity(2);
+    let mut adapters: Vec<Arc<dyn TransportAdapter>> = Vec::with_capacity(3);
     if config.hysteria_path.is_file() && config.bridge_path.is_file() {
         adapters.push(Arc::new(Hysteria2Adapter::new(
             &config.hysteria_path,
@@ -260,6 +267,13 @@ pub async fn serve_until(
     if config.xray_path.is_file() && config.bridge_path.is_file() {
         adapters.push(Arc::new(XrayAdapter::new(
             &config.xray_path,
+            &config.bridge_path,
+            &config.runtime_dir,
+        )));
+    }
+    if config.shadowsocks_path.is_file() && config.bridge_path.is_file() {
+        adapters.push(Arc::new(Shadowsocks2022Adapter::new(
+            &config.shadowsocks_path,
             &config.bridge_path,
             &config.runtime_dir,
         )));
@@ -400,6 +414,16 @@ fn default_hysteria_path() -> PathBuf {
 #[cfg(not(target_os = "windows"))]
 fn default_hysteria_path() -> PathBuf {
     PathBuf::from("/usr/libexec/ket/hysteria")
+}
+
+#[cfg(target_os = "windows")]
+fn default_shadowsocks_path() -> PathBuf {
+    default_windows_install_dir().join("sslocal.exe")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_shadowsocks_path() -> PathBuf {
+    PathBuf::from("/usr/libexec/ket/sslocal")
 }
 
 #[cfg(target_os = "windows")]

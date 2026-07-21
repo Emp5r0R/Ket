@@ -15,6 +15,10 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
+    [string]$ShadowsocksBinary,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$XrayBinary,
 
     [Parameter(Mandatory = $true)]
@@ -34,6 +38,7 @@ $DataDir = Join-Path $env:ProgramData "Ket"
 $RuntimeDir = Join-Path $DataDir "runtime"
 $ServiceTarget = Join-Path $InstallDir "ket-tunnel-service.exe"
 $HysteriaTarget = Join-Path $InstallDir "hysteria.exe"
+$ShadowsocksTarget = Join-Path $InstallDir "sslocal.exe"
 $XrayTarget = Join-Path $InstallDir "xray.exe"
 $Tun2ProxyTarget = Join-Path $InstallDir "tun2proxy.exe"
 $WintunTarget = Join-Path $InstallDir "wintun.dll"
@@ -91,12 +96,15 @@ Write-InstallStage "Preparing Ket tunnel service files."
 New-Item -ItemType Directory -Force -Path $InstallDir, $DataDir, $RuntimeDir | Out-Null
 Copy-IfDifferent -Source $ServiceBinary -Destination $ServiceTarget
 Copy-IfDifferent -Source $HysteriaBinary -Destination $HysteriaTarget
+Copy-IfDifferent -Source $ShadowsocksBinary -Destination $ShadowsocksTarget
 Copy-IfDifferent -Source $XrayBinary -Destination $XrayTarget
 Copy-IfDifferent -Source $Tun2ProxyBinary -Destination $Tun2ProxyTarget
 Copy-IfDifferent -Source $WintunLibrary -Destination $WintunTarget
 Write-InstallStage "Validating bundled tunnel engines."
 & $HysteriaTarget "version" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "The Hysteria engine failed its version check" }
+& $ShadowsocksTarget "--version" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "The Shadowsocks engine failed its version check" }
 & $XrayTarget "version" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "The Xray engine failed its version check" }
 & $Tun2ProxyTarget "--version" | Out-Null

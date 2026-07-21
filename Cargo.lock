@@ -1887,6 +1887,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "ket-core",
  "ket-tunnel-protocol",
  "rand 0.8.7",
@@ -1933,6 +1934,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "hmac",
  "http-body-util",
@@ -1950,6 +1952,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "zeroize",
 ]
 
 [[package]]

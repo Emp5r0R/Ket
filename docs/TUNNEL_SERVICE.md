@@ -1,6 +1,6 @@
 # Privileged tunnel service
 
-Ket keeps the desktop UI and control-plane client unprivileged. A small system service owns the selected Hysteria2 or Xray process together with `tun2proxy`, the TUN device, DNS setup, and route changes. The desktop reaches it only through `127.0.0.1:39731`.
+Ket keeps the desktop UI and control-plane client unprivileged. A small system service owns the selected Hysteria2, Xray, or Shadowsocks process together with `tun2proxy`, the TUN device, DNS setup, and route changes. The desktop reaches it only through `127.0.0.1:39731`.
 
 ## Trust boundary
 
@@ -12,16 +12,17 @@ Ket keeps the desktop UI and control-plane client unprivileged. A small system s
 - The selected engine receives an ephemeral `0600` configuration under the service runtime directory. Ket removes that file after engine and bridge readiness and disables Hysteria update checks.
 - All implemented transports expose only an unauthenticated loopback SOCKS endpoint to the same supervised bridge. The bridge requires virtual DNS, captures IPv4 and IPv6, and bypasses every pre-resolved data-plane or CDN IP.
 
-The token authenticates a local desktop installation; it does not elevate arbitrary requests. The service exposes a fixed command set and validates the server transport description before it starts Hysteria or Xray. Administrators and root remain trusted by the operating-system security model.
+The token authenticates a local desktop installation; it does not elevate arbitrary requests. The service exposes a fixed command set and validates the server transport description before it starts Hysteria, Xray, or `sslocal`. Administrators and root remain trusted by the operating-system security model.
 
 ## Linux installation
 
-Build `ket-tunnel-service`, obtain the pinned Hysteria, Xray, and `tun2proxy` executables for the target architecture, then run:
+Build `ket-tunnel-service`, obtain the pinned Hysteria, Shadowsocks, Xray, and `tun2proxy` executables for the target architecture, then run:
 
 ```bash
 sudo packaging/linux/install-tunnel-service.sh \
   target/release/ket-tunnel-service \
   /path/to/hysteria \
+  /path/to/sslocal \
   /path/to/xray \
   /path/to/tun2proxy \
   "$USER"
@@ -37,8 +38,10 @@ Build the service for Windows and run an elevated PowerShell session:
 
 ```powershell
 .\packaging\windows\install-tunnel-service.ps1 `
+  -InstallDir "$env:ProgramFiles\Ket" `
   -ServiceBinary .\ket-tunnel-service.exe `
   -HysteriaBinary .\hysteria.exe `
+  -ShadowsocksBinary .\sslocal.exe `
   -XrayBinary .\xray.exe `
   -Tun2ProxyBinary .\tun2proxy.exe `
   -WintunLibrary .\wintun.dll
@@ -57,6 +60,7 @@ Development builds accept these process environment variables on both sides of t
 | `KET_BROKER_ADDRESS` | `127.0.0.1:39731` | Loopback broker address |
 | `KET_BROKER_TOKEN_FILE` | `/etc/ket/tunnel.token` or `%ProgramData%\Ket\tunnel.token` | Installation token |
 | `KET_HYSTERIA_BINARY` | `/usr/libexec/ket/hysteria` or `%ProgramFiles%\Ket\hysteria.exe` | Managed Hysteria engine |
+| `KET_SHADOWSOCKS_BINARY` | `/usr/libexec/ket/sslocal` or `%ProgramFiles%\Ket\sslocal.exe` | Managed Shadowsocks engine |
 | `KET_XRAY_BINARY` | `/usr/libexec/ket/xray` or `%ProgramFiles%\Ket\xray.exe` | Managed Xray engine |
 | `KET_TUN2PROXY_BINARY` | `/usr/libexec/ket/tun2proxy` or `%ProgramFiles%\Ket\tun2proxy.exe` | Managed full-route bridge |
 | `KET_BROKER_RUNTIME_DIR` | `/run/ket` or `%ProgramData%\Ket\runtime` | Ephemeral engine configuration |
