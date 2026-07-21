@@ -18,6 +18,7 @@ const MAX_ENDPOINT_CHARS: usize = 253;
 const MAX_OPTION_ENTRIES: usize = 32;
 const MAX_OPTION_KEY_CHARS: usize = 64;
 const MAX_OPTION_VALUE_CHARS: usize = 2_048;
+const MAX_SHADOWSOCKS_MANAGER_SERVERS: u32 = 1_500;
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -32,6 +33,7 @@ pub struct ServerConfig {
     pub session_ttl: Duration,
     pub transports: Vec<TransportProfile>,
     pub hysteria: Option<HysteriaConfig>,
+    pub shadowsocks: Option<ShadowsocksConfig>,
     pub xray: Option<XrayConfig>,
 }
 
@@ -57,6 +59,18 @@ pub enum HysteriaObfuscation {
     Disabled,
     Salamander { password: String },
     Gecko { password: String },
+}
+
+pub const SHADOWSOCKS_2022_METHOD: &str = "2022-blake3-aes-256-gcm";
+
+#[derive(Clone)]
+pub struct ShadowsocksConfig {
+    pub transport_id: String,
+    pub manager_address: String,
+    pub public_host: String,
+    pub port_start: u16,
+    pub port_end: u16,
+    pub credential_key: String,
 }
 
 #[derive(Clone)]
@@ -140,6 +154,10 @@ impl ServerConfig {
                 transports.push(xhttp.transport_profile());
             }
         }
+        let shadowsocks = ShadowsocksConfig::from_env(max_sessions)?;
+        if let Some(config) = &shadowsocks {
+            transports.push(config.transport_profile());
+        }
         validate_transports(&transports)?;
 
         let node_id = value("KET_NODE_ID", "ket-node-1");
@@ -172,8 +190,73 @@ impl ServerConfig {
             session_ttl: Duration::from_secs(session_ttl_seconds),
             transports,
             hysteria,
+            shadowsocks,
             xray,
         })
+    }
+}
+
+impl ShadowsocksConfig {
+    fn from_env(max_sessions: u32) -> Result<Option<Self>> {
+        if !parse_value("KET_SHADOWSOCKS_ENABLED", false)? {
+            return Ok(None);
+        }
+
+        let manager_address = value("KET_SHADOWSOCKS_MANAGER_ADDRESS", "shadowsocks:6100");
+        validate_authority(&manager_address, "KET_SHADOWSOCKS_MANAGER_ADDRESS")?;
+        let public_host = required_hostname("KET_SHADOWSOCKS_PUBLIC_HOST")?;
+        if max_sessions > MAX_SHADOWSOCKS_MANAGER_SERVERS {
+            bail!(
+                "KET_MAX_SESSIONS cannot exceed {MAX_SHADOWSOCKS_MANAGER_SERVERS} when Shadowsocks is enabled"
+            );
+        }
+        let port_start = nonzero_port("KET_SHADOWSOCKS_PORT_START", 20_000)?;
+        let port_end = nonzero_port("KET_SHADOWSOCKS_PORT_END", 20_999)?;
+        if port_end < port_start {
+            bail!("KET_SHADOWSOCKS_PORT_END must not be lower than KET_SHADOWSOCKS_PORT_START");
+        }
+        let pool_size = u32::from(port_end) - u32::from(port_start) + 1;
+        if pool_size < max_sessions {
+            bail!(
+                "the Shadowsocks port range must contain at least KET_MAX_SESSIONS ({max_sessions}) ports"
+            );
+        }
+        let credential_key = required("KET_SHADOWSOCKS_CREDENTIAL_KEY")?;
+        if credential_key.len() < 32 {
+            bail!("KET_SHADOWSOCKS_CREDENTIAL_KEY must contain at least 32 characters");
+        }
+
+        Ok(Some(Self {
+            transport_id: value("KET_SHADOWSOCKS_TRANSPORT_ID", "shadowsocks-2022-primary"),
+            manager_address,
+            public_host,
+            port_start,
+            port_end,
+            credential_key,
+        }))
+    }
+
+    pub(crate) fn session_port(&self, resource_slot: u32) -> Option<u16> {
+        let port = u32::from(self.port_start).checked_add(resource_slot)?;
+        (port <= u32::from(self.port_end)).then_some(port as u16)
+    }
+
+    fn transport_profile(&self) -> TransportProfile {
+        TransportProfile {
+            id: self.transport_id.clone(),
+            display_name: "Shadowsocks 2022".to_owned(),
+            protocol: TransportProtocol::Shadowsocks2022,
+            endpoint: self.public_host.clone(),
+            port: self.port_start,
+            network: Network::TcpAndUdp,
+            priority: 15,
+            tls_server_name: None,
+            options: BTreeMap::from([
+                ("method".to_owned(), SHADOWSOCKS_2022_METHOD.to_owned()),
+                ("mode".to_owned(), "tcp_and_udp".to_owned()),
+                ("port_allocation".to_owned(), "lease_slot".to_owned()),
+            ]),
+        }
     }
 }
 
@@ -771,9 +854,9 @@ mod tests {
     use ket_core::{Network, NodeLocation, TransportProfile, TransportProtocol};
 
     use super::{
-        listeners_conflict, normalize_public_url, required_reality_key, validate_authority,
-        validate_dns_name, validate_hostname, validate_location, validate_node_metadata,
-        validate_target, validate_transports, validate_xhttp_path,
+        ShadowsocksConfig, listeners_conflict, normalize_public_url, required_reality_key,
+        validate_authority, validate_dns_name, validate_hostname, validate_location,
+        validate_node_metadata, validate_target, validate_transports, validate_xhttp_path,
     };
 
     #[test]
@@ -889,5 +972,22 @@ mod tests {
         assert!(required_reality_key(name).is_ok());
         // SAFETY: this test-specific variable is no longer needed.
         unsafe { std::env::remove_var(name) };
+    }
+
+    #[test]
+    fn shadowsocks_session_ports_are_bounded_by_the_validated_pool() {
+        let config = ShadowsocksConfig {
+            transport_id: "shadowsocks-2022-primary".to_owned(),
+            manager_address: "shadowsocks:6100".to_owned(),
+            public_host: "vpn.example.test".to_owned(),
+            port_start: 20_000,
+            port_end: 20_002,
+            credential_key: "independent-test-key-at-least-32-characters".to_owned(),
+        };
+
+        assert_eq!(config.session_port(0), Some(20_000));
+        assert_eq!(config.session_port(2), Some(20_002));
+        assert_eq!(config.session_port(3), None);
+        assert_eq!(config.session_port(u32::MAX), None);
     }
 }

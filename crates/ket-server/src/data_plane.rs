@@ -17,19 +17,23 @@ use hyper_util::{
     rt::TokioExecutor,
 };
 use ket_core::SessionTraffic;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
-use tokio::process::Command;
+use tokio::{net::UdpSocket, process::Command};
+use zeroize::Zeroizing;
 
 use crate::{
-    config::{ServerConfig, XrayConfig},
+    config::{SHADOWSOCKS_2022_METHOD, ServerConfig, ShadowsocksConfig, XrayConfig},
     service::{SessionAllocation, unix_time},
-    xray,
+    shadowsocks, xray,
 };
 
 const MAX_STATS_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_COMMAND_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_MANAGER_COMMAND_BYTES: usize = 4 * 1024;
+const MAX_MANAGER_RESPONSE_BYTES: usize = 64 * 1024;
+const SHADOWSOCKS_MANAGER_TIMEOUT: Duration = Duration::from_secs(3);
 const XRAY_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
@@ -79,6 +83,9 @@ pub(crate) fn from_config(
     }
     if let Some(xray) = &config.xray {
         controls.push(Arc::new(XrayControl::new(xray.clone())));
+    }
+    if let Some(shadowsocks) = &config.shadowsocks {
+        controls.push(Arc::new(ShadowsocksControl::new(shadowsocks.clone())));
     }
     match controls.len() {
         0 => Ok(Arc::new(NoDataPlane)),
@@ -331,6 +338,198 @@ impl DataPlaneControl for HysteriaControl {
         }
         Ok(())
     }
+}
+
+struct ShadowsocksControl {
+    config: ShadowsocksConfig,
+}
+
+#[derive(Serialize)]
+struct ShadowsocksAddRequest<'a> {
+    server_port: u16,
+    password: &'a str,
+    method: &'static str,
+    mode: &'static str,
+}
+
+impl ShadowsocksControl {
+    fn new(config: ShadowsocksConfig) -> Self {
+        Self { config }
+    }
+
+    async fn request(&self, command: &[u8]) -> Result<String, DataPlaneError> {
+        if command.len() > MAX_MANAGER_COMMAND_BYTES {
+            return Err(DataPlaneError::ResponseTooLarge);
+        }
+        tokio::time::timeout(SHADOWSOCKS_MANAGER_TIMEOUT, async {
+            let target = tokio::net::lookup_host(&self.config.manager_address)
+                .await?
+                .next()
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::AddrNotAvailable,
+                        "Shadowsocks manager address resolved to no endpoints",
+                    )
+                })?;
+            let bind_address = if target.is_ipv4() {
+                "0.0.0.0:0"
+            } else {
+                "[::]:0"
+            };
+            let socket = UdpSocket::bind(bind_address).await?;
+            socket.connect(target).await?;
+            let sent = socket.send(command).await?;
+            if sent != command.len() {
+                return Err(DataPlaneError::Command(
+                    "Shadowsocks manager command was truncated".to_owned(),
+                ));
+            }
+            let mut response = vec![0_u8; MAX_MANAGER_RESPONSE_BYTES];
+            let received = socket.recv(&mut response).await?;
+            if received == response.len() {
+                return Err(DataPlaneError::ResponseTooLarge);
+            }
+            response.truncate(received);
+            String::from_utf8(response).map_err(|_| {
+                DataPlaneError::Command("Shadowsocks manager returned non-UTF-8 data".to_owned())
+            })
+        })
+        .await
+        .map_err(|_| DataPlaneError::Timeout)?
+    }
+
+    async fn active_ports(&self) -> Result<BTreeSet<u16>, DataPlaneError> {
+        parse_shadowsocks_ping(&self.request(b"ping\n").await?)
+    }
+
+    async fn add_server(&self, session: &SessionAllocation) -> Result<u16, DataPlaneError> {
+        let port = self.session_port(session)?;
+        let password = shadowsocks::session_key(&self.config, &session.id);
+        let encoded = Zeroizing::new(serde_json::to_vec(&ShadowsocksAddRequest {
+            server_port: port,
+            password: password.expose_secret(),
+            method: SHADOWSOCKS_2022_METHOD,
+            mode: "tcp_and_udp",
+        })?);
+        let mut command = Zeroizing::new(Vec::with_capacity(encoded.len() + 7));
+        command.extend_from_slice(b"add: ");
+        command.extend_from_slice(&encoded);
+        command.push(b'\n');
+        expect_shadowsocks_ok(&self.request(&command).await?)?;
+        Ok(port)
+    }
+
+    async fn remove_server(&self, port: u16) -> Result<(), DataPlaneError> {
+        let command = format!("remove: {{\"server_port\":{port}}}\n");
+        expect_shadowsocks_ok(&self.request(command.as_bytes()).await?)
+    }
+
+    fn session_port(&self, session: &SessionAllocation) -> Result<u16, DataPlaneError> {
+        self.config
+            .session_port(session.resource_slot)
+            .ok_or_else(|| {
+                DataPlaneError::Command(
+                    "session resource slot exceeds the Shadowsocks port pool".to_owned(),
+                )
+            })
+    }
+
+    fn managed_port(&self, port: u16) -> bool {
+        (self.config.port_start..=self.config.port_end).contains(&port)
+    }
+}
+
+#[async_trait]
+impl DataPlaneControl for ShadowsocksControl {
+    async fn healthy(&self) -> bool {
+        self.active_ports().await.is_ok()
+    }
+
+    async fn provision(&self, session: &SessionAllocation) -> Result<(), DataPlaneError> {
+        let port = self.session_port(session)?;
+        self.remove_server(port).await?;
+        self.add_server(session).await?;
+        if !self.active_ports().await?.contains(&port) {
+            return Err(DataPlaneError::Command(
+                "Shadowsocks manager did not retain the provisioned lease".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn reconcile(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        for port in self
+            .active_ports()
+            .await?
+            .into_iter()
+            .filter(|port| self.managed_port(*port))
+        {
+            self.remove_server(port).await?;
+        }
+        let mut expected = BTreeSet::new();
+        for session in sessions {
+            expected.insert(self.add_server(session).await?);
+        }
+        let actual = self
+            .active_ports()
+            .await?
+            .into_iter()
+            .filter(|port| self.managed_port(*port))
+            .collect::<BTreeSet<_>>();
+        if actual != expected {
+            return Err(DataPlaneError::Command(
+                "Shadowsocks manager reconciliation postcondition failed".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn traffic(
+        &self,
+        _session: &SessionAllocation,
+    ) -> Result<SessionTraffic, DataPlaneError> {
+        // ssmanager exposes only tx+rx, so Ket cannot truthfully fill directional fields.
+        Ok(unavailable_traffic())
+    }
+
+    async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        let mut removed = BTreeSet::new();
+        for session in sessions {
+            let port = self.session_port(session)?;
+            self.remove_server(port).await?;
+            removed.insert(port);
+        }
+        if self
+            .active_ports()
+            .await?
+            .iter()
+            .any(|port| removed.contains(port))
+        {
+            return Err(DataPlaneError::Command(
+                "Shadowsocks manager retained a revoked lease".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn expect_shadowsocks_ok(response: &str) -> Result<(), DataPlaneError> {
+    if response.trim() == "ok" {
+        Ok(())
+    } else {
+        Err(DataPlaneError::Command(
+            "Shadowsocks manager rejected the operation".to_owned(),
+        ))
+    }
+}
+
+fn parse_shadowsocks_ping(response: &str) -> Result<BTreeSet<u16>, DataPlaneError> {
+    let response = response.trim();
+    let payload = response.strip_prefix("stat:").ok_or_else(|| {
+        DataPlaneError::Command("Shadowsocks manager returned an invalid ping response".to_owned())
+    })?;
+    let counters: BTreeMap<u16, u64> = serde_json::from_str(payload.trim())?;
+    Ok(counters.into_keys().collect())
 }
 
 struct XrayControl {
@@ -711,5 +910,127 @@ mod tests {
         assert!(validate_session_id("AbCdEf123456").is_ok());
         assert!(validate_session_id("../../etc/pass").is_err());
         assert!(validate_session_id("too-short").is_err());
+    }
+
+    #[test]
+    fn shadowsocks_ping_parser_accepts_only_the_manager_contract() {
+        assert_eq!(
+            parse_shadowsocks_ping("stat: {\"20000\":0,\"20001\":42}\n").unwrap(),
+            BTreeSet::from([20_000, 20_001])
+        );
+        assert!(parse_shadowsocks_ping("ok\n").is_err());
+        assert!(parse_shadowsocks_ping("stat: {\"70000\":0}\n").is_err());
+        assert!(parse_shadowsocks_ping("stat: []\n").is_err());
+        assert!(expect_shadowsocks_ok("ok\n").is_ok());
+        assert!(expect_shadowsocks_ok("err: rejected\n").is_err());
+    }
+
+    #[tokio::test]
+    async fn pinned_shadowsocks_manager_reconciles_and_revokes_when_supplied() {
+        let Some(binary) = std::env::var_os("KET_TEST_SHADOWSOCKS_MANAGER_BINARY") else {
+            return;
+        };
+        let manager_port = reserve_udp_port();
+        let relay_start = reserve_dual_port_pair();
+        let child = std::process::Command::new(binary)
+            .args([
+                "-U",
+                "--server-host",
+                "127.0.0.1",
+                "--manager-addr",
+                &format!("127.0.0.1:{manager_port}"),
+                "--encrypt-method",
+                SHADOWSOCKS_2022_METHOD,
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start pinned Shadowsocks manager");
+        let _manager = TestChild(child);
+        let control = ShadowsocksControl::new(ShadowsocksConfig {
+            transport_id: "shadowsocks-2022-primary".to_owned(),
+            manager_address: format!("127.0.0.1:{manager_port}"),
+            public_host: "127.0.0.1".to_owned(),
+            port_start: relay_start,
+            port_end: relay_start + 1,
+            credential_key: "live-test-key-with-at-least-32-characters".to_owned(),
+        });
+        for _ in 0..50 {
+            if control.healthy().await {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(control.healthy().await, "manager did not become ready");
+
+        let sessions = [
+            SessionAllocation {
+                id: "AbCdEf123456".to_owned(),
+                resource_slot: 0,
+            },
+            SessionAllocation {
+                id: "GhIjKl789012".to_owned(),
+                resource_slot: 1,
+            },
+        ];
+        control
+            .reconcile(&sessions)
+            .await
+            .expect("reconcile live Shadowsocks leases");
+        assert_eq!(
+            control.active_ports().await.unwrap(),
+            BTreeSet::from([relay_start, relay_start + 1])
+        );
+        for port in [relay_start, relay_start + 1] {
+            assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_err());
+            assert!(std::net::UdpSocket::bind(("127.0.0.1", port)).is_err());
+        }
+
+        control
+            .kick(&sessions)
+            .await
+            .expect("revoke live Shadowsocks leases");
+        assert!(control.active_ports().await.unwrap().is_empty());
+    }
+
+    struct TestChild(std::process::Child);
+
+    impl Drop for TestChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn reserve_udp_port() -> u16 {
+        std::net::UdpSocket::bind(("127.0.0.1", 0))
+            .expect("reserve UDP manager port")
+            .local_addr()
+            .expect("reserved manager address")
+            .port()
+    }
+
+    fn reserve_dual_port_pair() -> u16 {
+        for _ in 0..100 {
+            let tcp =
+                std::net::TcpListener::bind(("127.0.0.1", 0)).expect("reserve candidate TCP port");
+            let start = tcp.local_addr().expect("candidate TCP address").port();
+            if start == u16::MAX {
+                continue;
+            }
+            let Ok(udp) = std::net::UdpSocket::bind(("127.0.0.1", start)) else {
+                continue;
+            };
+            let Ok(next_tcp) = std::net::TcpListener::bind(("127.0.0.1", start + 1)) else {
+                continue;
+            };
+            let Ok(next_udp) = std::net::UdpSocket::bind(("127.0.0.1", start + 1)) else {
+                continue;
+            };
+            drop((tcp, udp, next_tcp, next_udp));
+            return start;
+        }
+        panic!("could not reserve consecutive TCP+UDP relay ports");
     }
 }

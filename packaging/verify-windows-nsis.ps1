@@ -42,6 +42,7 @@ $RequiredFiles = @(
     (Join-Path $InstallDir "ket-desktop.exe"),
     (Join-Path $InstallDir "ket-tunnel-service.exe"),
     (Join-Path $InstallDir "hysteria.exe"),
+    (Join-Path $InstallDir "sslocal.exe"),
     (Join-Path $InstallDir "xray.exe"),
     (Join-Path $InstallDir "tun2proxy.exe"),
     (Join-Path $InstallDir "wintun.dll"),
@@ -234,6 +235,7 @@ function Assert-KetInstallation {
     Assert-TokenAcl
 
     Invoke-CheckedNative (Join-Path $InstallDir "hysteria.exe") @("version")
+    Invoke-CheckedNative (Join-Path $InstallDir "sslocal.exe") @("--version")
     Invoke-CheckedNative (Join-Path $InstallDir "xray.exe") @("version")
     Invoke-CheckedNative (Join-Path $InstallDir "tun2proxy.exe") @("--version")
 

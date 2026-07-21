@@ -31,7 +31,7 @@ use crate::{
     config::{HysteriaObfuscation, ServerConfig},
     data_plane::{self, DataPlaneControl},
     service::{AccessService, CreatedSession, ServiceError, SessionAllocation, unix_time},
-    system, xray,
+    shadowsocks, system, xray,
 };
 
 #[derive(Default)]
@@ -54,7 +54,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: ServerConfig, access: AccessService) -> anyhow::Result<Self> {
         let data_plane = data_plane::from_config(&config)?;
-        let data_plane_ready = config.xray.is_none();
+        let data_plane_ready = config.xray.is_none() && config.shadowsocks.is_none();
         Ok(Self {
             config: Arc::new(config),
             access: Arc::new(access),
@@ -380,7 +380,7 @@ fn session_transports(state: &AppState, created: &CreatedSession) -> Vec<Session
         .transports
         .iter()
         .cloned()
-        .map(|profile| {
+        .map(|mut profile| {
             let credential = if state
                 .config
                 .hysteria
@@ -401,6 +401,16 @@ fn session_transports(state: &AppState, created: &CreatedSession) -> Vec<Session
                     auth: created.data_plane_token.clone(),
                     secrets,
                 })
+            } else if let Some(shadowsocks) = state
+                .config
+                .shadowsocks
+                .as_ref()
+                .filter(|config| config.transport_id == profile.id)
+            {
+                profile.port = shadowsocks
+                    .session_port(created.resource_slot)
+                    .expect("validated Shadowsocks pool covers every session resource slot");
+                Some(shadowsocks::session_credential(shadowsocks, &created.id))
             } else {
                 state
                     .config
@@ -617,6 +627,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{Request, header},
     };
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use ket_core::{
         CreateAccessGrantResponse, ErrorResponse, Network, NodeLocation, NodeStatus,
         SessionManifest, TransportProfile, TransportProtocol,
@@ -626,7 +637,8 @@ mod tests {
     use super::*;
     use crate::{
         config::{
-            HysteriaConfig, HysteriaObfuscation, XrayConfig, XrayRealityConfig, XrayXhttpConfig,
+            HysteriaConfig, HysteriaObfuscation, SHADOWSOCKS_2022_METHOD, ShadowsocksConfig,
+            XrayConfig, XrayRealityConfig, XrayXhttpConfig,
         },
         data_plane::DataPlaneError,
         model::PersistedState,
@@ -1213,6 +1225,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shadowsocks_sessions_receive_distinct_keys_and_ports() {
+        let repository = Arc::new(MemoryRepository::default());
+        let service = AccessService::load(repository.clone(), Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let data_plane = Arc::new(RecordingDataPlane::default());
+        let state = AppState {
+            config: Arc::new(shadowsocks_test_config()),
+            access: Arc::new(service),
+            data_plane,
+            data_plane_ready: Arc::new(AtomicBool::new(true)),
+            metrics: Arc::new(AppMetrics::default()),
+        };
+        let app = build_router(state);
+
+        let grant_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({
+                    "label": "Shadowsocks test",
+                    "max_connections": 2,
+                    "expires_at_epoch_seconds": null
+                }),
+            ))
+            .await
+            .expect("request should complete");
+        let grant: CreateAccessGrantResponse = response_json(grant_response).await;
+
+        let mut sessions = Vec::new();
+        for client_name in ["First Shadowsocks client", "Second Shadowsocks client"] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/v1/sessions",
+                    None,
+                    serde_json::json!({
+                        "access_code": grant.access_code,
+                        "client_name": client_name
+                    }),
+                ))
+                .await
+                .expect("request should complete");
+            assert_eq!(response.status(), StatusCode::CREATED);
+            sessions.push(response_json::<SessionManifest>(response).await);
+        }
+
+        let transports = sessions
+            .iter()
+            .map(|session| {
+                session
+                    .transports
+                    .iter()
+                    .find(|transport| {
+                        transport.profile.protocol == TransportProtocol::Shadowsocks2022
+                    })
+                    .expect("Shadowsocks transport")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(transports[0].profile.port, 20_000);
+        assert_eq!(transports[1].profile.port, 20_001);
+        let first_key = transports[0]
+            .credential
+            .as_ref()
+            .expect("Shadowsocks credential")
+            .auth
+            .expose_secret();
+        let second_key = transports[1]
+            .credential
+            .as_ref()
+            .expect("Shadowsocks credential")
+            .auth
+            .expose_secret();
+        assert_ne!(first_key, second_key);
+        assert_eq!(STANDARD.decode(first_key).expect("base64 key").len(), 32);
+        assert_eq!(STANDARD.decode(second_key).expect("base64 key").len(), 32);
+        assert!(
+            transports.iter().all(|transport| transport
+                .credential
+                .as_ref()
+                .unwrap()
+                .secrets
+                .is_empty())
+        );
+        assert!(!repository.encoded_state().contains(first_key));
+        assert!(!repository.encoded_state().contains(second_key));
+    }
+
+    #[tokio::test]
     async fn failed_data_plane_provision_rolls_back_the_session() {
         let repository = Arc::new(MemoryRepository::default());
         let service = AccessService::load(repository, Duration::from_secs(300), 4)
@@ -1302,6 +1406,7 @@ mod tests {
             session_ttl: Duration::from_secs(300),
             transports: Vec::new(),
             hysteria: None,
+            shadowsocks: None,
             xray: None,
         }
     }
@@ -1335,6 +1440,35 @@ mod tests {
             options: Default::default(),
         });
         config.hysteria = Some(hysteria);
+        config
+    }
+
+    fn shadowsocks_test_config() -> ServerConfig {
+        let shadowsocks = ShadowsocksConfig {
+            transport_id: "shadowsocks-2022-primary".to_owned(),
+            manager_address: "127.0.0.1:6100".to_owned(),
+            public_host: "vpn.example.test".to_owned(),
+            port_start: 20_000,
+            port_end: 20_003,
+            credential_key: "test-shadowsocks-key-with-at-least-32-characters".to_owned(),
+        };
+        let mut config = test_config();
+        config.transports.push(TransportProfile {
+            id: shadowsocks.transport_id.clone(),
+            display_name: "Shadowsocks 2022".to_owned(),
+            protocol: TransportProtocol::Shadowsocks2022,
+            endpoint: shadowsocks.public_host.clone(),
+            port: shadowsocks.port_start,
+            network: Network::TcpAndUdp,
+            priority: 15,
+            tls_server_name: None,
+            options: BTreeMap::from([
+                ("method".to_owned(), SHADOWSOCKS_2022_METHOD.to_owned()),
+                ("mode".to_owned(), "tcp_and_udp".to_owned()),
+                ("port_allocation".to_owned(), "lease_slot".to_owned()),
+            ]),
+        });
+        config.shadowsocks = Some(shadowsocks);
         config
     }
 

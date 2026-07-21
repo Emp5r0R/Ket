@@ -5,6 +5,7 @@ pub mod hysteria;
 mod model;
 pub mod repository;
 pub mod service;
+pub mod shadowsocks;
 mod system;
 pub mod xray;
 

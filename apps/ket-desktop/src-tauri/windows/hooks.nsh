@@ -5,7 +5,7 @@
 
 !macro NSIS_HOOK_POSTINSTALL
   DetailPrint "Installing the Ket tunnel service"
-  nsExec::ExecToLog /TIMEOUT=120000 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\install-tunnel-service.ps1" -InstallDir "$INSTDIR" -ServiceBinary "$INSTDIR\ket-tunnel-service.exe" -HysteriaBinary "$INSTDIR\hysteria.exe" -XrayBinary "$INSTDIR\xray.exe" -Tun2ProxyBinary "$INSTDIR\tun2proxy.exe" -WintunLibrary "$INSTDIR\wintun.dll"'
+  nsExec::ExecToLog /TIMEOUT=120000 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\install-tunnel-service.ps1" -InstallDir "$INSTDIR" -ServiceBinary "$INSTDIR\ket-tunnel-service.exe" -HysteriaBinary "$INSTDIR\hysteria.exe" -ShadowsocksBinary "$INSTDIR\sslocal.exe" -XrayBinary "$INSTDIR\xray.exe" -Tun2ProxyBinary "$INSTDIR\tun2proxy.exe" -WintunLibrary "$INSTDIR\wintun.dll"'
   Pop $0
   ${If} $0 != 0
     MessageBox MB_ICONSTOP|MB_OK "Ket could not install its tunnel service (exit code $0)." /SD IDOK

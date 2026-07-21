@@ -68,7 +68,7 @@ classify() {
     packaging/build-android.sh | packaging/prepare-android-engines.sh | packaging/validate-android-apk.sh)
       enable android
       ;;
-    packaging/fetch-hysteria.sh | packaging/fetch-xray.sh)
+    packaging/fetch-hysteria.sh | packaging/fetch-shadowsocks.sh | packaging/fetch-xray.sh)
       enable linux_package windows_package android
       ;;
     packaging/fetch-tun2proxy.sh | packaging/validate-desktop-assets.sh)

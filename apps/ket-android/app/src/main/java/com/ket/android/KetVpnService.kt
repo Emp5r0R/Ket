@@ -223,6 +223,9 @@ class KetVpnService : VpnService() {
 
     private fun engineFor(transport: AndroidTransport): AndroidTransportEngine? = when (transport) {
         is HysteriaTransport -> AndroidHysteriaEngine(this, transport)
+        is ShadowsocksTransport -> transportAddresses[transport.id]?.let {
+            AndroidShadowsocksEngine(this, transport, it)
+        }
         is AndroidXrayTransport -> transportAddresses[transport.id]?.let {
             AndroidXrayEngine(this, transport, it)
         }

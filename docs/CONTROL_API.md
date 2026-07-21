@@ -45,6 +45,8 @@ A VLESS + REALITY profile uses `credential.auth` for its lease-scoped UUID, `cre
 
 An HTTPS Stealth profile uses `protocol=stealth` for a concrete VLESS + XHTTP/TLS adapter. Its `credential.auth` is the same lease-scoped Xray UUID and its `credential.secrets` object must be empty. The exact option set is `encryption=none`, `transport=xhttp`, `security=tls`, `mode=packet-up`, a 16-128 character absolute `path`, and a supported browser `fingerprint`. Desktop and Android reject unknown options, additional secrets, invalid paths, certificate downgrades, and unsupported XHTTP modes.
 
+A Shadowsocks 2022 profile uses `protocol=shadowsocks2022`, `network=tcp_and_udp`, and the lease-specific public port. `credential.auth` is a standard-base64 32-byte SIP022 key and `credential.secrets` is empty. The exact option set is `method=2022-blake3-aes-256-gcm`, `mode=tcp_and_udp`, and `port_allocation=lease_slot`; there is no TLS name. The key and port are deterministic for a server key and persisted lease resource slot, but only the slot is stored. Unknown options, malformed keys, extra secrets, or a TLS field fail closed on desktop and Android.
+
 ## Session endpoints
 
 | Method | Path | Purpose |

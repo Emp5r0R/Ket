@@ -8,6 +8,7 @@ stamp="$output/versions"
 hev_version=2.14.0
 hev_checksum=f0c5909b188272a6cee2b3c92e13cf16d927ba29a20bd1d750a2ff3419cda381
 versions="hysteria=v2.10.0
+shadowsocks=1.24.0
 xray=v26.3.27
 hev-socks5-tunnel=$hev_version"
 
@@ -17,6 +18,8 @@ for artifact in \
   "$output/jniLibs/arm64-v8a/libhysteria.so" \
   "$output/jniLibs/x86/libhysteria.so" \
   "$output/jniLibs/x86_64/libhysteria.so" \
+  "$output/jniLibs/arm64-v8a/libsslocal.so" \
+  "$output/jniLibs/x86_64/libsslocal.so" \
   "$output/jniLibs/arm64-v8a/libxray.so" \
   "$output/jniLibs/x86_64/libxray.so" \
   "$output/hev-socks5-tunnel/Android.mk"; do
@@ -44,6 +47,10 @@ trap cleanup EXIT
   "$stage/jniLibs/x86/libhysteria.so"
 "$repo_root/packaging/fetch-hysteria.sh" android-amd64 \
   "$stage/jniLibs/x86_64/libhysteria.so"
+"$repo_root/packaging/fetch-shadowsocks.sh" android-arm64 \
+  "$stage/jniLibs/arm64-v8a/libsslocal.so"
+"$repo_root/packaging/fetch-shadowsocks.sh" android-amd64 \
+  "$stage/jniLibs/x86_64/libsslocal.so"
 "$repo_root/packaging/fetch-xray.sh" android-arm64 \
   "$stage/jniLibs/arm64-v8a/libxray.so"
 "$repo_root/packaging/fetch-xray.sh" android-amd64 \
@@ -61,4 +68,4 @@ rm -rf "$output"
 mv "$stage" "$output"
 trap - EXIT
 rm -f "$archive"
-printf 'Prepared Hysteria v2.10.0, Xray v26.3.27, and hev-socks5-tunnel %s for Android.\n' "$hev_version"
+printf 'Prepared Hysteria v2.10.0, shadowsocks-rust 1.24.0, Xray v26.3.27, and hev-socks5-tunnel %s for Android.\n' "$hev_version"

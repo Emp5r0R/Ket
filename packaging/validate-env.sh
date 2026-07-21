@@ -65,6 +65,20 @@ if [[ "${KET_HYSTERIA_ENABLED:-false}" == true ]]; then
   fi
 fi
 
+if [[ "${KET_SHADOWSOCKS_ENABLED:-false}" == true ]]; then
+  required KET_SHADOWSOCKS_PUBLIC_HOST
+  valid_host KET_SHADOWSOCKS_PUBLIC_HOST || fail 'KET_SHADOWSOCKS_PUBLIC_HOST must be a bounded hostname or IP address'
+  valid_port KET_SHADOWSOCKS_PORT_START 20000 || fail 'KET_SHADOWSOCKS_PORT_START must be between 1 and 65535'
+  valid_port KET_SHADOWSOCKS_PORT_END 20999 || fail 'KET_SHADOWSOCKS_PORT_END must be between 1 and 65535'
+  shadowsocks_start=${KET_SHADOWSOCKS_PORT_START:-20000}
+  shadowsocks_end=${KET_SHADOWSOCKS_PORT_END:-20999}
+  (( shadowsocks_end >= shadowsocks_start )) || fail 'KET_SHADOWSOCKS_PORT_END must not be lower than KET_SHADOWSOCKS_PORT_START'
+  (( ${KET_MAX_SESSIONS:-1000} <= 1500 )) || fail 'KET_MAX_SESSIONS cannot exceed 1500 when Shadowsocks is enabled'
+  (( shadowsocks_end - shadowsocks_start + 1 >= ${KET_MAX_SESSIONS:-1000} )) || fail 'the Shadowsocks port range must contain at least KET_MAX_SESSIONS ports'
+  required KET_SHADOWSOCKS_CREDENTIAL_KEY
+  (( ${#KET_SHADOWSOCKS_CREDENTIAL_KEY} >= 32 )) || fail 'KET_SHADOWSOCKS_CREDENTIAL_KEY must contain at least 32 characters'
+fi
+
 if [[ "${KET_XRAY_ENABLED:-false}" == true ]]; then
   required KET_XRAY_PUBLIC_HOST
   valid_host KET_XRAY_PUBLIC_HOST || fail 'KET_XRAY_PUBLIC_HOST must be a bounded hostname or IP address'
