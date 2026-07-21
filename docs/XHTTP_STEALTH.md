@@ -80,4 +80,10 @@ Do not put Cloudflare Access browser authentication in front of the XHTTP path b
 - Multi-inbound provisioning rolls back already-added users if any later inbound fails. Startup reconciliation fails readiness until all configured inbound APIs are healthy.
 - XHTTP does not guarantee censorship bypass. Ket ranks it first when configured, then falls back through REALITY and Hysteria2 according to observed failures and cooldown.
 
-Local configuration tests prove that the pinned Xray parser accepts both server and client documents. Production readiness additionally requires packet flow, reconnect, revocation, traffic accounting, and sustained restricted-network tests on Linux, Windows, and 64-bit Android.
+The disposable local traffic harness uses the pinned Xray server and client, a one-run CA, and stunnel as the HTTPS intermediary. It validates the Ket-issued profile, rejects a wrong UUID, carries certificate-verified HTTPS through XHTTP `packet-up`, observes Xray traffic counters, and proves both session release and grant revocation stop new connections:
+
+```bash
+./packaging/verify-xhttp-tls-traffic.sh
+```
+
+The client configuration contains no insecure TLS override. The one-run CA is trusted only through the client Xray process environment, and the production Xray abuse guards remain enabled. This proves the local XHTTP/TLS engine and lease lifecycle. It does not prove Cloudflare routing, sustained provider limits, platform full-route behavior, or restricted-network behavior; those remain deployment release gates.

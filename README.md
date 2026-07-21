@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows/Android clients implement six authenticated data planes with lease revocation: Hysteria2, VLESS + REALITY, CDN-carried VLESS + XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard over WebSocket/TLS, and OpenVPN over stunnel-compatible TLS. Hysteria2 and REALITY have carried traffic on a physical current arm64 Android device; Shadowsocks TCP traffic and revocation are verified locally through real upstream engines. The remaining transports have local code, engine, package, or container validation rather than restricted-network end-to-end results. Physical lifecycle and network tests remain before this is a complete end-user VPN.
+> **Current state:** the Docker server and Linux/Windows/Android clients implement six authenticated data planes with lease revocation: Hysteria2, VLESS + REALITY, CDN-carried VLESS + XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard over WebSocket/TLS, and OpenVPN over stunnel-compatible TLS. Hysteria2 and REALITY have carried traffic on a physical current arm64 Android device. XHTTP/TLS and Shadowsocks TCP traffic, accounting, and revocation are verified locally through real upstream engines. WireGuard TLS and OpenVPN have local code, engine, package, container, or handshake validation rather than restricted-network end-to-end results. Physical lifecycle and network tests remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -36,7 +36,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 | --- | --- | --- | --- | --- |
 | Hysteria2 + Salamander/Gecko | Implemented | Implemented | Implemented | Physical arm64 traffic verified |
 | VLESS + REALITY | Implemented | Implemented | Implemented on 64-bit | Physical arm64 traffic verified |
-| HTTPS Stealth (VLESS + XHTTP/TLS) | Implemented | Implemented | Implemented on 64-bit | Local validation complete; restricted-network physical gate pending |
+| HTTPS Stealth (VLESS + XHTTP/TLS) | Implemented | Implemented | Implemented on 64-bit | Local real-engine TLS traffic/revocation verified; CDN and restricted-network gates pending |
 | Shadowsocks 2022 | Implemented | Implemented | Implemented on 64-bit API 28+ | Local real-engine TCP traffic/revocation verified; UDP and restricted-network physical gates pending |
 | WireGuard over WebSocket/TLS | Implemented | Implemented | Implemented on arm64 API 28+ | Local engine/package validation complete; kernel-server and restricted-network gates pending |
 | OpenVPN over stunnel TLS | Implemented | Implemented | Implemented on API 26+ | Local code/engine/package/container validation; deployment and Android physical traffic pending |
