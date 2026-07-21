@@ -24,7 +24,7 @@ use tokio::process::Command;
 
 use crate::{
     config::{ServerConfig, XrayConfig},
-    service::unix_time,
+    service::{SessionAllocation, unix_time},
     xray,
 };
 
@@ -61,10 +61,10 @@ pub(crate) enum DataPlaneError {
 #[async_trait]
 pub(crate) trait DataPlaneControl: Send + Sync {
     async fn healthy(&self) -> bool;
-    async fn provision(&self, session_id: &str) -> Result<(), DataPlaneError>;
-    async fn reconcile(&self, session_ids: &[String]) -> Result<(), DataPlaneError>;
-    async fn traffic(&self, session_id: &str) -> Result<SessionTraffic, DataPlaneError>;
-    async fn kick(&self, session_ids: &[String]) -> Result<(), DataPlaneError>;
+    async fn provision(&self, session: &SessionAllocation) -> Result<(), DataPlaneError>;
+    async fn reconcile(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError>;
+    async fn traffic(&self, session: &SessionAllocation) -> Result<SessionTraffic, DataPlaneError>;
+    async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError>;
 }
 
 pub(crate) fn from_config(
@@ -95,19 +95,22 @@ impl DataPlaneControl for NoDataPlane {
         true
     }
 
-    async fn provision(&self, _session_id: &str) -> Result<(), DataPlaneError> {
+    async fn provision(&self, _session: &SessionAllocation) -> Result<(), DataPlaneError> {
         Ok(())
     }
 
-    async fn reconcile(&self, _session_ids: &[String]) -> Result<(), DataPlaneError> {
+    async fn reconcile(&self, _sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
         Ok(())
     }
 
-    async fn traffic(&self, _session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
+    async fn traffic(
+        &self,
+        _session: &SessionAllocation,
+    ) -> Result<SessionTraffic, DataPlaneError> {
         Ok(unavailable_traffic())
     }
 
-    async fn kick(&self, _session_ids: &[String]) -> Result<(), DataPlaneError> {
+    async fn kick(&self, _sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
         Ok(())
     }
 }
@@ -127,12 +130,12 @@ impl DataPlaneControl for CompositeDataPlane {
         true
     }
 
-    async fn provision(&self, session_id: &str) -> Result<(), DataPlaneError> {
+    async fn provision(&self, session: &SessionAllocation) -> Result<(), DataPlaneError> {
         let mut completed: Vec<Arc<dyn DataPlaneControl>> = Vec::new();
         for control in &self.controls {
-            if let Err(error) = control.provision(session_id).await {
+            if let Err(error) = control.provision(session).await {
                 for provisioned in completed.into_iter().rev() {
-                    let _ = provisioned.kick(&[session_id.to_owned()]).await;
+                    let _ = provisioned.kick(std::slice::from_ref(session)).await;
                 }
                 return Err(error);
             }
@@ -141,15 +144,15 @@ impl DataPlaneControl for CompositeDataPlane {
         Ok(())
     }
 
-    async fn reconcile(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
-        run_all(&self.controls, |control| control.reconcile(session_ids)).await
+    async fn reconcile(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        run_all(&self.controls, |control| control.reconcile(sessions)).await
     }
 
-    async fn traffic(&self, session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
+    async fn traffic(&self, session: &SessionAllocation) -> Result<SessionTraffic, DataPlaneError> {
         let mut aggregate = unavailable_traffic();
         let mut failures = Vec::new();
         for control in &self.controls {
-            match control.traffic(session_id).await {
+            match control.traffic(session).await {
                 Ok(traffic) => {
                     aggregate.available |= traffic.available;
                     aggregate.bytes_sent = aggregate.bytes_sent.saturating_add(traffic.bytes_sent);
@@ -173,8 +176,8 @@ impl DataPlaneControl for CompositeDataPlane {
         }
     }
 
-    async fn kick(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
-        run_all(&self.controls, |control| control.kick(session_ids)).await
+    async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        run_all(&self.controls, |control| control.kick(sessions)).await
     }
 }
 
@@ -283,36 +286,37 @@ impl DataPlaneControl for HysteriaControl {
             .is_ok()
     }
 
-    async fn provision(&self, _session_id: &str) -> Result<(), DataPlaneError> {
+    async fn provision(&self, _session: &SessionAllocation) -> Result<(), DataPlaneError> {
         Ok(())
     }
 
-    async fn reconcile(&self, _session_ids: &[String]) -> Result<(), DataPlaneError> {
+    async fn reconcile(&self, _sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
         Ok(())
     }
 
-    async fn traffic(&self, session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
+    async fn traffic(&self, session: &SessionAllocation) -> Result<SessionTraffic, DataPlaneError> {
         let (traffic, online) = tokio::join!(
             self.get_json::<BTreeMap<String, HysteriaTraffic>>("/traffic"),
             self.get_json::<BTreeMap<String, u32>>("/online")
         );
         let traffic = traffic?;
         let online = online?;
-        let counters = traffic.get(session_id);
+        let counters = traffic.get(&session.id);
         Ok(SessionTraffic {
             available: true,
             bytes_sent: counters.map_or(0, |value| value.tx),
             bytes_received: counters.map_or(0, |value| value.rx),
-            online_connections: online.get(session_id).copied().unwrap_or(0),
+            online_connections: online.get(&session.id).copied().unwrap_or(0),
             observed_at_epoch_seconds: unix_time(),
         })
     }
 
-    async fn kick(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
-        if session_ids.is_empty() {
+    async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        if sessions.is_empty() {
             return Ok(());
         }
-        let body = serde_json::to_vec(session_ids)?;
+        let session_ids: Vec<_> = sessions.iter().map(|session| &session.id).collect();
+        let body = serde_json::to_vec(&session_ids)?;
         let request = Request::builder()
             .method(Method::POST)
             .uri(self.uri("/kick")?)
@@ -469,22 +473,22 @@ impl DataPlaneControl for XrayControl {
         true
     }
 
-    async fn provision(&self, session_id: &str) -> Result<(), DataPlaneError> {
-        self.add_user(session_id).await
+    async fn provision(&self, session: &SessionAllocation) -> Result<(), DataPlaneError> {
+        self.add_user(&session.id).await
     }
 
-    async fn reconcile(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
+    async fn reconcile(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
         let existing = self.managed_emails().await?;
         self.remove_emails(&existing).await?;
-        for session_id in session_ids {
-            self.add_user(session_id).await?;
+        for session in sessions {
+            self.add_user(&session.id).await?;
         }
         Ok(())
     }
 
-    async fn traffic(&self, session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
-        validate_session_id(session_id)?;
-        let email = xray::session_email(session_id);
+    async fn traffic(&self, session: &SessionAllocation) -> Result<SessionTraffic, DataPlaneError> {
+        validate_session_id(&session.id)?;
+        let email = xray::session_email(&session.id);
         let pattern = format!("user>>>{email}>>>traffic>>>");
         let mut stats_arguments = self.api_arguments("statsquery");
         stats_arguments.push(format!("-pattern={pattern}"));
@@ -502,12 +506,12 @@ impl DataPlaneControl for XrayControl {
         })
     }
 
-    async fn kick(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
-        let emails = session_ids
+    async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        let emails = sessions
             .iter()
-            .map(|session_id| {
-                validate_session_id(session_id)?;
-                Ok(xray::session_email(session_id))
+            .map(|session| {
+                validate_session_id(&session.id)?;
+                Ok(xray::session_email(&session.id))
             })
             .collect::<Result<Vec<_>, DataPlaneError>>()?;
         self.remove_emails(&emails).await

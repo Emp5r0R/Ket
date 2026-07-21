@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -30,6 +31,8 @@ pub struct CreatedSession {
     pub token: SecretString,
     pub data_plane_token: SecretString,
     pub id: String,
+    pub resource_slot: u32,
+    pub expired_allocations: Vec<SessionAllocation>,
     pub client_name: String,
     pub expires_at_epoch_seconds: u64,
 }
@@ -41,6 +44,8 @@ impl std::fmt::Debug for CreatedSession {
             .field("token", &"[REDACTED]")
             .field("data_plane_token", &"[REDACTED]")
             .field("id", &self.id)
+            .field("resource_slot", &self.resource_slot)
+            .field("expired_allocations", &self.expired_allocations.len())
             .field("client_name", &self.client_name)
             .field("expires_at_epoch_seconds", &self.expires_at_epoch_seconds)
             .finish()
@@ -50,8 +55,15 @@ impl std::fmt::Debug for CreatedSession {
 #[derive(Clone, Debug)]
 pub struct SessionView {
     pub id: String,
+    pub resource_slot: u32,
     pub client_name: String,
     pub expires_at_epoch_seconds: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionAllocation {
+    pub id: String,
+    pub resource_slot: u32,
 }
 
 #[derive(Debug, Error)]
@@ -74,6 +86,8 @@ pub enum ServiceError {
     Crypto,
     #[error("state persistence failed: {0}")]
     Persistence(#[from] RepositoryError),
+    #[error("persistent session state is invalid: {0}")]
+    InvalidState(&'static str),
     #[error("secure worker failed: {0}")]
     CryptoWorker(#[from] tokio::task::JoinError),
 }
@@ -107,7 +121,11 @@ impl AccessService {
         session_ttl: Duration,
         max_sessions: u32,
     ) -> Result<Self, ServiceError> {
-        let state = repository.load().await?;
+        let mut state = repository.load().await?;
+        let changed = prepare_resource_slots(&mut state, max_sessions)?;
+        if changed {
+            repository.store(&state).await?;
+        }
         Ok(Self {
             repository,
             state: Mutex::new(state),
@@ -218,7 +236,7 @@ impl AccessService {
             .collect()
     }
 
-    pub async fn revoke_grant(&self, id: &str) -> Result<Vec<String>, ServiceError> {
+    pub async fn revoke_grant(&self, id: &str) -> Result<Vec<SessionAllocation>, ServiceError> {
         let mut state = self.state.lock().await;
         if !state.grants.iter().any(|grant| grant.id == id) {
             return Err(ServiceError::NotFound);
@@ -228,8 +246,8 @@ impl AccessService {
             .sessions
             .iter()
             .filter(|session| session.grant_id == id)
-            .map(|session| session.id.clone())
-            .collect();
+            .map(session_allocation)
+            .collect::<Result<Vec<_>, _>>()?;
         next.grants.retain(|grant| grant.id != id);
         next.sessions.retain(|session| session.grant_id != id);
         self.repository.store(&next).await?;
@@ -269,6 +287,14 @@ impl AccessService {
 
         let mut state = self.state.lock().await;
         let mut next = state.clone();
+        let expired_allocations = next
+            .sessions
+            .iter()
+            .filter(|session| session.expires_at_epoch_seconds <= now)
+            .map(session_allocation)
+            .collect::<Result<Vec<_>, _>>()?;
+        next.sessions
+            .retain(|session| session.expires_at_epoch_seconds > now);
         let grant = next
             .grants
             .iter()
@@ -298,6 +324,8 @@ impl AccessService {
         if active_sessions >= self.max_sessions {
             return Err(ServiceError::NodeCapacity);
         }
+        let resource_slot =
+            next_resource_slot(&next, self.max_sessions).ok_or(ServiceError::NodeCapacity)?;
 
         let mut expires_at = now.saturating_add(self.session_ttl.as_secs());
         if let Some(grant_expiry) = grant.expires_at_epoch_seconds {
@@ -308,6 +336,7 @@ impl AccessService {
             grant_id: grant.id.clone(),
             secret_hash,
             data_plane_secret_hash: Some(data_plane_secret_hash),
+            resource_slot: Some(resource_slot),
             client_name: client_name.clone(),
             issued_at_epoch_seconds: now,
             expires_at_epoch_seconds: expires_at,
@@ -323,6 +352,8 @@ impl AccessService {
             token: token.into(),
             data_plane_token: data_plane_token.into(),
             id: token_parts.id,
+            resource_slot,
+            expired_allocations,
             client_name,
             expires_at_epoch_seconds: expires_at,
         })
@@ -330,8 +361,10 @@ impl AccessService {
 
     pub async fn session(&self, token: &str) -> Result<SessionView, ServiceError> {
         let (record, _) = self.authenticate(token).await?;
+        let resource_slot = required_resource_slot(&record)?;
         Ok(SessionView {
             id: record.id,
+            resource_slot,
             client_name: record.client_name,
             expires_at_epoch_seconds: record.expires_at_epoch_seconds,
         })
@@ -370,8 +403,10 @@ impl AccessService {
         {
             return Err(ServiceError::Unauthorized);
         }
+        let resource_slot = required_resource_slot(&session)?;
         Ok(SessionView {
             id: session.id,
+            resource_slot,
             client_name: session.client_name,
             expires_at_epoch_seconds: session.expires_at_epoch_seconds,
         })
@@ -395,32 +430,35 @@ impl AccessService {
         session.expires_at_epoch_seconds = expires_at;
         self.repository.store(&next).await?;
         *state = next;
+        let resource_slot = required_resource_slot(&record)?;
         Ok(SessionView {
             id: record.id,
+            resource_slot,
             client_name: record.client_name,
             expires_at_epoch_seconds: expires_at,
         })
     }
 
-    pub async fn release_session(&self, token: &str) -> Result<String, ServiceError> {
+    pub async fn release_session(&self, token: &str) -> Result<SessionAllocation, ServiceError> {
         let (record, _) = self.authenticate(token).await?;
+        let allocation = session_allocation(&record)?;
         let mut state = self.state.lock().await;
         let mut next = state.clone();
         next.sessions.retain(|session| session.id != record.id);
         self.repository.store(&next).await?;
         *state = next;
-        Ok(record.id)
+        Ok(allocation)
     }
 
-    pub async fn expire_sessions(&self) -> Result<Vec<String>, ServiceError> {
+    pub async fn expire_sessions(&self) -> Result<Vec<SessionAllocation>, ServiceError> {
         let now = unix_time();
         let mut state = self.state.lock().await;
-        let expired: Vec<_> = state
+        let expired = state
             .sessions
             .iter()
             .filter(|session| session.expires_at_epoch_seconds <= now)
-            .map(|session| session.id.clone())
-            .collect();
+            .map(session_allocation)
+            .collect::<Result<Vec<_>, _>>()?;
         if expired.is_empty() {
             return Ok(expired);
         }
@@ -443,7 +481,7 @@ impl AccessService {
             .count() as u32
     }
 
-    pub async fn active_session_ids(&self) -> Vec<String> {
+    pub async fn active_session_allocations(&self) -> Result<Vec<SessionAllocation>, ServiceError> {
         let now = unix_time();
         self.state
             .lock()
@@ -451,7 +489,7 @@ impl AccessService {
             .sessions
             .iter()
             .filter(|session| session.expires_at_epoch_seconds > now)
-            .map(|session| session.id.clone())
+            .map(session_allocation)
             .collect()
     }
 
@@ -543,6 +581,67 @@ impl AccessService {
     }
 }
 
+fn prepare_resource_slots(
+    state: &mut PersistedState,
+    max_sessions: u32,
+) -> Result<bool, ServiceError> {
+    let now = unix_time();
+    let previous_len = state.sessions.len();
+    state
+        .sessions
+        .retain(|session| session.expires_at_epoch_seconds > now);
+    let mut changed = state.sessions.len() != previous_len;
+    let mut used = HashSet::with_capacity(state.sessions.len());
+    for session in &state.sessions {
+        if let Some(slot) = session.resource_slot {
+            if slot >= max_sessions {
+                return Err(ServiceError::InvalidState(
+                    "a session resource slot exceeds node capacity",
+                ));
+            }
+            if !used.insert(slot) {
+                return Err(ServiceError::InvalidState(
+                    "session resource slots are duplicated",
+                ));
+            }
+        }
+    }
+    for session in &mut state.sessions {
+        if session.resource_slot.is_some() {
+            continue;
+        }
+        let slot = (0..max_sessions).find(|slot| !used.contains(slot)).ok_or(
+            ServiceError::InvalidState("active sessions exceed node resource slots"),
+        )?;
+        session.resource_slot = Some(slot);
+        used.insert(slot);
+        changed = true;
+    }
+    Ok(changed)
+}
+
+fn next_resource_slot(state: &PersistedState, max_sessions: u32) -> Option<u32> {
+    let used: HashSet<_> = state
+        .sessions
+        .iter()
+        .filter_map(|session| session.resource_slot)
+        .collect();
+    (0..max_sessions).find(|slot| !used.contains(slot))
+}
+
+fn required_resource_slot(session: &SessionRecord) -> Result<u32, ServiceError> {
+    session.resource_slot.ok_or(ServiceError::InvalidState(
+        "an active session has no resource slot",
+    ))
+}
+
+fn session_allocation(session: &SessionRecord) -> Result<SessionAllocation, ServiceError> {
+    Ok(SessionAllocation {
+        id: session.id.clone(),
+        resource_slot: required_resource_slot(session)?,
+    })
+}
+
 fn validate_text(value: String, field: &str, maximum: usize) -> Result<String, ServiceError> {
     let value = value.trim().to_owned();
     if value.is_empty() || value.len() > maximum || value.chars().any(char::is_control) {
@@ -605,5 +704,68 @@ mod tests {
         assert_eq!(service.crypto_overload_count(), 1);
         drop(saturated);
         assert_eq!(service.crypto_operations_in_flight(), 0);
+    }
+
+    #[test]
+    fn legacy_sessions_receive_stable_slots_and_expired_slots_are_reused() {
+        let now = unix_time();
+        let mut state = PersistedState {
+            schema_version: 1,
+            grants: Vec::new(),
+            sessions: vec![
+                test_session("Session00001", None, now + 300),
+                test_session("Session00002", Some(1), now + 300),
+                test_session("Session00003", Some(0), now.saturating_sub(1)),
+            ],
+        };
+
+        assert!(prepare_resource_slots(&mut state, 3).expect("migration should succeed"));
+        assert_eq!(state.sessions.len(), 2);
+        assert_eq!(state.sessions[0].resource_slot, Some(0));
+        assert_eq!(state.sessions[1].resource_slot, Some(1));
+        assert!(!prepare_resource_slots(&mut state, 3).expect("migration should be stable"));
+
+        state.sessions.remove(0);
+        assert_eq!(next_resource_slot(&state, 3), Some(0));
+    }
+
+    #[test]
+    fn invalid_resource_slots_fail_before_service_startup() {
+        let now = unix_time();
+        let mut duplicate = PersistedState {
+            schema_version: 1,
+            grants: Vec::new(),
+            sessions: vec![
+                test_session("Session00001", Some(0), now + 300),
+                test_session("Session00002", Some(0), now + 300),
+            ],
+        };
+        assert!(matches!(
+            prepare_resource_slots(&mut duplicate, 2),
+            Err(ServiceError::InvalidState(
+                "session resource slots are duplicated"
+            ))
+        ));
+
+        duplicate.sessions[1].resource_slot = Some(2);
+        assert!(matches!(
+            prepare_resource_slots(&mut duplicate, 2),
+            Err(ServiceError::InvalidState(
+                "a session resource slot exceeds node capacity"
+            ))
+        ));
+    }
+
+    fn test_session(id: &str, resource_slot: Option<u32>, expires_at: u64) -> SessionRecord {
+        SessionRecord {
+            id: id.to_owned(),
+            grant_id: "Grant00001".to_owned(),
+            secret_hash: "unused-by-slot-tests".to_owned(),
+            data_plane_secret_hash: None,
+            resource_slot,
+            client_name: "Slot test".to_owned(),
+            issued_at_epoch_seconds: expires_at.saturating_sub(100),
+            expires_at_epoch_seconds: expires_at,
+        }
     }
 }

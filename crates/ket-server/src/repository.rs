@@ -259,6 +259,7 @@ mod tests {
                 grant_id: "Grant00001".to_owned(),
                 secret_hash: VALID_HASH.to_owned(),
                 data_plane_secret_hash: None,
+                resource_slot: Some(0),
                 client_name: "Valid client".to_owned(),
                 issued_at_epoch_seconds: 100,
                 expires_at_epoch_seconds: 200,
