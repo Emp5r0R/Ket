@@ -613,7 +613,7 @@ class KetVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL)
-            .setSmallIcon(com.ket.android.R.drawable.ket_mark)
+            .setSmallIcon(com.ket.android.R.drawable.ket_notification)
             .setContentTitle("Ket")
             .setContentText(message)
             .setContentIntent(activity)
