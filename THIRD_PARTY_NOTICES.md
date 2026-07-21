@@ -1,5 +1,14 @@
 # Third-party notices
 
+## Nginx
+
+The one-command server layout uses the unmodified official Nginx 1.29.5 Alpine image as its HTTPS edge. The multi-architecture image digest is pinned in `compose.edge.yaml`.
+
+Copyright (C) Igor Sysoev; Copyright (C) Nginx, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the source or binary distribution retains the upstream copyright notice, conditions, and disclaimer. Nginx is provided by its authors and contributors "AS IS", without express or implied warranties. The complete license is included in the image at `/usr/share/licenses/nginx/COPYRIGHT` and at <https://nginx.org/LICENSE>.
+
 ## OpenVPN
 
 Ket server and Linux/Windows desktop distributions bundle OpenVPN 2.7.5. OpenVPN is licensed under GNU GPL version 2. Ket uses the unmodified upstream source archive whose version, URL, and SHA-256 digest are recorded in `Dockerfile` and `packaging/fetch-openvpn.sh`.

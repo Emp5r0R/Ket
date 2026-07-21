@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+installer="$root/packaging/install-server.sh"
+
+direct=$(
+  "$installer" \
+    --domain ket.example.com \
+    --email operator@example.com \
+    --max-sessions 32 \
+    --plan
+)
+grep -Fq 'Mode: direct' <<<"$direct"
+grep -Fq 'TCP 80,443,8443,9443,20000-20031' <<<"$direct"
+
+cloudflare=$(
+  "$installer" \
+    --mode cloudflare \
+    --domain ket.example.com \
+    --direct-host direct-ket.example.com \
+    --email operator@example.com \
+    --max-sessions 64 \
+    --plan
+)
+grep -Fq 'Mode: cloudflare' <<<"$cloudflare"
+grep -Fq 'Raw transport hostname: direct-ket.example.com' <<<"$cloudflare"
+grep -Fq '20000-20063' <<<"$cloudflare"
+
+reject() {
+  if "$installer" "$@" --plan >/dev/null 2>&1; then
+    printf 'Expected installer arguments to fail: %s\n' "$*" >&2
+    exit 1
+  fi
+}
+
+reject --mode cloudflare --domain ket.example.com --email operator@example.com
+reject --domain bad..example.com --email operator@example.com
+reject --domain ket.example.com --email operator@example.com --max-sessions 513
+reject --domain ket.example.com --email operator@example.com --country-name 'bad$name'
+
+printf 'Ket installer argument tests passed.\n'
