@@ -12,7 +12,7 @@ import kotlin.concurrent.thread
 
 internal class AndroidXrayEngine(
     private val service: KetVpnService,
-    private val transport: RealityTransport,
+    private val transport: AndroidXrayTransport,
     private val resolvedEndpoint: InetAddress,
 ) : AndroidTransportEngine {
     private var process: Process? = null
@@ -41,7 +41,7 @@ internal class AndroidXrayEngine(
             check.destroyForcibly()
             throw IllegalStateException("Xray configuration validation timed out")
         }
-        require(check.exitValue() == 0) { "Xray rejected the Reality configuration" }
+        require(check.exitValue() == 0) { "Xray rejected the ${transport.displayName} configuration" }
         ensureEngineStartActive(cancelled)
 
         val child = ProcessBuilder(engine.absolutePath, "run", "-c", configFile!!.absolutePath)
@@ -73,7 +73,7 @@ internal class AndroidXrayEngine(
             }
             Thread.sleep(100)
         }
-        throw IllegalStateException(diagnostic.get() ?: "VLESS + REALITY handshake timed out")
+        throw IllegalStateException(diagnostic.get() ?: "${transport.displayName} handshake timed out")
     }
 
     override fun isAlive(): Boolean = process?.isAlive == true
@@ -111,7 +111,7 @@ internal class AndroidXrayEngine(
         val normalized = line.lowercase()
         return when {
             "invalid user" in normalized || "failed to find an available destination" in normalized ->
-                "The server rejected the VLESS + REALITY credential"
+                "The server rejected the ${transport.displayName} credential"
             "reality" in normalized && ("handshake" in normalized || "authentication" in normalized) ->
                 "VLESS + REALITY authentication failed"
             "network is unreachable" in normalized -> "The server network is unreachable"

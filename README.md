@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows clients can carry authenticated traffic through Hysteria2 and VLESS + REALITY, force desktop name resolution through a supervised virtual-DNS tunnel, enforce lease revocation, and report per-session traffic. The Android client has carried both transports on a physical current arm64 device, including ranked startup fallback, session-preserving recovery, bidirectional Wi-Fi/cellular recovery, responsive cancellation, and clean disconnect. An API 36 fail-closed handover retest plus the Android API 26, Doze, revoke, DNS-leak, always-on/reboot, and owner-signing matrix remain before this is a complete end-user VPN.
+> **Current state:** the Docker server and Linux/Windows clients implement authenticated Hysteria2, VLESS + REALITY, and CDN-carried VLESS + XHTTP/TLS Stealth data planes with lease revocation and per-session accounting. Android implements the same ranked three-transport contract; Hysteria2 and REALITY have carried traffic on a physical current arm64 device, while XHTTP/TLS currently has local parser, engine-config, and Xray validation rather than a restricted-network device result. An API 36 fail-closed handover retest plus the Android API 26, Doze, revoke, DNS-leak, always-on/reboot, Stealth-network, and owner-signing matrix remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -14,22 +14,30 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Shared Rust client controller with hardened HTTPS enrollment, bounded and identity-bound control-response validation, UI-safe last-known-good state snapshots, lease renewal, metrics refresh, bounded fallback, persistent reconnect intent across fully blocked rounds, and clean release.
 - Map-first Tauri 2 desktop UI with secure enrollment, node geography, connection control, health/capacity telemetry, traffic history, and responsive Linux/Windows layouts.
 - Authenticated loopback privilege broker with HMAC-SHA-256 installation identity, bounded framing, one-tunnel ownership, heartbeat expiry, and redacted diagnostics.
-- Privileged desktop transport service with strict Hysteria2 and VLESS + REALITY validation, shared full-route TUN and virtual-DNS ownership, every resolved server IP excluded, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
+- Privileged desktop transport service with strict Hysteria2, VLESS + REALITY, and XHTTP/TLS Stealth validation, shared full-route TUN and virtual-DNS ownership, every resolved server IP excluded, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
 - Hardened `systemd` and Windows Service Control Manager installers with read-only desktop token access and non-destructive upgrades.
 - Exactly 32-character access grants with Argon2-protected at-rest storage.
 - Per-grant connection limits, global capacity, expiry, renewal, release, and revocation.
 - Lease-scoped Hysteria2 credentials, HTTP authentication, traffic counters, online state, and connection kicks.
 - Generated Hysteria2 2.10 server configuration with TLS, HTTP/3 masquerading, optional Salamander/Gecko obfuscation, and abuse-resistant ACLs.
-- Generated Xray-core 26.3.27 VLESS + REALITY configuration with Vision, deterministic lease-scoped UUIDs, dynamic user reconciliation/revocation, traffic statistics, and abuse-resistant routing rules.
-- Android Compose client with a real Natural Earth server map, coordinate-based location marker, node health/capacity/CPU/memory/uptime telemetry, bounded and identity-bound HTTPS control responses, Keystore-sealed durable credentials, process/reboot-safe lease restoration, system always-on entry, ranked VLESS + REALITY/Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, collision-safe dual-stack VPN DNS, a fail-closed replacement-route guard, Doze-aware lease validation, graceful VPN-permission revocation, protected Hysteria QUIC sockets, server-route exclusion for Xray, maintained hev TUN-to-SOCKS forwarding, local traffic metrics, and engine supervision.
+- Generated Xray-core 26.3.27 VLESS + REALITY and VLESS + XHTTP configurations with deterministic lease-scoped UUIDs, atomic multi-inbound reconciliation/revocation, traffic statistics, and abuse-resistant routing rules.
+- Android Compose client with a real Natural Earth server map, coordinate-based location marker, node health/capacity/CPU/memory/uptime telemetry, bounded and identity-bound HTTPS control responses, Keystore-sealed durable credentials, process/reboot-safe lease restoration, system always-on entry, ranked XHTTP/TLS Stealth, VLESS + REALITY, and Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, collision-safe dual-stack VPN DNS, a fail-closed replacement-route guard, Doze-aware lease validation, graceful VPN-permission revocation, protected Hysteria QUIC sockets, server-route exclusion for Xray, maintained hev TUN-to-SOCKS forwarding, local traffic metrics, and engine supervision.
 - Fail-closed Android release signing with operator-supplied version metadata and signer-certificate pinning; CI exercises the complete release path with a disposable identity that is never published as a trusted release.
-- Typed discovery for Hysteria2, IKEv2, OpenVPN/stunnel, Shadowsocks 2022, VLESS XTLS Reality, WireGuard, stealth, and XOR-wrapped adapters.
+- Typed discovery identifiers for future IKEv2, OpenVPN/stunnel, Shadowsocks 2022, WireGuard, and XOR-wrapped adapters. These identifiers are not executable protocol support.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
 - Fail-fast server configuration that structurally validates the public URL and bounds node, location, transport, TLS-name, and option metadata before any manifest is issued.
 - Atomic persistent state and graceful shutdown.
 - Rootless, capability-free Docker control-plane image with a read-only root filesystem.
 
-The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and data-plane deployment in the [Hysteria2](docs/HYSTERIA2.md) and [VLESS + REALITY](docs/XRAY_REALITY.md) guides.
+| Transport | Server | Linux/Windows | Android | Deployment status |
+| --- | --- | --- | --- | --- |
+| Hysteria2 + Salamander/Gecko | Implemented | Implemented | Implemented | Physical arm64 traffic verified |
+| VLESS + REALITY | Implemented | Implemented | Implemented on 64-bit | Physical arm64 traffic verified |
+| HTTPS Stealth (VLESS + XHTTP/TLS) | Implemented | Implemented | Implemented on 64-bit | Local validation complete; restricted-network physical gate pending |
+| IKEv2, OpenVPN/stunnel, Shadowsocks 2022, WireGuard | Identifier only | Not implemented | Not implemented | Future adapters |
+| XOR scrambling | Obfuscation identifier only | Not standalone security | Not standalone security | May only wrap authenticated encryption |
+
+The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and data-plane deployment in the [Hysteria2](docs/HYSTERIA2.md), [VLESS + REALITY](docs/XRAY_REALITY.md), and [HTTPS Stealth](docs/XHTTP_STEALTH.md) guides.
 
 ## Run with Docker
 
@@ -76,15 +84,24 @@ docker compose -f compose.yaml -f compose.xray.yaml up --build -d
 
 This publishes raw TCP `443` by default. Its hostname must resolve directly to the server through a DNS-only record; an ordinary Cloudflare Tunnel or orange-cloud HTTP proxy does not forward unmodified VLESS + REALITY traffic. The pinned Xray image is a multi-architecture manifest, so Docker selects the native `linux/amd64` or `linux/arm64` image for the host.
 
-Hysteria2 and REALITY can share port `443` because they use UDP and TCP respectively. To run the maintained dual-transport deployment, enable both sets of environment values and include both overlays:
+To enable the TLS-shaped Stealth path, set `KET_XHTTP_ENABLED=true`, configure the public Cloudflare hostname and an unguessable `KET_XHTTP_PATH`, then include the XHTTP overlay:
 
 ```bash
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml config --quiet
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml up --build -d
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml ps
+docker compose -f compose.yaml -f compose.xhttp.yaml config --quiet
+docker compose -f compose.yaml -f compose.xhttp.yaml up --build -d
 ```
 
-The control hostname may remain behind Cloudflare Tunnel, but each session manifest must advertise a direct server IP or DNS-only hostname for the raw data planes. Open stateful TCP `443` and UDP `443` in both the cloud network policy and host firewall; keep the control port closed publicly.
+The XHTTP origin is published only on host loopback port `8445`. Route only its configured path from Cloudflare Tunnel to that origin and keep the remaining hostname routes pointed at the control API. The public client connection is certificate-verified TLS and browser-fingerprinted HTTP; the private origin hop is plain HTTP inside the authenticated outbound Cloudflare Tunnel. Exact ingress configuration and validation commands are in [the HTTPS Stealth guide](docs/XHTTP_STEALTH.md).
+
+Hysteria2 and REALITY can share port `443` because they use UDP and TCP respectively. HTTPS Stealth uses the Cloudflare hostname and loopback-only origin. To run all three implemented transports, enable all three sets of environment values and include all overlays:
+
+```bash
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml config --quiet
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml up --build -d
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml ps
+```
+
+The control and XHTTP hostnames may remain behind Cloudflare Tunnel, but Hysteria2 and REALITY session profiles must advertise a direct server IP or DNS-only hostname. Open stateful TCP `443` and UDP `443` in both the cloud network policy and host firewall only for those raw transports; keep the control and XHTTP origin ports closed publicly.
 
 Create an access grant:
 
@@ -126,7 +143,7 @@ Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting
 1. Sign the implemented Linux/Windows packages and exercise their signed artifacts on target machines; the unsigned Linux and Windows installer, service, reinstall, and removal lifecycles are CI-gated.
 2. Retest fail-closed network handover on the current API 36 device, repeat the Android matrix on physical API 26, then complete Doze, revoke, connected-state DNS-leak, and owner-signed installation tests.
 3. Exercise the implemented Android process/reboot restoration and always-on/lockdown lifecycle on physical API 36 and API 26 devices.
-4. Evaluate the next maintained transport only after the shipped dual-transport paths pass the release matrix.
+4. Exercise HTTPS Stealth through the configured Cloudflare path on restricted Wi-Fi, cellular, desktop, and Android before selecting the next maintained transport.
 5. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.
 
 Ket must use maintained protocol implementations and authenticated encryption. Obfuscation such as XOR is never treated as security on its own.

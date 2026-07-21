@@ -61,12 +61,19 @@ pub enum HysteriaObfuscation {
 
 #[derive(Clone)]
 pub struct XrayConfig {
-    pub transport_id: String,
     pub runtime_config_path: PathBuf,
     pub binary_path: PathBuf,
     pub api_server: String,
     pub api_listen: String,
     pub api_port: u16,
+    pub credential_key: String,
+    pub reality: Option<XrayRealityConfig>,
+    pub xhttp: Option<XrayXhttpConfig>,
+}
+
+#[derive(Clone)]
+pub struct XrayRealityConfig {
+    pub transport_id: String,
     pub inbound_tag: String,
     pub listen_host: String,
     pub listen_port: u16,
@@ -78,7 +85,19 @@ pub struct XrayConfig {
     pub private_key: String,
     pub public_key: String,
     pub short_id: String,
-    pub credential_key: String,
+    pub fingerprint: String,
+}
+
+#[derive(Clone)]
+pub struct XrayXhttpConfig {
+    pub transport_id: String,
+    pub inbound_tag: String,
+    pub listen_host: String,
+    pub listen_port: u16,
+    pub public_host: String,
+    pub public_port: u16,
+    pub sni: String,
+    pub path: String,
     pub fingerprint: String,
 }
 
@@ -114,7 +133,12 @@ impl ServerConfig {
         }
         let xray = XrayConfig::from_env()?;
         if let Some(config) = &xray {
-            transports.push(config.transport_profile());
+            if let Some(reality) = &config.reality {
+                transports.push(reality.transport_profile());
+            }
+            if let Some(xhttp) = &config.xhttp {
+                transports.push(xhttp.transport_profile());
+            }
         }
         validate_transports(&transports)?;
 
@@ -240,14 +264,77 @@ impl HysteriaConfig {
 
 impl XrayConfig {
     fn from_env() -> Result<Option<Self>> {
-        if !parse_value("KET_XRAY_ENABLED", false)? {
+        let reality_enabled = parse_value("KET_XRAY_ENABLED", false)?;
+        let xhttp_enabled = parse_value("KET_XHTTP_ENABLED", false)?;
+        if !reality_enabled && !xhttp_enabled {
             return Ok(None);
         }
 
-        let public_host = required_hostname("KET_XRAY_PUBLIC_HOST")?;
-        let public_port = nonzero_port("KET_XRAY_PUBLIC_PORT", 443)?;
-        let listen_port = nonzero_port("KET_XRAY_LISTEN_PORT", 8444)?;
         let api_port = nonzero_port("KET_XRAY_API_PORT", 10085)?;
+        let credential_key = required("KET_XRAY_CREDENTIAL_KEY")?;
+        if credential_key.len() < 32 {
+            bail!("KET_XRAY_CREDENTIAL_KEY must contain at least 32 characters");
+        }
+        let api_server = required("KET_XRAY_API_SERVER")?;
+        validate_authority(&api_server, "KET_XRAY_API_SERVER")?;
+        let api_listen = value("KET_XRAY_API_LISTEN", "0.0.0.0");
+        validate_listen_host(&api_listen, "KET_XRAY_API_LISTEN")?;
+        let reality = reality_enabled
+            .then(XrayRealityConfig::from_env)
+            .transpose()?;
+        let xhttp = xhttp_enabled.then(XrayXhttpConfig::from_env).transpose()?;
+        if reality.as_ref().is_some_and(|reality| {
+            xhttp
+                .as_ref()
+                .is_some_and(|xhttp| reality.inbound_tag == xhttp.inbound_tag)
+        }) {
+            bail!("KET_XRAY_INBOUND_TAG and KET_XHTTP_INBOUND_TAG must be different");
+        }
+        if reality.as_ref().is_some_and(|reality| {
+            listeners_conflict(
+                &api_listen,
+                api_port,
+                &reality.listen_host,
+                reality.listen_port,
+            )
+        }) {
+            bail!("KET_XRAY_API and KET_XRAY inbound listeners must not overlap");
+        }
+        if xhttp.as_ref().is_some_and(|xhttp| {
+            listeners_conflict(&api_listen, api_port, &xhttp.listen_host, xhttp.listen_port)
+        }) {
+            bail!("KET_XRAY_API and KET_XHTTP inbound listeners must not overlap");
+        }
+        if reality.as_ref().is_some_and(|reality| {
+            xhttp.as_ref().is_some_and(|xhttp| {
+                listeners_conflict(
+                    &reality.listen_host,
+                    reality.listen_port,
+                    &xhttp.listen_host,
+                    xhttp.listen_port,
+                )
+            })
+        }) {
+            bail!("KET_XRAY and KET_XHTTP inbound listeners must not overlap");
+        }
+
+        Ok(Some(Self {
+            runtime_config_path: value("KET_XRAY_CONFIG_PATH", "/var/lib/ket-dataplane/xray.json")
+                .into(),
+            binary_path: value("KET_XRAY_BINARY", "/usr/local/bin/xray").into(),
+            api_server,
+            api_listen,
+            api_port,
+            credential_key,
+            reality,
+            xhttp,
+        }))
+    }
+}
+
+impl XrayRealityConfig {
+    fn from_env() -> Result<Self> {
+        let public_host = required_hostname("KET_XRAY_PUBLIC_HOST")?;
         let sni = required_dns_name("KET_XRAY_SNI")?;
         let server_names = required("KET_XRAY_SERVER_NAMES")?
             .split(',')
@@ -264,7 +351,6 @@ impl XrayConfig {
         if !server_names.iter().any(|name| name == &sni) {
             bail!("KET_XRAY_SNI must be listed in KET_XRAY_SERVER_NAMES");
         }
-
         let reality_target = required("KET_XRAY_REALITY_TARGET")?;
         validate_target(&reality_target)?;
         let private_key = required_reality_key("KET_XRAY_PRIVATE_KEY")?;
@@ -276,56 +362,24 @@ impl XrayConfig {
         if short_id.len() != 16 || !short_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             bail!("KET_XRAY_SHORT_ID must contain exactly 16 hexadecimal characters");
         }
-        let credential_key = required("KET_XRAY_CREDENTIAL_KEY")?;
-        if credential_key.len() < 32 {
-            bail!("KET_XRAY_CREDENTIAL_KEY must contain at least 32 characters");
-        }
-
-        let fingerprint = value("KET_XRAY_FINGERPRINT", "chrome");
-        if !matches!(
-            fingerprint.as_str(),
-            "chrome" | "firefox" | "safari" | "ios" | "android" | "edge" | "random"
-        ) {
-            bail!(
-                "KET_XRAY_FINGERPRINT must be chrome, firefox, safari, ios, android, edge, or random"
-            );
-        }
-        let api_server = required("KET_XRAY_API_SERVER")?;
-        validate_authority(&api_server, "KET_XRAY_API_SERVER")?;
         let listen_host = value("KET_XRAY_LISTEN_HOST", "0.0.0.0");
         validate_listen_host(&listen_host, "KET_XRAY_LISTEN_HOST")?;
-        let api_listen = value("KET_XRAY_API_LISTEN", "0.0.0.0");
-        validate_listen_host(&api_listen, "KET_XRAY_API_LISTEN")?;
-        let inbound_tag = value("KET_XRAY_INBOUND_TAG", "vless-reality");
-        if inbound_tag.trim().is_empty()
-            || inbound_tag.len() > 64
-            || inbound_tag.chars().any(char::is_control)
-        {
-            bail!("KET_XRAY_INBOUND_TAG must be 1-64 printable characters");
-        }
 
-        Ok(Some(Self {
+        Ok(Self {
             transport_id: value("KET_XRAY_TRANSPORT_ID", "vless-reality-primary"),
-            runtime_config_path: value("KET_XRAY_CONFIG_PATH", "/var/lib/ket-dataplane/xray.json")
-                .into(),
-            binary_path: value("KET_XRAY_BINARY", "/usr/local/bin/xray").into(),
-            api_server,
-            api_listen,
-            api_port,
-            inbound_tag,
+            inbound_tag: bounded_tag("KET_XRAY_INBOUND_TAG", "vless-reality")?,
             listen_host,
-            listen_port,
+            listen_port: nonzero_port("KET_XRAY_LISTEN_PORT", 8444)?,
             public_host,
-            public_port,
+            public_port: nonzero_port("KET_XRAY_PUBLIC_PORT", 443)?,
             sni,
             server_names,
             reality_target,
             private_key,
             public_key,
             short_id: short_id.to_lowercase(),
-            credential_key,
-            fingerprint,
-        }))
+            fingerprint: fingerprint("KET_XRAY_FINGERPRINT")?,
+        })
     }
 
     fn transport_profile(&self) -> TransportProfile {
@@ -347,6 +401,82 @@ impl XrayConfig {
             options,
         }
     }
+}
+
+impl XrayXhttpConfig {
+    fn from_env() -> Result<Self> {
+        let listen_host = value("KET_XHTTP_LISTEN_HOST", "0.0.0.0");
+        validate_listen_host(&listen_host, "KET_XHTTP_LISTEN_HOST")?;
+        let path = required("KET_XHTTP_PATH")?;
+        validate_xhttp_path(&path)?;
+        Ok(Self {
+            transport_id: value("KET_XHTTP_TRANSPORT_ID", "https-stealth-primary"),
+            inbound_tag: bounded_tag("KET_XHTTP_INBOUND_TAG", "vless-xhttp")?,
+            listen_host,
+            listen_port: nonzero_port("KET_XHTTP_LISTEN_PORT", 8445)?,
+            public_host: required_hostname("KET_XHTTP_PUBLIC_HOST")?,
+            public_port: nonzero_port("KET_XHTTP_PUBLIC_PORT", 443)?,
+            sni: required_dns_name("KET_XHTTP_SNI")?,
+            path,
+            fingerprint: fingerprint("KET_XHTTP_FINGERPRINT")?,
+        })
+    }
+
+    fn transport_profile(&self) -> TransportProfile {
+        TransportProfile {
+            id: self.transport_id.clone(),
+            display_name: "HTTPS Stealth".to_owned(),
+            protocol: TransportProtocol::Stealth,
+            endpoint: self.public_host.clone(),
+            port: self.public_port,
+            network: Network::Tcp,
+            priority: 1,
+            tls_server_name: Some(self.sni.clone()),
+            options: BTreeMap::from([
+                ("encryption".to_owned(), "none".to_owned()),
+                ("fingerprint".to_owned(), self.fingerprint.clone()),
+                ("mode".to_owned(), "packet-up".to_owned()),
+                ("path".to_owned(), self.path.clone()),
+                ("security".to_owned(), "tls".to_owned()),
+                ("transport".to_owned(), "xhttp".to_owned()),
+            ]),
+        }
+    }
+}
+
+fn bounded_tag(name: &str, default: &str) -> Result<String> {
+    let tag = value(name, default);
+    if tag.trim().is_empty() || tag.len() > 64 || tag.chars().any(char::is_control) {
+        bail!("{name} must be 1-64 printable characters");
+    }
+    Ok(tag)
+}
+
+fn fingerprint(name: &str) -> Result<String> {
+    let fingerprint = value(name, "chrome");
+    if !matches!(
+        fingerprint.as_str(),
+        "chrome" | "firefox" | "safari" | "ios" | "android" | "edge" | "random"
+    ) {
+        bail!("{name} is unsupported");
+    }
+    Ok(fingerprint)
+}
+
+fn validate_xhttp_path(path: &str) -> Result<()> {
+    if !(16..=128).contains(&path.len())
+        || !path.starts_with('/')
+        || path.ends_with('/')
+        || path.contains("//")
+        || !path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_'))
+    {
+        bail!(
+            "KET_XHTTP_PATH must be a 16-128 character absolute path using letters, numbers, /, -, or _"
+        );
+    }
+    Ok(())
 }
 
 fn value(name: &str, default: &str) -> String {
@@ -419,6 +549,32 @@ fn validate_listen_host(host: &str, name: &str) -> Result<()> {
         bail!("{name} must be an IPv4 or IPv6 address");
     }
     Ok(())
+}
+
+fn listeners_conflict(
+    first_host: &str,
+    first_port: u16,
+    second_host: &str,
+    second_port: u16,
+) -> bool {
+    if first_port != second_port {
+        return false;
+    }
+    let first = first_host
+        .parse::<std::net::IpAddr>()
+        .expect("listen hosts are validated before conflict checks");
+    let second = second_host
+        .parse::<std::net::IpAddr>()
+        .expect("listen hosts are validated before conflict checks");
+    match (first, second) {
+        (std::net::IpAddr::V4(first), std::net::IpAddr::V4(second)) => {
+            first == second || first.is_unspecified() || second.is_unspecified()
+        }
+        (std::net::IpAddr::V6(first), std::net::IpAddr::V6(second)) => {
+            first == second || first.is_unspecified() || second.is_unspecified()
+        }
+        _ => false,
+    }
 }
 
 fn validate_authority(authority: &str, name: &str) -> Result<()> {
@@ -615,9 +771,9 @@ mod tests {
     use ket_core::{Network, NodeLocation, TransportProfile, TransportProtocol};
 
     use super::{
-        normalize_public_url, required_reality_key, validate_authority, validate_dns_name,
-        validate_hostname, validate_location, validate_node_metadata, validate_target,
-        validate_transports,
+        listeners_conflict, normalize_public_url, required_reality_key, validate_authority,
+        validate_dns_name, validate_hostname, validate_location, validate_node_metadata,
+        validate_target, validate_transports, validate_xhttp_path,
     };
 
     #[test]
@@ -717,6 +873,13 @@ mod tests {
         assert!(validate_target("https://www.example.com:443").is_err());
         assert!(validate_authority("xray:10085", "API").is_ok());
         assert!(validate_authority("xray", "API").is_err());
+        assert!(listeners_conflict("0.0.0.0", 8445, "127.0.0.1", 8445));
+        assert!(!listeners_conflict("0.0.0.0", 8444, "0.0.0.0", 8445));
+        assert!(!listeners_conflict("0.0.0.0", 8445, "::", 8445));
+        assert!(validate_xhttp_path("/a1b2c3d4e5f6g7h8").is_ok());
+        assert!(validate_xhttp_path("/short").is_err());
+        assert!(validate_xhttp_path("/a1b2c3d4e5f6g7h8/").is_err());
+        assert!(validate_xhttp_path("/a1b2c3d4//e5f6g7h8").is_err());
 
         let name = "KET_TEST_REALITY_KEY";
         // SAFETY: this test is the only reader/writer of this test-specific variable.

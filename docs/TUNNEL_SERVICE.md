@@ -10,9 +10,9 @@ Ket keeps the desktop UI and control-plane client unprivileged. A small system s
 - The service permits one full-route tunnel at a time. A desktop heartbeat renews a 12-second lease; a crashed client therefore cannot leave routing under an unmanaged process indefinitely.
 - Tunnel IDs, HMAC proofs, access codes, and transport credentials use redacted debug implementations. The broker token is never sent over the socket.
 - The selected engine receives an ephemeral `0600` configuration under the service runtime directory. Ket removes that file after engine and bridge readiness and disables Hysteria update checks.
-- Both transports expose only an unauthenticated loopback SOCKS endpoint to the same supervised bridge. The bridge requires virtual DNS, captures IPv4 and IPv6, and bypasses every pre-resolved data-plane server IP.
+- All implemented transports expose only an unauthenticated loopback SOCKS endpoint to the same supervised bridge. The bridge requires virtual DNS, captures IPv4 and IPv6, and bypasses every pre-resolved data-plane or CDN IP.
 
-The token authenticates a local desktop installation; it does not elevate arbitrary requests. The service exposes a fixed command set and validates the server transport description before it starts Hysteria. Administrators and root remain trusted by the operating-system security model.
+The token authenticates a local desktop installation; it does not elevate arbitrary requests. The service exposes a fixed command set and validates the server transport description before it starts Hysteria or Xray. Administrators and root remain trusted by the operating-system security model.
 
 ## Linux installation
 

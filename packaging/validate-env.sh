@@ -84,12 +84,36 @@ if [[ "${KET_XRAY_ENABLED:-false}" == true ]]; then
   [[ "$KET_XRAY_PRIVATE_KEY" != "$KET_XRAY_PUBLIC_KEY" ]] || fail 'KET_XRAY_PRIVATE_KEY and KET_XRAY_PUBLIC_KEY must differ'
   required KET_XRAY_SHORT_ID
   [[ "$KET_XRAY_SHORT_ID" =~ ^[A-Fa-f0-9]{16}$ ]] || fail 'KET_XRAY_SHORT_ID must contain exactly 16 hexadecimal characters'
-  required KET_XRAY_CREDENTIAL_KEY
-  (( ${#KET_XRAY_CREDENTIAL_KEY} >= 32 )) || fail 'KET_XRAY_CREDENTIAL_KEY must contain at least 32 characters'
   case "${KET_XRAY_FINGERPRINT:-chrome}" in
     chrome|firefox|safari|ios|android|edge|random) ;;
     *) fail 'KET_XRAY_FINGERPRINT is unsupported' ;;
   esac
+fi
+
+if [[ "${KET_XHTTP_ENABLED:-false}" == true ]]; then
+  required KET_XHTTP_PUBLIC_HOST
+  valid_host KET_XHTTP_PUBLIC_HOST || fail 'KET_XHTTP_PUBLIC_HOST must be a bounded hostname or IP address'
+  valid_port KET_XHTTP_PUBLIC_PORT 443 || fail 'KET_XHTTP_PUBLIC_PORT must be between 1 and 65535'
+  required KET_XHTTP_SNI
+  valid_host KET_XHTTP_SNI || fail 'KET_XHTTP_SNI must be a bounded hostname'
+  [[ "$KET_XHTTP_SNI" =~ [A-Za-z] ]] || fail 'KET_XHTTP_SNI must be a hostname, not an IP address'
+  required KET_XHTTP_PATH
+  [[ "$KET_XHTTP_PATH" =~ ^/[A-Za-z0-9/_-]{15,127}$ ]] || fail 'KET_XHTTP_PATH must be a 16-128 character absolute path using letters, numbers, /, -, or _'
+  [[ "$KET_XHTTP_PATH" != */ && "$KET_XHTTP_PATH" != *//* ]] || fail 'KET_XHTTP_PATH cannot end in / or contain //'
+  valid_port KET_XHTTP_ORIGIN_PORT 8445 || fail 'KET_XHTTP_ORIGIN_PORT must be between 1 and 65535'
+  case "${KET_XHTTP_ORIGIN_BIND_ADDRESS:-127.0.0.1}" in
+    127.0.0.1|'[::1]') ;;
+    *) fail 'KET_XHTTP_ORIGIN_BIND_ADDRESS must remain loopback-only' ;;
+  esac
+  case "${KET_XHTTP_FINGERPRINT:-chrome}" in
+    chrome|firefox|safari|ios|android|edge|random) ;;
+    *) fail 'KET_XHTTP_FINGERPRINT is unsupported' ;;
+  esac
+fi
+
+if [[ "${KET_XRAY_ENABLED:-false}" == true || "${KET_XHTTP_ENABLED:-false}" == true ]]; then
+  required KET_XRAY_CREDENTIAL_KEY
+  (( ${#KET_XRAY_CREDENTIAL_KEY} >= 32 )) || fail 'KET_XRAY_CREDENTIAL_KEY must contain at least 32 characters'
 fi
 
 printf 'Ket configuration preflight passed.\n'

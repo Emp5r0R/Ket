@@ -20,14 +20,22 @@ use crate::{
     runtime::EphemeralConfig,
 };
 
-const KNOWN_OPTIONS: &[&str] = &["encryption", "fingerprint", "flow", "transport"];
-const KNOWN_SECRETS: &[&str] = &["reality_password", "reality_short_id"];
+const REALITY_OPTIONS: &[&str] = &["encryption", "fingerprint", "flow", "transport"];
+const REALITY_SECRETS: &[&str] = &["reality_password", "reality_short_id"];
+const XHTTP_OPTIONS: &[&str] = &[
+    "encryption",
+    "fingerprint",
+    "mode",
+    "path",
+    "security",
+    "transport",
+];
 const FINGERPRINTS: &[&str] = &[
     "chrome", "firefox", "safari", "ios", "android", "edge", "random",
 ];
 
 #[derive(Clone, Debug)]
-pub struct XrayRealityAdapter {
+pub struct XrayAdapter {
     xray_binary_path: PathBuf,
     bridge: FullRouteBridge,
     runtime_dir: PathBuf,
@@ -35,7 +43,7 @@ pub struct XrayRealityAdapter {
     stop_timeout: Duration,
 }
 
-impl XrayRealityAdapter {
+impl XrayAdapter {
     pub fn new(
         xray_binary_path: impl Into<PathBuf>,
         bridge_binary_path: impl Into<PathBuf>,
@@ -52,9 +60,12 @@ impl XrayRealityAdapter {
 }
 
 #[async_trait]
-impl TransportAdapter for XrayRealityAdapter {
+impl TransportAdapter for XrayAdapter {
     fn supports(&self, transport: &SessionTransport) -> bool {
-        transport.profile.protocol == TransportProtocol::VlessXtlsReality
+        matches!(
+            transport.profile.protocol,
+            TransportProtocol::VlessXtlsReality | TransportProtocol::Stealth
+        )
     }
 
     async fn probe(&self, transport: &SessionTransport) -> Result<ProbeReport, ClientError> {
@@ -132,7 +143,7 @@ impl TransportAdapter for XrayRealityAdapter {
         if !validation.success() {
             return Err(ClientError::transport(
                 &transport.profile.id,
-                "Xray rejected the Reality configuration",
+                "Xray rejected the transport configuration",
                 false,
             ));
         }
@@ -167,9 +178,9 @@ impl TransportAdapter for XrayRealityAdapter {
             .profile
             .tls_server_name
             .as_deref()
-            .expect("validated Reality SNI");
+            .expect("validated TLS server name");
         if let Err(error) =
-            verify_reality_path(socks_port, sni, self.startup_timeout, &transport.profile.id).await
+            verify_tunnel_path(socks_port, sni, self.startup_timeout, &transport.profile.id).await
         {
             stop_child(&mut xray).await;
             return Err(error);
@@ -244,12 +255,15 @@ async fn check_binary(
 
 fn validate_transport(transport: &SessionTransport) -> Result<(), ClientError> {
     let id = &transport.profile.id;
-    if transport.profile.protocol != TransportProtocol::VlessXtlsReality
-        || transport.profile.network != Network::Tcp
+    if transport.profile.network != Network::Tcp
+        || !matches!(
+            transport.profile.protocol,
+            TransportProtocol::VlessXtlsReality | TransportProtocol::Stealth
+        )
     {
         return Err(ClientError::transport(
             id,
-            "profile is not a VLESS + REALITY TCP transport",
+            "profile is not a supported Xray TCP transport",
             false,
         ));
     }
@@ -269,46 +283,14 @@ fn validate_transport(transport: &SessionTransport) -> Result<(), ClientError> {
         .tls_server_name
         .as_deref()
         .filter(|name| valid_hostname(name))
-        .ok_or_else(|| ClientError::transport(id, "Reality server name is invalid", false))?;
+        .ok_or_else(|| ClientError::transport(id, "TLS server name is invalid", false))?;
     if sni.parse::<IpAddr>().is_ok() {
         return Err(ClientError::transport(
             id,
-            "Reality server name must be a hostname",
+            "TLS server name must be a hostname",
             false,
         ));
     }
-    if let Some(option) = transport
-        .profile
-        .options
-        .keys()
-        .find(|option| !KNOWN_OPTIONS.contains(&option.as_str()))
-    {
-        return Err(ClientError::transport(
-            id,
-            format!("unsupported VLESS + REALITY option {option}"),
-            false,
-        ));
-    }
-    for (key, expected) in [
-        ("encryption", "none"),
-        ("flow", "xtls-rprx-vision"),
-        ("transport", "raw"),
-    ] {
-        if transport.profile.options.get(key).map(String::as_str) != Some(expected) {
-            return Err(ClientError::transport(
-                id,
-                format!("unsupported VLESS + REALITY {key}"),
-                false,
-            ));
-        }
-    }
-    let fingerprint = transport
-        .profile
-        .options
-        .get("fingerprint")
-        .filter(|value| FINGERPRINTS.contains(&value.as_str()))
-        .ok_or_else(|| ClientError::transport(id, "Reality fingerprint is invalid", false))?;
-    debug_assert!(!fingerprint.is_empty());
     let credential = transport
         .credential
         .as_ref()
@@ -320,10 +302,31 @@ fn validate_transport(transport: &SessionTransport) -> Result<(), ClientError> {
             false,
         ));
     }
+    match transport.profile.protocol {
+        TransportProtocol::VlessXtlsReality => validate_reality_transport(transport),
+        TransportProtocol::Stealth => validate_xhttp_transport(transport),
+        _ => unreachable!("protocol checked above"),
+    }
+}
+
+fn validate_reality_transport(transport: &SessionTransport) -> Result<(), ClientError> {
+    let id = &transport.profile.id;
+    reject_unknown_options(transport, REALITY_OPTIONS, "VLESS + REALITY")?;
+    require_options(
+        transport,
+        &[
+            ("encryption", "none"),
+            ("flow", "xtls-rprx-vision"),
+            ("transport", "raw"),
+        ],
+        "VLESS + REALITY",
+    )?;
+    validate_fingerprint(transport, "Reality")?;
+    let credential = transport.credential.as_ref().expect("validated credential");
     if let Some(secret) = credential
         .secrets
         .keys()
-        .find(|secret| !KNOWN_SECRETS.contains(&secret.as_str()))
+        .find(|secret| !REALITY_SECRETS.contains(&secret.as_str()))
     {
         return Err(ClientError::transport(
             id,
@@ -352,6 +355,104 @@ fn validate_transport(transport: &SessionTransport) -> Result<(), ClientError> {
         ));
     }
     Ok(())
+}
+
+fn validate_xhttp_transport(transport: &SessionTransport) -> Result<(), ClientError> {
+    let id = &transport.profile.id;
+    reject_unknown_options(transport, XHTTP_OPTIONS, "HTTPS Stealth")?;
+    require_options(
+        transport,
+        &[
+            ("encryption", "none"),
+            ("mode", "packet-up"),
+            ("security", "tls"),
+            ("transport", "xhttp"),
+        ],
+        "HTTPS Stealth",
+    )?;
+    validate_fingerprint(transport, "HTTPS Stealth")?;
+    let path = transport
+        .profile
+        .options
+        .get("path")
+        .filter(|path| valid_xhttp_path(path))
+        .ok_or_else(|| ClientError::transport(id, "HTTPS Stealth path is invalid", false))?;
+    debug_assert!(!path.is_empty());
+    let credential = transport.credential.as_ref().expect("validated credential");
+    if !credential.secrets.is_empty() {
+        return Err(ClientError::transport(
+            id,
+            "HTTPS Stealth credential contains unsupported secrets",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn reject_unknown_options(
+    transport: &SessionTransport,
+    known: &[&str],
+    name: &str,
+) -> Result<(), ClientError> {
+    if let Some(option) = transport
+        .profile
+        .options
+        .keys()
+        .find(|option| !known.contains(&option.as_str()))
+    {
+        return Err(ClientError::transport(
+            &transport.profile.id,
+            format!("unsupported {name} option {option}"),
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn require_options(
+    transport: &SessionTransport,
+    expected: &[(&str, &str)],
+    name: &str,
+) -> Result<(), ClientError> {
+    for (key, expected) in expected {
+        if transport.profile.options.get(*key).map(String::as_str) != Some(*expected) {
+            return Err(ClientError::transport(
+                &transport.profile.id,
+                format!("unsupported {name} {key}"),
+                false,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_fingerprint<'a>(
+    transport: &'a SessionTransport,
+    name: &str,
+) -> Result<&'a str, ClientError> {
+    let fingerprint = transport
+        .profile
+        .options
+        .get("fingerprint")
+        .filter(|value| FINGERPRINTS.contains(&value.as_str()))
+        .ok_or_else(|| {
+            ClientError::transport(
+                &transport.profile.id,
+                format!("{name} fingerprint is invalid"),
+                false,
+            )
+        })?;
+    Ok(fingerprint)
+}
+
+fn valid_xhttp_path(path: &str) -> bool {
+    (16..=128).contains(&path.len())
+        && path.starts_with('/')
+        && !path.ends_with('/')
+        && !path.contains("//")
+        && path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_'))
 }
 
 fn valid_hostname(value: &str) -> bool {
@@ -401,6 +502,50 @@ fn render_client_config(
     validate_transport(transport)?;
     let credential = transport.credential.as_ref().expect("validated credential");
     let options = &transport.profile.options;
+    let (tag, user, stream_settings) = match transport.profile.protocol {
+        TransportProtocol::VlessXtlsReality => (
+            "ket-reality",
+            json!({
+                "id": credential.auth,
+                "encryption": options["encryption"],
+                "flow": options["flow"]
+            }),
+            json!({
+                "network": options["transport"],
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "fingerprint": options["fingerprint"],
+                    "serverName": transport.profile.tls_server_name,
+                    "password": required_secret(transport, "reality_password")?,
+                    "shortId": required_secret(transport, "reality_short_id")?,
+                    "spiderX": "/"
+                }
+            }),
+        ),
+        TransportProtocol::Stealth => (
+            "ket-stealth",
+            json!({
+                "id": credential.auth,
+                "encryption": options["encryption"]
+            }),
+            json!({
+                "network": options["transport"],
+                "security": options["security"],
+                "tlsSettings": {
+                    "fingerprint": options["fingerprint"],
+                    "serverName": transport.profile.tls_server_name,
+                    "alpn": ["h2", "http/1.1"]
+                },
+                "xhttpSettings": {
+                    "host": transport.profile.tls_server_name,
+                    "path": options["path"],
+                    "mode": options["mode"]
+                }
+            }),
+        ),
+        _ => unreachable!("transport validated above"),
+    };
     let document = json!({
         "log": { "loglevel": "warning" },
         "inbounds": [{
@@ -416,37 +561,22 @@ fn render_client_config(
             }
         }],
         "outbounds": [{
-            "tag": "ket-reality",
+            "tag": tag,
             "protocol": "vless",
             "settings": {
                 "vnext": [{
                     "address": server_address.to_string(),
                     "port": transport.profile.port,
-                    "users": [{
-                        "id": credential.auth,
-                        "encryption": options["encryption"],
-                        "flow": options["flow"]
-                    }]
+                    "users": [user]
                 }]
             },
-            "streamSettings": {
-                "network": options["transport"],
-                "security": "reality",
-                "realitySettings": {
-                    "show": false,
-                    "fingerprint": options["fingerprint"],
-                    "serverName": transport.profile.tls_server_name,
-                    "password": required_secret(transport, "reality_password")?,
-                    "shortId": required_secret(transport, "reality_short_id")?,
-                    "spiderX": "/"
-                }
-            }
+            "streamSettings": stream_settings
         }]
     });
     serde_json::to_vec_pretty(&document).map_err(|_| {
         ClientError::transport(
             &transport.profile.id,
-            "failed to encode the Xray Reality configuration",
+            "failed to encode the Xray transport configuration",
             false,
         )
     })
@@ -483,7 +613,7 @@ async fn wait_for_socks(
     }
 }
 
-async fn verify_reality_path(
+async fn verify_tunnel_path(
     port: u16,
     target: &str,
     startup_timeout: Duration,
@@ -492,7 +622,7 @@ async fn verify_reality_path(
     let proxy = reqwest::Proxy::all(format!("socks5h://127.0.0.1:{port}")).map_err(|_| {
         ClientError::transport(
             transport_id,
-            "failed to configure the local REALITY verification proxy",
+            "failed to configure the local tunnel verification proxy",
             false,
         )
     })?;
@@ -517,7 +647,7 @@ async fn verify_reality_path(
         .map_err(|_| {
             ClientError::transport(
                 transport_id,
-                "the VLESS + REALITY path failed certificate-verified TLS",
+                "the Xray path failed certificate-verified TLS",
                 true,
             )
         })
@@ -553,6 +683,30 @@ mod tests {
     }
 
     #[test]
+    fn renders_a_strict_xhttp_tls_client_for_cdn_transport() {
+        let transport = test_xhttp_transport();
+        let document =
+            render_client_config(&transport, "203.0.113.9".parse().expect("test IP"), 10808)
+                .expect("render config");
+        let config: serde_json::Value = serde_json::from_slice(&document).expect("valid JSON");
+        let outbound = &config["outbounds"][0];
+        let stream = &outbound["streamSettings"];
+        assert_eq!(outbound["tag"], "ket-stealth");
+        assert_eq!(outbound["settings"]["vnext"][0]["address"], "203.0.113.9");
+        assert!(
+            outbound["settings"]["vnext"][0]["users"][0]
+                .get("flow")
+                .is_none()
+        );
+        assert_eq!(stream["network"], "xhttp");
+        assert_eq!(stream["security"], "tls");
+        assert_eq!(stream["tlsSettings"]["serverName"], "stealth.example.test");
+        assert_eq!(stream["xhttpSettings"]["mode"], "packet-up");
+        assert_eq!(stream["xhttpSettings"]["path"], "/a1b2c3d4e5f6g7h8");
+        assert!(stream["tlsSettings"].get("allowInsecure").is_none());
+    }
+
+    #[test]
     fn rejects_unknown_options_and_malformed_credentials() {
         let mut transport = test_transport();
         transport
@@ -564,13 +718,30 @@ mod tests {
         let mut transport = test_transport();
         transport.credential.as_mut().expect("credential").auth = "not-a-uuid".into();
         assert!(validate_transport(&transport).is_err());
+
+        let mut transport = test_xhttp_transport();
+        transport
+            .credential
+            .as_mut()
+            .expect("credential")
+            .secrets
+            .insert("unexpected".to_owned(), SecretString::from("secret"));
+        assert!(validate_transport(&transport).is_err());
+
+        let mut transport = test_xhttp_transport();
+        transport
+            .profile
+            .options
+            .insert("path".to_owned(), "/short".to_owned());
+        assert!(validate_transport(&transport).is_err());
     }
 
     #[test]
     fn adapter_support_is_protocol_specific() {
         let transport = test_transport();
-        let adapter = XrayRealityAdapter::new("xray", "tun2proxy", "/tmp/ket");
+        let adapter = XrayAdapter::new("xray", "tun2proxy", "/tmp/ket");
         assert!(adapter.supports(&transport));
+        assert!(adapter.supports(&test_xhttp_transport()));
     }
 
     #[test]
@@ -587,24 +758,23 @@ mod tests {
                 .join(binary)
         };
         let binary = fs::canonicalize(binary).expect("resolve Xray test binary");
-        let document = render_client_config(
-            &test_transport(),
-            "203.0.113.9".parse().expect("test IP"),
-            10808,
-        )
-        .expect("render config");
-        let path = std::env::temp_dir().join(format!(
-            "ket-xray-validation-{}.json",
-            rand::thread_rng().r#gen::<u64>()
-        ));
-        fs::write(&path, document).expect("write test config");
-        let status = StdCommand::new(binary)
-            .args(["run", "-test", "-c"])
-            .arg(&path)
-            .status()
-            .expect("run Xray config validation");
-        let _ = fs::remove_file(path);
-        assert!(status.success());
+        for transport in [test_transport(), test_xhttp_transport()] {
+            let document =
+                render_client_config(&transport, "203.0.113.9".parse().expect("test IP"), 10808)
+                    .expect("render config");
+            let path = std::env::temp_dir().join(format!(
+                "ket-xray-validation-{}.json",
+                rand::thread_rng().r#gen::<u64>()
+            ));
+            fs::write(&path, document).expect("write test config");
+            let status = StdCommand::new(&binary)
+                .args(["run", "-test", "-c"])
+                .arg(&path)
+                .status()
+                .expect("run Xray config validation");
+            let _ = fs::remove_file(path);
+            assert!(status.success());
+        }
     }
 
     fn test_transport() -> SessionTransport {
@@ -637,6 +807,33 @@ mod tests {
                         SecretString::from("0123456789abcdef"),
                     ),
                 ]),
+            }),
+        }
+    }
+
+    fn test_xhttp_transport() -> SessionTransport {
+        SessionTransport {
+            profile: TransportProfile {
+                id: "https-stealth-primary".to_owned(),
+                display_name: "HTTPS Stealth".to_owned(),
+                protocol: TransportProtocol::Stealth,
+                endpoint: "stealth.example.test".to_owned(),
+                port: 443,
+                network: Network::Tcp,
+                priority: 1,
+                tls_server_name: Some("stealth.example.test".to_owned()),
+                options: BTreeMap::from([
+                    ("encryption".to_owned(), "none".to_owned()),
+                    ("fingerprint".to_owned(), "chrome".to_owned()),
+                    ("mode".to_owned(), "packet-up".to_owned()),
+                    ("path".to_owned(), "/a1b2c3d4e5f6g7h8".to_owned()),
+                    ("security".to_owned(), "tls".to_owned()),
+                    ("transport".to_owned(), "xhttp".to_owned()),
+                ]),
+            },
+            credential: Some(TransportCredential {
+                auth: SecretString::from("550e8400-e29b-41d4-a716-446655440000"),
+                secrets: BTreeMap::new(),
             }),
         }
     }
