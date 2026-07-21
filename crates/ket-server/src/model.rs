@@ -60,12 +60,19 @@ impl PersistedState {
         }
 
         let mut session_ids = HashSet::with_capacity(self.sessions.len());
+        let mut resource_slots = HashSet::with_capacity(self.sessions.len());
         for session in &self.sessions {
             if !valid_identifier(&session.id, SESSION_ID_LENGTH) {
                 return Err("session ID is invalid");
             }
             if !session_ids.insert(session.id.as_str()) {
                 return Err("session IDs are duplicated");
+            }
+            if session
+                .resource_slot
+                .is_some_and(|slot| !resource_slots.insert(slot))
+            {
+                return Err("session resource slots are duplicated");
             }
             let Some(grant_expiry) = grants_by_id.get(session.grant_id.as_str()) else {
                 return Err("session references an unknown access grant");
@@ -120,6 +127,8 @@ pub(crate) struct SessionRecord {
     pub secret_hash: String,
     #[serde(default)]
     pub data_plane_secret_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    pub resource_slot: Option<u32>,
     pub client_name: String,
     pub issued_at_epoch_seconds: u64,
     pub expires_at_epoch_seconds: u64,
@@ -172,6 +181,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn duplicate_resource_slots_fail_closed() {
+        let mut state = valid_state();
+        let mut duplicate = state.sessions[0].clone();
+        duplicate.id = "Session00002".to_owned();
+        state.sessions.push(duplicate);
+
+        assert_eq!(
+            state.validate(),
+            Err("session resource slots are duplicated")
+        );
+    }
+
     fn valid_state() -> PersistedState {
         PersistedState {
             schema_version: 1,
@@ -188,6 +210,7 @@ mod tests {
                 grant_id: "Grant00001".to_owned(),
                 secret_hash: VALID_HASH.to_owned(),
                 data_plane_secret_hash: None,
+                resource_slot: Some(0),
                 client_name: "Valid client".to_owned(),
                 issued_at_epoch_seconds: 100,
                 expires_at_epoch_seconds: 200,

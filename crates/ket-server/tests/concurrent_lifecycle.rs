@@ -230,7 +230,7 @@ async fn concurrent_multi_code_sessions_respect_limits_and_survive_restart() {
     assert!(
         revoked
             .iter()
-            .all(|session_id| personal_session_ids.contains(session_id.as_str()))
+            .all(|session| personal_session_ids.contains(session.id.as_str()))
     );
     assert_eq!(reloaded.active_session_count().await, 2);
 

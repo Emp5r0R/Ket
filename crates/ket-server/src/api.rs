@@ -30,7 +30,7 @@ use tower_http::{
 use crate::{
     config::{HysteriaObfuscation, ServerConfig},
     data_plane::{self, DataPlaneControl},
-    service::{AccessService, CreatedSession, ServiceError, unix_time},
+    service::{AccessService, CreatedSession, ServiceError, SessionAllocation, unix_time},
     system, xray,
 };
 
@@ -81,16 +81,13 @@ impl AppState {
 
     pub async fn reconcile_data_planes(&self) -> anyhow::Result<()> {
         self.data_plane_ready.store(false, Ordering::Release);
-        let session_ids = self.access.active_session_ids().await;
+        let sessions = self.access.active_session_allocations().await?;
         let mut delay = Duration::from_millis(250);
         for attempt in 1..=20 {
-            match self.data_plane.reconcile(&session_ids).await {
+            match self.data_plane.reconcile(&sessions).await {
                 Ok(()) => {
                     self.data_plane_ready.store(true, Ordering::Release);
-                    tracing::info!(
-                        sessions = session_ids.len(),
-                        "data-plane sessions reconciled"
-                    );
+                    tracing::info!(sessions = sessions.len(), "data-plane sessions reconciled");
                     return Ok(());
                 }
                 Err(error) if attempt < 20 => {
@@ -104,9 +101,9 @@ impl AppState {
         unreachable!("bounded reconciliation loop always returns")
     }
 
-    async fn kick_sessions(&self, session_ids: &[String]) {
-        if let Err(error) = self.data_plane.kick(session_ids).await {
-            tracing::warn!(%error, sessions = session_ids.len(), "failed to kick data-plane sessions");
+    async fn kick_sessions(&self, sessions: &[SessionAllocation]) {
+        if let Err(error) = self.data_plane.kick(sessions).await {
+            tracing::warn!(%error, sessions = sessions.len(), "failed to kick data-plane sessions");
         }
     }
 }
@@ -217,7 +214,12 @@ async fn create_session(
             return Err(error.into());
         }
     };
-    if let Err(error) = state.data_plane.provision(&created.id).await {
+    let allocation = SessionAllocation {
+        id: created.id.clone(),
+        resource_slot: created.resource_slot,
+    };
+    state.kick_sessions(&created.expired_allocations).await;
+    if let Err(error) = state.data_plane.provision(&allocation).await {
         state
             .metrics
             .rejected_sessions
@@ -227,7 +229,7 @@ async fn create_session(
             .release_session(created.token.expose_secret())
             .await
         {
-            Ok(session_id) => state.kick_sessions(&[session_id]).await,
+            Ok(session) => state.kick_sessions(&[session]).await,
             Err(rollback_error) => {
                 tracing::error!(%rollback_error, session_id = %created.id, "failed to roll back unprovisioned session")
             }
@@ -271,8 +273,8 @@ async fn release_session(
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     let token = bearer_token(&headers)?;
-    let session_id = state.access.release_session(token).await?;
-    state.kick_sessions(&[session_id]).await;
+    let session = state.access.release_session(token).await?;
+    state.kick_sessions(&[session]).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -418,7 +420,11 @@ async fn build_session_status(
     state: &AppState,
     session: crate::service::SessionView,
 ) -> SessionStatus {
-    let traffic = match state.data_plane.traffic(&session.id).await {
+    let allocation = SessionAllocation {
+        id: session.id.clone(),
+        resource_slot: session.resource_slot,
+    };
+    let traffic = match state.data_plane.traffic(&allocation).await {
         Ok(traffic) => traffic,
         Err(error) => {
             tracing::warn!(%error, session_id = %session.id, "data-plane traffic is unavailable");
@@ -683,11 +689,11 @@ mod tests {
             true
         }
 
-        async fn provision(&self, session_id: &str) -> Result<(), DataPlaneError> {
+        async fn provision(&self, session: &SessionAllocation) -> Result<(), DataPlaneError> {
             self.provision_attempts
                 .lock()
                 .expect("provision attempts lock")
-                .push(session_id.to_owned());
+                .push(session.id.clone());
             if self.fail_provision {
                 Err(DataPlaneError::Command("injected failure".to_owned()))
             } else {
@@ -695,11 +701,14 @@ mod tests {
             }
         }
 
-        async fn reconcile(&self, _session_ids: &[String]) -> Result<(), DataPlaneError> {
+        async fn reconcile(&self, _sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
             Ok(())
         }
 
-        async fn traffic(&self, _session_id: &str) -> Result<SessionTraffic, DataPlaneError> {
+        async fn traffic(
+            &self,
+            _session: &SessionAllocation,
+        ) -> Result<SessionTraffic, DataPlaneError> {
             Ok(SessionTraffic {
                 available: true,
                 bytes_sent: 0,
@@ -709,11 +718,11 @@ mod tests {
             })
         }
 
-        async fn kick(&self, session_ids: &[String]) -> Result<(), DataPlaneError> {
+        async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
             self.kicked_sessions
                 .lock()
                 .expect("kicked sessions lock")
-                .extend_from_slice(session_ids);
+                .extend(sessions.iter().map(|session| session.id.clone()));
             Ok(())
         }
     }
