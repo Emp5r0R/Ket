@@ -3,6 +3,60 @@ package com.ket.android
 import org.json.JSONObject
 
 internal object EngineConfig {
+    fun wireGuard(transport: WireGuardTlsTransport, wireGuardPort: Int, socksPort: Int): String {
+        require(wireGuardPort in 1..65535) { "WireGuard port is invalid" }
+        require(socksPort in 1..65535) { "SOCKS port is invalid" }
+        return JSONObject()
+            .put("log", JSONObject().put("loglevel", "warning"))
+            .put(
+                "inbounds",
+                org.json.JSONArray().put(
+                    JSONObject()
+                        .put("tag", "ket-socks")
+                        .put("listen", "127.0.0.1")
+                        .put("port", socksPort)
+                        .put("protocol", "socks")
+                        .put("settings", JSONObject().put("auth", "noauth").put("udp", true))
+                        .put(
+                            "sniffing",
+                            JSONObject()
+                                .put("enabled", true)
+                                .put("destOverride", org.json.JSONArray(listOf("http", "tls", "quic")))
+                                .put("routeOnly", true),
+                        ),
+                ),
+            )
+            .put(
+                "outbounds",
+                org.json.JSONArray().put(
+                    JSONObject()
+                        .put("tag", "ket-wireguard")
+                        .put("protocol", "wireguard")
+                        .put(
+                            "settings",
+                            JSONObject()
+                                .put("secretKey", transport.privateKey)
+                                .put("address", org.json.JSONArray(listOf("${transport.clientAddress}/32")))
+                                .put("noKernelTun", true)
+                                .put("mtu", 1280)
+                                .put("domainStrategy", "ForceIP")
+                                .put(
+                                    "peers",
+                                    org.json.JSONArray().put(
+                                        JSONObject()
+                                            .put("publicKey", transport.serverPublicKey)
+                                            .put("preSharedKey", transport.presharedKey)
+                                            .put("endpoint", "127.0.0.1:$wireGuardPort")
+                                            .put("allowedIPs", org.json.JSONArray(listOf("0.0.0.0/0")))
+                                            .put("keepAlive", 25),
+                                    ),
+                                ),
+                        ),
+                ),
+            )
+            .toString(2)
+    }
+
     fun shadowsocks(
         transport: ShadowsocksTransport,
         resolvedAddress: String,

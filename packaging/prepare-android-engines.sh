@@ -10,6 +10,7 @@ hev_checksum=f0c5909b188272a6cee2b3c92e13cf16d927ba29a20bd1d750a2ff3419cda381
 versions="hysteria=v2.10.0
 shadowsocks=1.24.0
 xray=v26.3.27
+wstunnel=10.6.2
 hev-socks5-tunnel=$hev_version"
 
 complete=true
@@ -22,6 +23,7 @@ for artifact in \
   "$output/jniLibs/x86_64/libsslocal.so" \
   "$output/jniLibs/arm64-v8a/libxray.so" \
   "$output/jniLibs/x86_64/libxray.so" \
+  "$output/jniLibs/arm64-v8a/libwstunnel.so" \
   "$output/hev-socks5-tunnel/Android.mk"; do
   [[ -f "$artifact" ]] || complete=false
 done
@@ -55,6 +57,8 @@ trap cleanup EXIT
   "$stage/jniLibs/arm64-v8a/libxray.so"
 "$repo_root/packaging/fetch-xray.sh" android-amd64 \
   "$stage/jniLibs/x86_64/libxray.so"
+"$repo_root/packaging/fetch-wstunnel.sh" android-arm64 \
+  "$stage/jniLibs/arm64-v8a/libwstunnel.so"
 
 url="https://github.com/heiher/hev-socks5-tunnel/releases/download/${hev_version}/hev-socks5-tunnel-${hev_version}.tar.xz"
 curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
@@ -68,4 +72,4 @@ rm -rf "$output"
 mv "$stage" "$output"
 trap - EXIT
 rm -f "$archive"
-printf 'Prepared Hysteria v2.10.0, shadowsocks-rust 1.24.0, Xray v26.3.27, and hev-socks5-tunnel %s for Android.\n' "$hev_version"
+printf 'Prepared Hysteria v2.10.0, shadowsocks-rust 1.24.0, Xray v26.3.27, wstunnel 10.6.2 (arm64), and hev-socks5-tunnel %s for Android.\n' "$hev_version"

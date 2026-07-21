@@ -6,8 +6,10 @@
       "binaries/hysteria.exe": "hysteria.exe",
       "binaries/sslocal.exe": "sslocal.exe",
       "binaries/xray.exe": "xray.exe",
+      "binaries/wstunnel.exe": "wstunnel.exe",
       "binaries/tun2proxy.exe": "tun2proxy.exe",
       "binaries/wintun.dll": "wintun.dll",
+      "../../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../../../packaging/windows/install-tunnel-service.ps1": "install-tunnel-service.ps1"
     },
     "windows": {

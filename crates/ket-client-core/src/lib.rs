@@ -12,6 +12,7 @@ mod state;
 mod strategy;
 mod transport;
 mod validation;
+mod wireguard;
 mod xray;
 
 pub use api::{ControlEndpoint, ControlPlane, HttpControlPlane, InsecureHttpPolicy};
@@ -23,4 +24,5 @@ pub use shadowsocks::Shadowsocks2022Adapter;
 pub use state::{ClientPhase, ClientSnapshot, TransportSummary};
 pub use strategy::{SelectionPolicy, TransportHistory, TransportSelector};
 pub use transport::{ActiveTunnel, ProbeReport, StartedTunnel, TransportAdapter, TunnelStatus};
+pub use wireguard::WireGuardTlsAdapter;
 pub use xray::XrayAdapter;

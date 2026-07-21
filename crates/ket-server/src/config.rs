@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ket_core::{Network, NodeLocation, TransportProfile, TransportProtocol};
 use url::{Host, Url};
 
@@ -34,6 +35,7 @@ pub struct ServerConfig {
     pub transports: Vec<TransportProfile>,
     pub hysteria: Option<HysteriaConfig>,
     pub shadowsocks: Option<ShadowsocksConfig>,
+    pub wireguard: Option<WireGuardConfig>,
     pub xray: Option<XrayConfig>,
 }
 
@@ -71,6 +73,19 @@ pub struct ShadowsocksConfig {
     pub port_start: u16,
     pub port_end: u16,
     pub credential_key: String,
+}
+
+#[derive(Clone)]
+pub struct WireGuardConfig {
+    pub transport_id: String,
+    pub manager_url: String,
+    pub manager_token: String,
+    pub credential_key: String,
+    pub server_public_key: String,
+    pub public_host: String,
+    pub public_port: u16,
+    pub sni: String,
+    pub path_prefix: String,
 }
 
 #[derive(Clone)]
@@ -158,6 +173,10 @@ impl ServerConfig {
         if let Some(config) = &shadowsocks {
             transports.push(config.transport_profile());
         }
+        let wireguard = WireGuardConfig::from_env(max_sessions)?;
+        if let Some(config) = &wireguard {
+            transports.push(config.transport_profile());
+        }
         validate_transports(&transports)?;
 
         let node_id = value("KET_NODE_ID", "ket-node-1");
@@ -191,8 +210,89 @@ impl ServerConfig {
             transports,
             hysteria,
             shadowsocks,
+            wireguard,
             xray,
         })
+    }
+}
+
+impl WireGuardConfig {
+    fn from_env(max_sessions: u32) -> Result<Option<Self>> {
+        if !parse_value("KET_WIREGUARD_ENABLED", false)? {
+            return Ok(None);
+        }
+        if max_sessions > 65_533 {
+            bail!("KET_MAX_SESSIONS cannot exceed 65533 when WireGuard TLS is enabled");
+        }
+
+        let manager_url = required("KET_WIREGUARD_MANAGER_URL")?;
+        let parsed = Url::parse(&manager_url)
+            .context("KET_WIREGUARD_MANAGER_URL must be an absolute HTTP URL")?;
+        if parsed.scheme() != "http"
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            bail!(
+                "KET_WIREGUARD_MANAGER_URL must be an HTTP URL without credentials, a query, or a fragment"
+            );
+        }
+
+        let manager_token = required("KET_WIREGUARD_MANAGER_TOKEN")?;
+        if manager_token.len() < 32 {
+            bail!("KET_WIREGUARD_MANAGER_TOKEN must contain at least 32 characters");
+        }
+        let credential_key = required("KET_WIREGUARD_CREDENTIAL_KEY")?;
+        if credential_key.len() < 32 {
+            bail!("KET_WIREGUARD_CREDENTIAL_KEY must contain at least 32 characters");
+        }
+        let server_public_key = required_wireguard_key("KET_WIREGUARD_SERVER_PUBLIC_KEY")?;
+        let path_prefix = required("KET_WIREGUARD_WS_PATH_PREFIX")?;
+        validate_wireguard_path_prefix(&path_prefix)?;
+
+        Ok(Some(Self {
+            transport_id: value("KET_WIREGUARD_TRANSPORT_ID", "wireguard-tls-primary"),
+            manager_url: manager_url.trim_end_matches('/').to_owned(),
+            manager_token,
+            credential_key,
+            server_public_key,
+            public_host: required_hostname("KET_WIREGUARD_PUBLIC_HOST")?,
+            public_port: nonzero_port("KET_WIREGUARD_PUBLIC_PORT", 443)?,
+            sni: required_dns_name("KET_WIREGUARD_SNI")?,
+            path_prefix,
+        }))
+    }
+
+    pub(crate) fn client_address(&self, resource_slot: u32) -> Option<String> {
+        let host = resource_slot.checked_add(2)?;
+        (host <= 65_534).then(|| format!("10.66.{}.{}", host >> 8, host & 0xff))
+    }
+
+    fn transport_profile(&self) -> TransportProfile {
+        TransportProfile {
+            id: self.transport_id.clone(),
+            display_name: "WireGuard TLS".to_owned(),
+            protocol: TransportProtocol::WireGuard,
+            endpoint: self.public_host.clone(),
+            port: self.public_port,
+            network: Network::Tcp,
+            priority: 2,
+            tls_server_name: Some(self.sni.clone()),
+            options: BTreeMap::from([
+                ("address_allocation".to_owned(), "lease_slot".to_owned()),
+                ("allowed_ips".to_owned(), "0.0.0.0/0".to_owned()),
+                ("keepalive_seconds".to_owned(), "25".to_owned()),
+                ("mtu".to_owned(), "1280".to_owned()),
+                ("path_prefix".to_owned(), self.path_prefix.clone()),
+                (
+                    "remote_address".to_owned(),
+                    "wireguard-agent:51820".to_owned(),
+                ),
+                ("transport".to_owned(), "websocket_tls".to_owned()),
+            ]),
+        }
     }
 }
 
@@ -685,6 +785,31 @@ fn required_reality_key(name: &str) -> Result<String> {
         bail!("{name} must be a 43-character base64url X25519 key");
     }
     Ok(key)
+}
+
+fn required_wireguard_key(name: &str) -> Result<String> {
+    let key = required(name)?;
+    if STANDARD
+        .decode(&key)
+        .ok()
+        .is_none_or(|decoded| decoded.len() != 32)
+    {
+        bail!("{name} must be a standard-base64 WireGuard key containing exactly 32 bytes");
+    }
+    Ok(key)
+}
+
+fn validate_wireguard_path_prefix(prefix: &str) -> Result<()> {
+    if !(16..=96).contains(&prefix.len())
+        || !prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        bail!(
+            "KET_WIREGUARD_WS_PATH_PREFIX must contain 16-96 letters, numbers, hyphens, or underscores"
+        );
+    }
+    Ok(())
 }
 
 fn nonzero_port(name: &str, default: u16) -> Result<u16> {

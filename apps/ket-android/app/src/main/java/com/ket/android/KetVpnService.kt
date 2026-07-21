@@ -226,6 +226,9 @@ class KetVpnService : VpnService() {
         is ShadowsocksTransport -> transportAddresses[transport.id]?.let {
             AndroidShadowsocksEngine(this, transport, it)
         }
+        is WireGuardTlsTransport -> transportAddresses[transport.id]?.let {
+            AndroidWireGuardTlsEngine(this, transport, it)
+        }
         is AndroidXrayTransport -> transportAddresses[transport.id]?.let {
             AndroidXrayEngine(this, transport, it)
         }

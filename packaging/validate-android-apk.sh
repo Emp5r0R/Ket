@@ -46,6 +46,12 @@ for abi in armeabi-v7a arm64-v8a x86 x86_64; do
   done
 done
 
+entry="lib/arm64-v8a/libwstunnel.so"
+if ! unzip -Z1 "$apk" "$entry" | grep -Fxq "$entry"; then
+  printf 'APK is missing %s\n' "$entry" >&2
+  exit 1
+fi
+
 for abi in arm64-v8a x86_64; do
   for library in libsslocal.so libxray.so; do
     entry="lib/$abi/$library"
@@ -93,4 +99,4 @@ if [[ -n "$apksigner" ]]; then
   fi
 fi
 
-printf 'Validated Android Hysteria payloads for four ABIs and Shadowsocks/Xray payloads for arm64-v8a and x86_64.\n'
+printf 'Validated Android Hysteria payloads for four ABIs, Shadowsocks/Xray payloads for arm64-v8a and x86_64, and wstunnel for arm64-v8a.\n'

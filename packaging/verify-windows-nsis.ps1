@@ -44,8 +44,10 @@ $RequiredFiles = @(
     (Join-Path $InstallDir "hysteria.exe"),
     (Join-Path $InstallDir "sslocal.exe"),
     (Join-Path $InstallDir "xray.exe"),
+    (Join-Path $InstallDir "wstunnel.exe"),
     (Join-Path $InstallDir "tun2proxy.exe"),
     (Join-Path $InstallDir "wintun.dll"),
+    (Join-Path $InstallDir "THIRD_PARTY_NOTICES.md"),
     (Join-Path $InstallDir "install-tunnel-service.ps1")
 )
 

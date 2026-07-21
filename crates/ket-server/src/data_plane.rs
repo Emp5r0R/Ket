@@ -24,9 +24,11 @@ use tokio::{net::UdpSocket, process::Command};
 use zeroize::Zeroizing;
 
 use crate::{
-    config::{SHADOWSOCKS_2022_METHOD, ServerConfig, ShadowsocksConfig, XrayConfig},
+    config::{
+        SHADOWSOCKS_2022_METHOD, ServerConfig, ShadowsocksConfig, WireGuardConfig, XrayConfig,
+    },
     service::{SessionAllocation, unix_time},
-    shadowsocks, xray,
+    shadowsocks, wireguard, xray,
 };
 
 const MAX_STATS_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -87,10 +89,169 @@ pub(crate) fn from_config(
     if let Some(shadowsocks) = &config.shadowsocks {
         controls.push(Arc::new(ShadowsocksControl::new(shadowsocks.clone())));
     }
+    if let Some(wireguard) = &config.wireguard {
+        controls.push(Arc::new(WireGuardControl::new(wireguard.clone())?));
+    }
     match controls.len() {
         0 => Ok(Arc::new(NoDataPlane)),
         1 => Ok(controls.remove(0)),
         _ => Ok(Arc::new(CompositeDataPlane { controls })),
+    }
+}
+
+struct WireGuardControl {
+    client: HttpClient,
+    config: WireGuardConfig,
+}
+
+impl WireGuardControl {
+    fn new(config: WireGuardConfig) -> Result<Self, DataPlaneError> {
+        let uri: Uri = config
+            .manager_url
+            .parse()
+            .map_err(|_| DataPlaneError::InvalidUrl)?;
+        if uri.scheme_str() != Some("http") || uri.authority().is_none() {
+            return Err(DataPlaneError::InvalidUrl);
+        }
+        let mut connector = HttpConnector::new();
+        connector.enforce_http(true);
+        Ok(Self {
+            client: Client::builder(TokioExecutor::new()).build(connector),
+            config,
+        })
+    }
+
+    async fn request<T: Serialize + ?Sized>(
+        &self,
+        method: Method,
+        path: &str,
+        body: &T,
+    ) -> Result<Bytes, DataPlaneError> {
+        let encoded = serde_json::to_vec(body)?;
+        let request = Request::builder()
+            .method(method)
+            .uri(self.uri(path)?)
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", self.config.manager_token),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(encoded)))?;
+        self.send(request).await
+    }
+
+    async fn get(&self, path: &str) -> Result<Bytes, DataPlaneError> {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(self.uri(path)?)
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", self.config.manager_token),
+            )
+            .body(Full::new(Bytes::new()))?;
+        self.send(request).await
+    }
+
+    async fn send(&self, request: Request<Full<Bytes>>) -> Result<Bytes, DataPlaneError> {
+        let response = tokio::time::timeout(Duration::from_secs(5), self.client.request(request))
+            .await
+            .map_err(|_| DataPlaneError::Timeout)??;
+        if !response.status().is_success() {
+            return Err(DataPlaneError::Status(response.status()));
+        }
+        let bytes = response.into_body().collect().await?.to_bytes();
+        if bytes.len() > MAX_STATS_RESPONSE_BYTES * 32 {
+            return Err(DataPlaneError::ResponseTooLarge);
+        }
+        Ok(bytes)
+    }
+
+    fn uri(&self, path: &str) -> Result<Uri, DataPlaneError> {
+        format!("{}{path}", self.config.manager_url)
+            .parse()
+            .map_err(|_| DataPlaneError::InvalidUrl)
+    }
+
+    async fn peers(&self) -> Result<Vec<wireguard::PeerStatus>, DataPlaneError> {
+        Ok(serde_json::from_slice(&self.get("/v1/peers").await?)?)
+    }
+}
+
+#[async_trait]
+impl DataPlaneControl for WireGuardControl {
+    async fn healthy(&self) -> bool {
+        self.get("/healthz").await.is_ok()
+    }
+
+    async fn provision(&self, session: &SessionAllocation) -> Result<(), DataPlaneError> {
+        let peer = wireguard::managed_peer(&self.config, &session.id, session.resource_slot);
+        self.request(Method::PUT, "/v1/peers", &peer).await?;
+        Ok(())
+    }
+
+    async fn reconcile(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        let peers = sessions
+            .iter()
+            .map(|session| {
+                wireguard::managed_peer(&self.config, &session.id, session.resource_slot)
+            })
+            .collect();
+        self.request(
+            Method::PUT,
+            "/v1/peers/reconcile",
+            &wireguard::ReconcilePeers { peers },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn traffic(&self, session: &SessionAllocation) -> Result<SessionTraffic, DataPlaneError> {
+        let address = self
+            .config
+            .client_address(session.resource_slot)
+            .expect("validated WireGuard capacity covers every resource slot");
+        let peer = self
+            .peers()
+            .await?
+            .into_iter()
+            .find(|peer| peer.address == address);
+        Ok(wireguard_session_traffic(peer.as_ref(), unix_time()))
+    }
+
+    async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
+        let addresses = sessions
+            .iter()
+            .map(|session| {
+                self.config
+                    .client_address(session.resource_slot)
+                    .expect("validated WireGuard capacity covers every resource slot")
+            })
+            .collect();
+        self.request(
+            Method::POST,
+            "/v1/peers/remove",
+            &wireguard::RemovePeers { addresses },
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+fn wireguard_session_traffic(
+    peer: Option<&wireguard::PeerStatus>,
+    observed_at_epoch_seconds: u64,
+) -> SessionTraffic {
+    SessionTraffic {
+        available: true,
+        // Kernel counters are from the server interface's perspective.
+        bytes_sent: peer.map_or(0, |peer| peer.bytes_received),
+        bytes_received: peer.map_or(0, |peer| peer.bytes_sent),
+        online_connections: u32::from(peer.is_some_and(|peer| {
+            peer.latest_handshake_epoch_seconds > 0
+                && observed_at_epoch_seconds.saturating_sub(peer.latest_handshake_epoch_seconds)
+                    <= 180
+        })),
+        observed_at_epoch_seconds,
     }
 }
 
@@ -885,6 +1046,25 @@ mod tests {
                 "rpc error: code = Unavailable".to_owned(),
             )))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn wireguard_server_counters_map_to_the_client_perspective() {
+        let peer = wireguard::PeerStatus {
+            public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned(),
+            address: "10.66.0.2".to_owned(),
+            latest_handshake_epoch_seconds: 900,
+            bytes_received: 42,
+            bytes_sent: 19,
+        };
+        let traffic = wireguard_session_traffic(Some(&peer), 1_000);
+        assert_eq!(traffic.bytes_sent, 42);
+        assert_eq!(traffic.bytes_received, 19);
+        assert_eq!(traffic.online_connections, 1);
+        assert_eq!(
+            wireguard_session_traffic(Some(&peer), 1_081).online_connections,
+            0
         );
     }
 

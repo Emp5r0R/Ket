@@ -33,6 +33,7 @@ internal object AndroidTransportSelector {
                     "shadowsocks2022" -> add(ShadowsocksTransport.parse(candidate))
                     "stealth" -> add(StealthTransport.parse(candidate))
                     "vless_xtls_reality" -> add(RealityTransport.parse(candidate))
+                    "wire_guard" -> add(WireGuardTlsTransport.parse(candidate))
                 }
             }
         }.sortedWith(compareBy(AndroidTransport::priority, AndroidTransport::id))

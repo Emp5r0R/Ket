@@ -63,6 +63,7 @@ required_payloads=(
   usr/libexec/ket/hysteria
   usr/libexec/ket/sslocal
   usr/libexec/ket/xray
+  usr/libexec/ket/wstunnel
   usr/libexec/ket/tun2proxy
 )
 for payload in "${required_payloads[@]}"; do
@@ -70,6 +71,9 @@ for payload in "${required_payloads[@]}"; do
     fail "required executable payload is missing: /${payload}"
   }
 done
+[[ -s ${scratch}/root/usr/share/doc/ket/THIRD_PARTY_NOTICES.md ]] || {
+  fail "third-party notice is missing"
+}
 
 desktop_entry=${scratch}/root/usr/share/applications/Ket.desktop
 [[ -f ${desktop_entry} ]] || fail "desktop entry is missing"
@@ -106,6 +110,7 @@ verify_installation() {
   /usr/libexec/ket/hysteria version >/dev/null
   /usr/libexec/ket/sslocal --version >/dev/null
   /usr/libexec/ket/xray version >/dev/null
+  /usr/libexec/ket/wstunnel --version >/dev/null
   /usr/libexec/ket/tun2proxy --version >/dev/null
   if [[ -d /run/systemd/system ]]; then
     systemctl is-enabled --quiet ket-tunnel.service || fail "tunnel service is not enabled"

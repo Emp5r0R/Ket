@@ -16,7 +16,7 @@
 
 The privileged service delegates protocol logic to maintained upstream engines. The desktop process uses `BrokerTransportAdapter`, which authenticates to that service over loopback and never launches engines directly.
 
-Hysteria2 uses its official UDP-capable [SOCKS5 mode](https://v2.hysteria.network/docs/advanced/Full-Client-Config/#socks5). VLESS + REALITY and HTTPS Stealth use strict Xray-core loopback SOCKS configurations; Stealth selects XHTTP `packet-up` with browser-fingerprinted, certificate-verified TLS. Shadowsocks 2022 uses the official shadowsocks-rust `sslocal` in TCP+UDP SOCKS mode with a strict SIP022 profile. All upstream engines feed one shared, pinned `tun2proxy` lifecycle for full-route TUN and [virtual-DNS](https://github.com/tun2proxy/tun2proxy#manual-setup) ownership. Ket does not reimplement QUIC, REALITY, XHTTP, Shadowsocks, proxy translation, or their cryptography.
+Hysteria2 uses its official UDP-capable [SOCKS5 mode](https://v2.hysteria.network/docs/advanced/Full-Client-Config/#socks5). VLESS + REALITY and HTTPS Stealth use strict Xray-core loopback SOCKS configurations; Stealth selects XHTTP `packet-up` with browser-fingerprinted, certificate-verified TLS. Shadowsocks 2022 uses the official shadowsocks-rust `sslocal` in TCP+UDP SOCKS mode with a strict SIP022 profile. WireGuard TLS uses Xray's userspace WireGuard outbound connected to a loopback UDP wstunnel client with pinned public SNI, certificate verification, Host header, and WebSocket path. All upstream engines feed one shared, pinned `tun2proxy` lifecycle for full-route TUN and [virtual-DNS](https://github.com/tun2proxy/tun2proxy#manual-setup) ownership. Ket does not reimplement QUIC, REALITY, XHTTP, Shadowsocks, WireGuard, WebSocket, proxy translation, or their cryptography.
 
 - TLS verification is mandatory and uses the server-provided SNI.
 - Each adapter resolves the server before route setup, pins the engine to the selected IP, and excludes every resolved server IP from full IPv4/IPv6 routes, preventing both a routing loop and data-plane DNS outside the tunnel.
@@ -27,7 +27,7 @@ Hysteria2 uses its official UDP-capable [SOCKS5 mode](https://v2.hysteria.networ
 - Raw engine output is discarded after extracting an allowlisted diagnostic category, preventing share URIs or credentials from entering app logs.
 - The child process is supervised and killed on explicit disconnect, terminal failure, service shutdown, or desktop heartbeat expiry.
 
-The desktop package bundles verified Hysteria, Xray, `sslocal`, and `tun2proxy` binaries with the service installer. The GUI deliberately does not self-elevate. The SOCKS/TUN bridge carries TCP and UDP, not arbitrary IP protocols such as ICMP; UI diagnostics must state that limitation accurately.
+The desktop package bundles verified Hysteria, Xray, `sslocal`, wstunnel, and `tun2proxy` binaries with the service installer. The GUI deliberately does not self-elevate. The SOCKS/TUN bridge carries TCP and UDP, not arbitrary IP protocols such as ICMP; UI diagnostics must state that limitation accurately.
 
 ## Integration sketch
 

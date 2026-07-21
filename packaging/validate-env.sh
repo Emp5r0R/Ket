@@ -17,6 +17,10 @@ valid_host() {
   [[ "$value" != *'?'* && "$value" != *'#'* ]] || return 1
   [[ ! "$value" =~ [[:space:][:cntrl:]] ]]
 }
+valid_wireguard_key() {
+  local value=${!1:-}
+  [[ "$value" =~ ^[A-Za-z0-9+/]{43}=$ ]]
+}
 valid_public_url() {
   local value=${KET_PUBLIC_URL:-http://127.0.0.1:8787} authority
   [[ -n "$value" && ${#value} -le 2048 ]] || return 1
@@ -128,6 +132,32 @@ fi
 if [[ "${KET_XRAY_ENABLED:-false}" == true || "${KET_XHTTP_ENABLED:-false}" == true ]]; then
   required KET_XRAY_CREDENTIAL_KEY
   (( ${#KET_XRAY_CREDENTIAL_KEY} >= 32 )) || fail 'KET_XRAY_CREDENTIAL_KEY must contain at least 32 characters'
+fi
+
+if [[ "${KET_WIREGUARD_ENABLED:-false}" == true ]]; then
+  required KET_WIREGUARD_PUBLIC_HOST
+  valid_host KET_WIREGUARD_PUBLIC_HOST || fail 'KET_WIREGUARD_PUBLIC_HOST must be a bounded hostname or IP address'
+  valid_port KET_WIREGUARD_PUBLIC_PORT 443 || fail 'KET_WIREGUARD_PUBLIC_PORT must be between 1 and 65535'
+  required KET_WIREGUARD_SNI
+  valid_host KET_WIREGUARD_SNI || fail 'KET_WIREGUARD_SNI must be a bounded hostname'
+  [[ "$KET_WIREGUARD_SNI" =~ [A-Za-z] ]] || fail 'KET_WIREGUARD_SNI must be a hostname, not an IP address'
+  required KET_WIREGUARD_WS_PATH_PREFIX
+  [[ "$KET_WIREGUARD_WS_PATH_PREFIX" =~ ^[A-Za-z0-9_-]{16,96}$ ]] || fail 'KET_WIREGUARD_WS_PATH_PREFIX must contain 16-96 letters, numbers, - or _ without slashes'
+  valid_port KET_WIREGUARD_ORIGIN_PORT 8446 || fail 'KET_WIREGUARD_ORIGIN_PORT must be between 1 and 65535'
+  case "${KET_WIREGUARD_ORIGIN_BIND_ADDRESS:-127.0.0.1}" in
+    127.0.0.1|'[::1]') ;;
+    *) fail 'KET_WIREGUARD_ORIGIN_BIND_ADDRESS must remain loopback-only' ;;
+  esac
+  required KET_WIREGUARD_SERVER_PRIVATE_KEY
+  valid_wireguard_key KET_WIREGUARD_SERVER_PRIVATE_KEY || fail 'KET_WIREGUARD_SERVER_PRIVATE_KEY must be a 32-byte standard-base64 WireGuard key'
+  required KET_WIREGUARD_SERVER_PUBLIC_KEY
+  valid_wireguard_key KET_WIREGUARD_SERVER_PUBLIC_KEY || fail 'KET_WIREGUARD_SERVER_PUBLIC_KEY must be a 32-byte standard-base64 WireGuard key'
+  [[ "$KET_WIREGUARD_SERVER_PRIVATE_KEY" != "$KET_WIREGUARD_SERVER_PUBLIC_KEY" ]] || fail 'WireGuard private and public keys must differ'
+  required KET_WIREGUARD_MANAGER_TOKEN
+  (( ${#KET_WIREGUARD_MANAGER_TOKEN} >= 32 )) || fail 'KET_WIREGUARD_MANAGER_TOKEN must contain at least 32 characters'
+  required KET_WIREGUARD_CREDENTIAL_KEY
+  (( ${#KET_WIREGUARD_CREDENTIAL_KEY} >= 32 )) || fail 'KET_WIREGUARD_CREDENTIAL_KEY must contain at least 32 characters'
+  (( ${KET_MAX_SESSIONS:-1000} <= 65533 )) || fail 'KET_MAX_SESSIONS cannot exceed 65533 when WireGuard TLS is enabled'
 fi
 
 printf 'Ket configuration preflight passed.\n'
