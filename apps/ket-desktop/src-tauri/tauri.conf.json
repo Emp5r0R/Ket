@@ -42,6 +42,10 @@
     "shortDescription": "Ket private network client",
     "linux": {
       "deb": {
+        "depends": [
+          "libcap-ng0",
+          "libssl3"
+        ],
         "files": {
           "/usr/libexec/ket/ket-tunnel-service": "../../../target/release/ket-tunnel-service",
           "/usr/libexec/ket/hysteria": "binaries/hysteria",
