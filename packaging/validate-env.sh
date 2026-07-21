@@ -177,7 +177,8 @@ if [[ "${KET_OPENVPN_ENABLED:-false}" == true ]]; then
   required KET_OPENVPN_MANAGER_TOKEN
   (( ${#KET_OPENVPN_MANAGER_TOKEN} >= 32 )) || fail 'KET_OPENVPN_MANAGER_TOKEN must contain at least 32 characters'
   required KET_OPENVPN_AUTH_TOKEN
-  (( ${#KET_OPENVPN_AUTH_TOKEN} >= 32 )) || fail 'KET_OPENVPN_AUTH_TOKEN must contain at least 32 characters'
+  (( ${#KET_OPENVPN_AUTH_TOKEN} >= 32 && ${#KET_OPENVPN_AUTH_TOKEN} <= 512 )) || fail 'KET_OPENVPN_AUTH_TOKEN must contain 32-512 characters'
+  [[ ! "$KET_OPENVPN_AUTH_TOKEN" =~ [[:cntrl:]] ]] || fail 'KET_OPENVPN_AUTH_TOKEN cannot contain control characters'
   [[ "$KET_OPENVPN_MANAGER_TOKEN" != "$KET_OPENVPN_AUTH_TOKEN" ]] || fail 'KET_OPENVPN_MANAGER_TOKEN and KET_OPENVPN_AUTH_TOKEN must be independent'
   (( ${KET_MAX_SESSIONS:-1000} <= 65533 )) || fail 'KET_MAX_SESSIONS cannot exceed 65533 when OpenVPN is enabled'
 

@@ -19,6 +19,7 @@ Run these before publishing a release:
 cargo fmt --all -- --check
 cargo test --locked --workspace --exclude ket-desktop
 cargo clippy --locked --workspace --exclude ket-desktop --all-targets --all-features -- -D warnings
+./packaging/verify-openvpn-handshake.sh
 cargo test --locked --release -p ket-desktop --lib
 npm --prefix apps/ket-desktop test -- --run
 npm --prefix apps/ket-desktop run build
@@ -36,7 +37,7 @@ $installer = Get-ChildItem target/release/bundle/nsis/*.exe -File
 ./packaging/verify-windows-nsis.ps1 -Installer $installer.FullName
 ```
 
-For a production server, source `.env`, run `./packaging/validate-env.sh`, and validate the base file plus each enabled overlay with `docker compose config --quiet`. The preflight validates client-visible URL, node identity/location, and enabled transport inputs; `ket-server` then repeats authoritative structured URL and manifest-field validation before it binds a listener. Hysteria2 requires direct UDP reachability; VLESS + REALITY and OpenVPN/stunnel require separate direct raw TCP listeners. XHTTP/TLS Stealth and WireGuard TLS instead require path-specific Cloudflare or compatible HTTP routes to separate loopback-only origins. WireGuard TLS and OpenVPN require a rootful Linux Docker host with `/dev/net/tun`; WireGuard additionally needs kernel WireGuard support.
+For a production server, source `.env`, run `./packaging/validate-env.sh`, and validate the base file plus each enabled overlay with `docker compose config --quiet`. The preflight validates client-visible URL, node identity/location, and enabled transport inputs; `ket-server` then repeats authoritative structured URL and manifest-field validation before it binds a listener. The local OpenVPN handshake check uses `dev null`; it does not replace a TUN-backed packet-flow test. Hysteria2 requires direct UDP reachability; VLESS + REALITY and OpenVPN/stunnel require separate direct raw TCP listeners. XHTTP/TLS Stealth and WireGuard TLS instead require path-specific Cloudflare or compatible HTTP routes to separate loopback-only origins. WireGuard TLS and OpenVPN require a rootful Linux Docker host with `/dev/net/tun`; WireGuard additionally needs kernel WireGuard support.
 
 Container upgrades retain the v1 state volume. The loader accepts older v1 session records that predate scoped data-plane hashes, but those missing credentials remain fail closed until the client creates a current session. Unknown schema versions and structurally inconsistent or oversized state files stop startup instead of discarding grants or guessing a migration. Back up the `ket-state` volume before upgrading; never replace a rejected state file with an empty document as an automated recovery action.
 

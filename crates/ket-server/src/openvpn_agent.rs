@@ -1,6 +1,8 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::Write,
     net::{Ipv4Addr, SocketAddr},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Output, Stdio},
     sync::{
@@ -9,6 +11,7 @@ use std::{
     },
     time::Duration,
 };
+use url::Url;
 
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -44,7 +47,10 @@ struct AgentConfig {
     manager_token: String,
     openvpn_binary: PathBuf,
     server_config: PathBuf,
+    runtime_config: PathBuf,
     management_socket: PathBuf,
+    auth_url: String,
+    auth_token: String,
     tunnel_interface: String,
     egress_interface: String,
     max_clients: usize,
@@ -64,12 +70,28 @@ impl AgentConfig {
             "KET_OPENVPN_SERVER_CONFIG",
             "/etc/openvpn/ket-server.conf",
         ));
+        let runtime_config = PathBuf::from(value(
+            "KET_OPENVPN_RUNTIME_CONFIG",
+            "/run/ket-openvpn/server-runtime.conf",
+        ));
+        if !runtime_config.is_absolute() {
+            bail!("KET_OPENVPN_RUNTIME_CONFIG must be an absolute path");
+        }
         let management_socket = PathBuf::from(value(
             "KET_OPENVPN_MANAGEMENT_SOCKET",
             "/run/ket-openvpn/management.sock",
         ));
         if !management_socket.is_absolute() {
             bail!("KET_OPENVPN_MANAGEMENT_SOCKET must be an absolute path");
+        }
+        let auth_url = required("KET_OPENVPN_AUTH_URL")?;
+        validate_auth_url(&auth_url)?;
+        let auth_token = required("KET_OPENVPN_AUTH_TOKEN")?;
+        if auth_token.len() < 32
+            || auth_token.len() > 512
+            || auth_token.chars().any(char::is_control)
+        {
+            bail!("KET_OPENVPN_AUTH_TOKEN must contain 32-512 non-control characters");
         }
         let tunnel_interface = value("KET_OPENVPN_TUN_INTERFACE", "ketovpn0");
         let egress_interface = value("KET_OPENVPN_EGRESS_INTERFACE", "eth0");
@@ -85,7 +107,10 @@ impl AgentConfig {
             manager_token,
             openvpn_binary,
             server_config,
+            runtime_config,
             management_socket,
+            auth_url,
+            auth_token,
             tunnel_interface,
             egress_interface,
             max_clients,
@@ -113,6 +138,7 @@ pub async fn run() -> Result<()> {
     validate_files(&config).await?;
     install_firewall(&config).await?;
     prepare_management_socket(&config.management_socket).await?;
+    write_runtime_config(&config)?;
     let child = launch_openvpn(&config).await?;
     let state = AgentState {
         config: Arc::clone(&config),
@@ -306,7 +332,7 @@ async fn prepare_management_socket(path: &Path) -> Result<()> {
 async fn launch_openvpn(config: &AgentConfig) -> Result<Child> {
     Command::new(&config.openvpn_binary)
         .arg("--config")
-        .arg(&config.server_config)
+        .arg(&config.runtime_config)
         .arg("--management")
         .arg(&config.management_socket)
         .arg("unix")
@@ -320,6 +346,80 @@ async fn launch_openvpn(config: &AgentConfig) -> Result<Child> {
         .kill_on_drop(true)
         .spawn()
         .context("failed to launch OpenVPN")
+}
+
+fn write_runtime_config(config: &AgentConfig) -> Result<()> {
+    let parent = config
+        .runtime_config
+        .parent()
+        .context("OpenVPN runtime configuration has no parent")?;
+    std::fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create OpenVPN runtime directory {}",
+            parent.display()
+        )
+    })?;
+    if std::fs::symlink_metadata(&config.runtime_config)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink() || !metadata.file_type().is_file())
+    {
+        bail!("OpenVPN runtime configuration path is not a regular file");
+    }
+    let document = render_runtime_config(config)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(&config.runtime_config)
+        .with_context(|| {
+            format!(
+                "failed to create OpenVPN runtime configuration {}",
+                config.runtime_config.display()
+            )
+        })?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(document.as_bytes())?;
+    file.sync_all()?;
+    Ok(())
+}
+
+fn render_runtime_config(config: &AgentConfig) -> Result<String> {
+    let server_config = config
+        .server_config
+        .to_str()
+        .context("KET_OPENVPN_SERVER_CONFIG must be UTF-8")?;
+    Ok(format!(
+        "config {}\nsetenv KET_OPENVPN_AUTH_URL {}\nsetenv KET_OPENVPN_AUTH_TOKEN {}\n",
+        quote_openvpn_value(server_config)?,
+        quote_openvpn_value(&config.auth_url)?,
+        quote_openvpn_value(&config.auth_token)?,
+    ))
+}
+
+fn quote_openvpn_value(value: &str) -> Result<String> {
+    if value.is_empty() || value.len() > 2048 || value.chars().any(char::is_control) {
+        bail!("OpenVPN runtime configuration value is invalid");
+    }
+    Ok(format!(
+        "\"{}\"",
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    ))
+}
+
+fn validate_auth_url(value: &str) -> Result<()> {
+    let parsed = Url::parse(value).context("KET_OPENVPN_AUTH_URL must be an absolute URL")?;
+    if parsed.scheme() != "http"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        bail!(
+            "KET_OPENVPN_AUTH_URL must be an internal HTTP URL without credentials, a query, or a fragment"
+        );
+    }
+    Ok(())
 }
 
 async fn wait_until_ready(state: &AgentState) -> Result<()> {
@@ -370,22 +470,54 @@ async fn management_command(socket: &Path, command: &str) -> Result<String> {
     }
     timeout(MANAGEMENT_TIMEOUT, async {
         let mut stream = UnixStream::connect(socket).await?;
-        stream
-            .write_all(format!("{command}\nquit\n").as_bytes())
-            .await?;
-        stream.shutdown().await?;
         let mut output = Vec::new();
-        stream
-            .take(MAX_MANAGEMENT_RESPONSE_BYTES + 1)
-            .read_to_end(&mut output)
-            .await?;
-        if output.len() as u64 > MAX_MANAGEMENT_RESPONSE_BYTES {
-            bail!("OpenVPN management returned too much data");
+        read_management_until(&mut stream, &mut output, |response| {
+            response.contains(&b'\n')
+        })
+        .await?;
+        if !String::from_utf8_lossy(&output).contains("OpenVPN Management Interface") {
+            bail!("OpenVPN management greeting is invalid");
         }
+        stream.write_all(format!("{command}\n").as_bytes()).await?;
+        read_management_until(&mut stream, &mut output, management_reply_complete).await?;
+        stream.write_all(b"quit\n").await?;
+        stream.shutdown().await?;
         String::from_utf8(output).context("OpenVPN management returned non-UTF-8 data")
     })
     .await
     .context("OpenVPN management operation timed out")?
+}
+
+async fn read_management_until(
+    stream: &mut UnixStream,
+    output: &mut Vec<u8>,
+    complete: impl Fn(&[u8]) -> bool,
+) -> Result<()> {
+    let mut buffer = [0_u8; 4096];
+    while !complete(output) {
+        let read = stream.read(&mut buffer).await?;
+        if read == 0 {
+            bail!("OpenVPN management closed before completing its response");
+        }
+        output.extend_from_slice(&buffer[..read]);
+        if output.len() as u64 > MAX_MANAGEMENT_RESPONSE_BYTES {
+            bail!("OpenVPN management returned too much data");
+        }
+    }
+    Ok(())
+}
+
+fn management_reply_complete(response: &[u8]) -> bool {
+    let complete_length = response
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |position| position + 1);
+    response[..complete_length]
+        .split(|byte| *byte == b'\n')
+        .any(|line| {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            line == b"END" || line.starts_with(b"SUCCESS:") || line.starts_with(b"ERROR:")
+        })
 }
 
 async fn session_statuses(socket: &Path) -> Result<Vec<OpenVpnSessionStatus>> {
@@ -397,7 +529,7 @@ fn parse_status(response: &str) -> Result<Vec<OpenVpnSessionStatus>> {
     let mut header = None;
     let mut rows = Vec::new();
     for line in response.lines() {
-        let fields = parse_csv_line(line)?;
+        let fields = parse_status_line(line)?;
         if fields.first().map(String::as_str) == Some("HEADER")
             && fields.get(1).map(String::as_str) == Some("CLIENT_LIST")
         {
@@ -459,6 +591,14 @@ fn parse_status(response: &str) -> Result<Vec<OpenVpnSessionStatus>> {
             })
         })
         .collect()
+}
+
+fn parse_status_line(line: &str) -> Result<Vec<String>> {
+    if line.contains('\t') {
+        Ok(line.split('\t').map(str::to_owned).collect())
+    } else {
+        parse_csv_line(line)
+    }
 }
 
 fn parse_csv_line(line: &str) -> Result<Vec<String>> {
@@ -650,7 +790,41 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
+
+    #[tokio::test]
+    async fn management_client_waits_for_greeting_before_command() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let socket_path = std::env::temp_dir().join(format!(
+            "ket-openvpn-management-{}-{unique}.sock",
+            std::process::id()
+        ));
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream
+                .write_all(b">INFO:OpenVPN Management Interface Version 6\r\n")
+                .await
+                .unwrap();
+            let mut command = [0_u8; 4];
+            stream.read_exact(&mut command).await.unwrap();
+            assert_eq!(&command, b"pid\n");
+            stream.write_all(b"SUCCESS: pid=42\r\n").await.unwrap();
+            let mut quit = [0_u8; 5];
+            stream.read_exact(&mut quit).await.unwrap();
+            assert_eq!(&quit, b"quit\n");
+        });
+
+        let response = management_command(&socket_path, "pid").await.unwrap();
+        assert!(response.contains("SUCCESS: pid=42"));
+        server.await.unwrap();
+        std::fs::remove_file(socket_path).unwrap();
+    }
 
     #[test]
     fn status_v3_parser_is_header_driven_and_strict() {
@@ -670,6 +844,12 @@ mod tests {
         assert!(parse_status("END\n").is_err());
         assert!(parse_status(&status.replace("10.67.0.2", "192.168.1.2")).is_err());
         assert!(parse_status(&status.replace("AbCdEf123456", "../../etc/pass")).is_err());
+
+        let current = status.replace(',', "\t");
+        let sessions = parse_status(&current).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].username, "AbCdEf123456");
+        assert_eq!(sessions[0].bytes_received, 42);
     }
 
     #[test]
@@ -679,5 +859,59 @@ mod tests {
             ["CLIENT_LIST", "name,with,commas", "quoted\"value"]
         );
         assert!(parse_csv_line("\"unterminated").is_err());
+        assert!(management_reply_complete(
+            b">INFO:greeting\r\nSUCCESS: pid=42\r\n"
+        ));
+        assert!(management_reply_complete(b"TITLE\tOpenVPN\r\nEND\r\n"));
+        assert!(!management_reply_complete(b"SUCCESS:"));
+        assert!(!management_reply_complete(b">INFO:greeting\r\n"));
+    }
+
+    #[test]
+    fn runtime_config_passes_auth_context_without_command_arguments() {
+        let mut config = AgentConfig {
+            bind_address: "127.0.0.1:8789".parse().unwrap(),
+            manager_token: "manager-token-with-at-least-32-characters".to_owned(),
+            openvpn_binary: "/usr/local/bin/openvpn".into(),
+            server_config: "/etc/openvpn/ket server.conf".into(),
+            runtime_config: "/run/ket-openvpn/server-runtime.conf".into(),
+            management_socket: "/run/ket-openvpn/management.sock".into(),
+            auth_url: "http://control-plane:8787/internal/v1/openvpn/auth".to_owned(),
+            auth_token: "auth-token-with-at-least-32-characters".to_owned(),
+            tunnel_interface: "ketovpn0".to_owned(),
+            egress_interface: "eth0".to_owned(),
+            max_clients: 1000,
+        };
+
+        let rendered = render_runtime_config(&config).unwrap();
+        assert!(rendered.contains("config \"/etc/openvpn/ket server.conf\""));
+        assert!(rendered.contains(
+            "setenv KET_OPENVPN_AUTH_URL \"http://control-plane:8787/internal/v1/openvpn/auth\""
+        ));
+        assert!(
+            rendered.contains(
+                "setenv KET_OPENVPN_AUTH_TOKEN \"auth-token-with-at-least-32-characters\""
+            )
+        );
+        assert!(validate_auth_url("https://public.example/auth").is_err());
+        assert!(quote_openvpn_value("bad\nvalue").is_err());
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let runtime_dir = std::env::temp_dir().join(format!(
+            "ket-openvpn-runtime-{}-{unique}",
+            std::process::id()
+        ));
+        config.runtime_config = runtime_dir.join("server-runtime.conf");
+        write_runtime_config(&config).unwrap();
+        let metadata = std::fs::metadata(&config.runtime_config).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::read_to_string(&config.runtime_config).unwrap(),
+            rendered
+        );
+        std::fs::remove_dir_all(runtime_dir).unwrap();
     }
 }

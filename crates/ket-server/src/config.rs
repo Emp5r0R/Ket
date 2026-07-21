@@ -253,8 +253,11 @@ impl OpenVpnConfig {
             bail!("KET_OPENVPN_MANAGER_TOKEN must contain at least 32 characters");
         }
         let auth_token = required("KET_OPENVPN_AUTH_TOKEN")?;
-        if auth_token.len() < 32 {
-            bail!("KET_OPENVPN_AUTH_TOKEN must contain at least 32 characters");
+        if auth_token.len() < 32
+            || auth_token.len() > 512
+            || auth_token.chars().any(char::is_control)
+        {
+            bail!("KET_OPENVPN_AUTH_TOKEN must contain 32-512 non-control characters");
         }
         if auth_token == manager_token {
             bail!("KET_OPENVPN_AUTH_TOKEN and KET_OPENVPN_MANAGER_TOKEN must be independent");
@@ -931,15 +934,33 @@ fn read_openvpn_material(name: &str, begin: &str, end: &str) -> Result<String> {
     }
     let material = fs::read_to_string(&path)
         .with_context(|| format!("{name} must reference UTF-8 PEM material"))?;
-    let material = material.trim().to_owned();
-    if !material.starts_with(begin)
-        || !material.ends_with(end)
-        || material.contains('\0')
-        || material.lines().any(|line| line.len() > 256)
-    {
-        bail!("{name} contains invalid OpenVPN key material");
+    normalize_openvpn_material(&material, begin, end)
+        .with_context(|| format!("{name} contains invalid OpenVPN key material"))
+}
+
+fn normalize_openvpn_material(material: &str, begin: &str, end: &str) -> Result<String> {
+    let material = material.trim();
+    if material.contains('\0') || material.lines().any(|line| line.len() > 256) {
+        bail!("invalid contents");
     }
-    Ok(format!("{material}\n"))
+
+    let envelope_start = material.find(begin).context("missing opening marker")?;
+    if envelope_start != 0 && material.as_bytes().get(envelope_start - 1) != Some(&b'\n') {
+        bail!("opening marker is not on its own line");
+    }
+    let preamble = &material[..envelope_start];
+    if preamble
+        .lines()
+        .any(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+    {
+        bail!("invalid preamble");
+    }
+
+    let envelope = &material[envelope_start..];
+    if !envelope.starts_with(begin) || !envelope.ends_with(end) {
+        bail!("invalid envelope");
+    }
+    Ok(format!("{envelope}\n"))
 }
 
 fn nonzero_port(name: &str, default: u16) -> Result<u16> {
@@ -1109,10 +1130,36 @@ mod tests {
     use ket_core::{Network, NodeLocation, TransportProfile, TransportProtocol};
 
     use super::{
-        ShadowsocksConfig, listeners_conflict, normalize_public_url, required_reality_key,
-        validate_authority, validate_dns_name, validate_hostname, validate_location,
-        validate_node_metadata, validate_target, validate_transports, validate_xhttp_path,
+        ShadowsocksConfig, listeners_conflict, normalize_openvpn_material, normalize_public_url,
+        required_reality_key, validate_authority, validate_dns_name, validate_hostname,
+        validate_location, validate_node_metadata, validate_target, validate_transports,
+        validate_xhttp_path,
     };
+
+    #[test]
+    fn openvpn_material_normalizes_generated_comment_preamble() {
+        let begin = "-----BEGIN OpenVPN Static key V1-----";
+        let end = "-----END OpenVPN Static key V1-----";
+        let generated = format!("#\n# 2048 bit OpenVPN static key\n#\n{begin}\n01234567\n{end}\n");
+
+        assert_eq!(
+            normalize_openvpn_material(&generated, begin, end).unwrap(),
+            format!("{begin}\n01234567\n{end}\n")
+        );
+        assert!(
+            normalize_openvpn_material(
+                &format!("unexpected\n{begin}\n01234567\n{end}"),
+                begin,
+                end
+            )
+            .is_err()
+        );
+        assert!(
+            normalize_openvpn_material(&format!("# comment {begin}\n01234567\n{end}"), begin, end)
+                .is_err()
+        );
+        assert!(normalize_openvpn_material(begin, begin, end).is_err());
+    }
 
     #[test]
     fn public_url_validation_rejects_ambiguous_control_endpoints() {
