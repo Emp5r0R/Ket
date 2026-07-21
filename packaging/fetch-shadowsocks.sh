@@ -4,10 +4,11 @@ set -euo pipefail
 version=1.24.0
 target=${1:-}
 destination=${2:-}
+component=${3:-sslocal}
 android_target=false
 
 if [[ -z ${target} || -z ${destination} ]]; then
-  printf 'Usage: %s <linux-amd64|linux-arm64|windows-amd64|android-amd64|android-arm64> <destination>\n' "$0" >&2
+  printf 'Usage: %s <linux-amd64|linux-arm64|windows-amd64|android-amd64|android-arm64> <destination> [sslocal|ssmanager]\n' "$0" >&2
   exit 2
 fi
 
@@ -16,13 +17,11 @@ case "$target" in
     triple=x86_64-unknown-linux-gnu
     checksum=5f528efb4e51e732352f5c69538dcc76e8cf8f6d1a240dfb5b748a67f0b05f65
     format=tar.xz
-    executable=sslocal
     ;;
   linux-arm64)
     triple=aarch64-unknown-linux-gnu
     checksum=dc56150cb263e1e150af33cc4c6542035aab3edf602e340842cca4138a4d5c51
     format=tar.xz
-    executable=sslocal
     ;;
   windows-amd64)
     triple=x86_64-pc-windows-msvc
@@ -50,6 +49,17 @@ case "$target" in
     ;;
 esac
 
+case "$target:$component" in
+  linux-amd64:sslocal|linux-arm64:sslocal) executable=sslocal ;;
+  linux-amd64:ssmanager|linux-arm64:ssmanager) executable=ssmanager ;;
+  windows-amd64:sslocal) executable=sslocal.exe ;;
+  android-amd64:sslocal|android-arm64:sslocal) executable=sslocal ;;
+  *)
+    printf 'Unsupported Shadowsocks component %s for %s.\n' "$component" "$target" >&2
+    exit 2
+    ;;
+esac
+
 asset="shadowsocks-v${version}.${triple}.${format}"
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
@@ -69,4 +79,4 @@ if [[ "$android_target" == true ]]; then
 else
   install -D -m 0755 "$temporary/$executable" "$destination"
 fi
-printf 'Fetched and verified shadowsocks-rust %s for %s.\n' "$version" "$target"
+printf 'Fetched and verified shadowsocks-rust %s %s for %s.\n' "$version" "$component" "$target"
