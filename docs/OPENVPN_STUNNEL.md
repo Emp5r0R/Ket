@@ -45,6 +45,8 @@ chmod 0644 secrets/openvpn/ca.crt secrets/openvpn/server.crt \
   secrets/openvpn-stunnel/fullchain.pem
 ```
 
+The installer and renewal hook build `stunnel-ca.crt` from the ACME chain plus the exact trusted root found in the host CA store. They verify the leaf with default CA paths disabled and reject a bundle larger than 8 KiB. This keeps client verification pinned and prevents a valid cross-signed chain from failing because its final trust anchor was omitted.
+
 The shared `tls-crypt` key is delivered only inside an authenticated manifest, but its host file must be readable by the rootless control-plane UID. Its containing directory remains mode `0700`, and Compose mounts only the three required files instead of exposing either server private key. Use an operator-controlled private CA or a normal public certificate chain for stunnel. The public DNS name in the certificate must equal `KET_OPENVPN_SNI`.
 
 ## Environment and start
