@@ -101,7 +101,10 @@ function demoSnapshot(
 
 function mockBridge(): DesktopBridge {
   const query = new URLSearchParams(window.location.search);
-  let snapshot = demoSnapshot(query.get("demo") === "connected" ? "connected" : "disconnected");
+  const demoPhase = query.get("demo");
+  let snapshot = demoSnapshot(
+    demoPhase === "connected" ? "connected" : demoPhase === "reconnecting" ? "reconnecting" : "disconnected",
+  );
   let configured = snapshot.node !== null;
   const listeners = new Set<SnapshotListener>();
   const publish = (next: ClientSnapshot) => {

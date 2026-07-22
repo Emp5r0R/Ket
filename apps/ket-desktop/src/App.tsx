@@ -73,6 +73,12 @@ export default function App() {
 
   const applySnapshot = (snapshot: ClientSnapshot) => {
     setState((current) => ({ ...current, snapshot, configured: snapshot.node !== null || current.configured }));
+    if (
+      snapshot.issue !== null ||
+      ["probing", "connecting", "reconnecting", "connected"].includes(snapshot.phase)
+    ) {
+      setLocalIssue(snapshot.issue);
+    }
     if (snapshot.traffic?.available) {
       const point = {
         at: snapshot.traffic.observed_at_epoch_seconds,

@@ -173,18 +173,25 @@ async fn connect(
     controller: State<'_, DesktopController>,
     preferred_protocol: Option<String>,
 ) -> Result<ClientSnapshot, ClientIssue> {
-    let mut session = controller.session.lock().await;
-    let session = session.as_mut().ok_or_else(not_enrolled)?;
+    let client = controller
+        .session
+        .lock()
+        .await
+        .as_ref()
+        .map(|session| Arc::clone(&session.client))
+        .ok_or_else(not_enrolled)?;
     let preferred_protocol = preferred_protocol
         .as_deref()
         .map(parse_protocol)
         .transpose()?;
-    let result = session
-        .client
-        .connect_with_protocol(preferred_protocol)
-        .await;
-    if session.maintenance.is_none() {
-        session.maintenance = Some(session.client.spawn_maintenance(Duration::from_secs(15)));
+    let result = client.connect_with_protocol(preferred_protocol).await;
+    let mut session = controller.session.lock().await;
+    if let Some(session) = session
+        .as_mut()
+        .filter(|session| Arc::ptr_eq(&session.client, &client))
+        && session.maintenance.is_none()
+    {
+        session.maintenance = Some(client.spawn_maintenance(Duration::from_secs(15)));
     }
     result.map_err(issue)
 }
@@ -209,16 +216,26 @@ fn parse_protocol(value: &str) -> Result<TransportProtocol, ClientIssue> {
 async fn stop_tunnel(
     controller: State<'_, DesktopController>,
 ) -> Result<ClientSnapshot, ClientIssue> {
-    let session = controller.session.lock().await;
-    let session = session.as_ref().ok_or_else(not_enrolled)?;
-    session.client.stop_tunnel().await.map_err(issue)
+    let client = controller
+        .session
+        .lock()
+        .await
+        .as_ref()
+        .map(|session| Arc::clone(&session.client))
+        .ok_or_else(not_enrolled)?;
+    client.stop_tunnel().await.map_err(issue)
 }
 
 #[tauri::command]
 async fn refresh(controller: State<'_, DesktopController>) -> Result<ClientSnapshot, ClientIssue> {
-    let session = controller.session.lock().await;
-    let session = session.as_ref().ok_or_else(not_enrolled)?;
-    session.client.refresh().await.map_err(issue)
+    let client = controller
+        .session
+        .lock()
+        .await
+        .as_ref()
+        .map(|session| Arc::clone(&session.client))
+        .ok_or_else(not_enrolled)?;
+    client.refresh().await.map_err(issue)
 }
 
 #[tauri::command]

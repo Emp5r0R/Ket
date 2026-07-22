@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Clock3,
   BookOpen,
+  CircleStop,
   LoaderCircle,
   MapPin,
   Power,
@@ -30,6 +31,7 @@ interface ConnectionPanelProps {
 }
 
 const workingPhases = new Set(["probing", "connecting", "reconnecting", "disconnecting"]);
+const cancellablePhases = new Set(["probing", "connecting", "reconnecting"]);
 
 export function ConnectionPanel({
   snapshot,
@@ -45,6 +47,8 @@ export function ConnectionPanel({
   if (!node) return null;
   const connected = snapshot.phase === "connected";
   const working = busy || workingPhases.has(snapshot.phase);
+  const cancellable = cancellablePhases.has(snapshot.phase);
+  const disconnecting = snapshot.phase === "disconnecting";
   const runtimeReady = engine.broker_available && engine.binary_available;
   const expiresIn = snapshot.session_expires_at_epoch_seconds
     ? snapshot.session_expires_at_epoch_seconds - Math.floor(Date.now() / 1000)
@@ -130,16 +134,16 @@ export function ConnectionPanel({
       <div className="power-control">
         <button
           type="button"
-          className={`power-button ${connected ? "is-connected" : ""}`}
-          onClick={() => void (connected ? onStop() : onConnect())}
-          disabled={working || (!connected && !runtimeReady)}
-          aria-label={connected ? "Disconnect tunnel" : "Connect tunnel"}
-          title={connected ? "Disconnect" : "Connect"}
+          className={`power-button ${connected ? "is-connected" : ""} ${cancellable ? "is-cancellable" : ""}`}
+          onClick={() => void (connected || cancellable ? onStop() : onConnect())}
+          disabled={disconnecting || (!cancellable && (working || (!connected && !runtimeReady)))}
+          aria-label={cancellable ? "Cancel connection attempt" : connected ? "Disconnect tunnel" : "Connect tunnel"}
+          title={cancellable ? "Cancel" : connected ? "Disconnect" : "Connect"}
         >
-          {working ? <LoaderCircle className="spin" size={30} /> : <Power size={30} />}
+          {cancellable ? <CircleStop size={30} /> : working ? <LoaderCircle className="spin" size={30} /> : <Power size={30} />}
         </button>
         <strong>{phaseLabel(snapshot.phase)}</strong>
-        <span>{connected ? "Restricted-network bypass active" : "Tunnel is inactive"}</span>
+        <span>{connected ? "Restricted-network bypass active" : cancellable ? "Testing available routes" : disconnecting ? "Stopping tunnel" : "Tunnel is inactive"}</span>
       </div>
     </aside>
   );
