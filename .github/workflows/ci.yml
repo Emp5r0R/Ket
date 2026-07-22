@@ -299,6 +299,7 @@ jobs:
       - run: bash -n packaging/build-multiarch.sh
       - run: bash -n packaging/install-server.sh packaging/server/*.sh
       - run: ./packaging/test-install-server.sh
+      - run: ./packaging/test-certificate-trust-bundle.sh
       - run: KET_ADMIN_TOKEN=01234567890123456789012345678901 KET_SESSION_TTL_SECONDS=1800 KET_MAX_SESSIONS=100 KET_COUNTRY_CODE=US ./packaging/validate-env.sh
       - name: Validate VLESS + REALITY environment
         run: >-
