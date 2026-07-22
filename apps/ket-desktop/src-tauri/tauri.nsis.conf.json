@@ -27,6 +27,8 @@
     "windows": {
       "nsis": {
         "installMode": "perMachine",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
         "installerHooks": "./windows/hooks.nsh"
       }
     }
