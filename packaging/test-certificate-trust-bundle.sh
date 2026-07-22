@@ -35,11 +35,11 @@ cp "$work/root.crt" "$work/trust/ket-root.pem"
 "$builder" "$work/leaf.crt" "$work/intermediate.crt" "$work/bundle.pem" "$work/trust"
 openssl verify -purpose sslserver -no-CApath -no-CAstore -CAfile "$work/bundle.pem" \
   -untrusted "$work/intermediate.crt" "$work/leaf.crt" >/dev/null
-[[ $(rg -c '^-----BEGIN CERTIFICATE-----$' "$work/bundle.pem") -eq 2 ]]
+[[ $(grep -c '^-----BEGIN CERTIFICATE-----$' "$work/bundle.pem") -eq 2 ]]
 
 cat "$work/intermediate.crt" "$work/root.crt" >"$work/complete-chain.pem"
 "$builder" "$work/leaf.crt" "$work/complete-chain.pem" "$work/complete-bundle.pem" "$work/empty-trust"
-[[ $(rg -c '^-----BEGIN CERTIFICATE-----$' "$work/complete-bundle.pem") -eq 2 ]]
+[[ $(grep -c '^-----BEGIN CERTIFICATE-----$' "$work/complete-bundle.pem") -eq 2 ]]
 
 if "$builder" "$work/leaf.crt" "$work/intermediate.crt" "$work/missing.pem" "$work/empty-trust" >/dev/null 2>&1; then
   printf 'Trust bundle builder accepted a chain without a trusted root.\n' >&2

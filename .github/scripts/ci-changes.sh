@@ -86,7 +86,7 @@ classify() {
     packaging/windows/*)
       enable windows_package
       ;;
-    packaging/build-multiarch.sh | packaging/validate-env.sh | packaging/install-server.sh | packaging/test-install-server.sh | packaging/server/* | Dockerfile | compose*.yaml | .env.example)
+    packaging/build-multiarch.sh | packaging/validate-env.sh | packaging/install-server.sh | packaging/test-install-server.sh | packaging/test-certificate-trust-bundle.sh | packaging/server/* | Dockerfile | compose*.yaml | .env.example)
       enable container
       ;;
     README.md | docs/* | assets/* | .gitignore | LICENSE*)

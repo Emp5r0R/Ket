@@ -53,9 +53,9 @@ done
 
 if [[ "$platform" == windows ]]; then
   windows_dependencies=(
-    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/libcrypto_3_x64.dll"
-    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/libssl_3_x64.dll"
-    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/libpkcs11_helper_1.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/libcrypto-3-x64.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/libssl-3-x64.dll"
+    "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/libpkcs11-helper-1.dll"
     "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/legacy.dll"
     "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/vcruntime140.dll"
     "$repo_root/apps/ket-desktop/src-tauri/binaries/openvpn/wintun.dll"

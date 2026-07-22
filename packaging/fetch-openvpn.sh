@@ -49,9 +49,11 @@ case ${platform} in
     )
     install -d "$output"
     install -m 0755 "$work/files/bin.openvpn.exe" "$output/openvpn.exe"
-    for library in libcrypto_3_x64.dll libssl_3_x64.dll libpkcs11_helper_1.dll legacy.dll vcruntime140.dll; do
-      install -m 0644 "$work/files/$library" "$output/$library"
-    done
+    install -m 0644 "$work/files/libcrypto_3_x64.dll" "$output/libcrypto-3-x64.dll"
+    install -m 0644 "$work/files/libssl_3_x64.dll" "$output/libssl-3-x64.dll"
+    install -m 0644 "$work/files/libpkcs11_helper_1.dll" "$output/libpkcs11-helper-1.dll"
+    install -m 0644 "$work/files/legacy.dll" "$output/legacy.dll"
+    install -m 0644 "$work/files/vcruntime140.dll" "$output/vcruntime140.dll"
     exit 0
     ;;
   *)
