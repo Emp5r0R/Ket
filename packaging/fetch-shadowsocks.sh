@@ -65,6 +65,8 @@ temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
 archive="$temporary/$asset"
 curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+  --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 \
+  --speed-limit 1024 --speed-time 30 \
   --output "$archive" \
   "https://github.com/shadowsocks/shadowsocks-rust/releases/download/v${version}/${asset}"
 printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status

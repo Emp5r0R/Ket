@@ -58,6 +58,8 @@ temporary=$(mktemp)
 trap 'rm -f "${temporary}"' EXIT
 url="https://github.com/apernet/hysteria/releases/download/app/${version}/${asset}"
 curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+  --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 \
+  --speed-limit 1024 --speed-time 30 \
   --output "${temporary}" "${url}"
 printf '%s  %s\n' "${checksum}" "${temporary}" | sha256sum --check --status
 if [[ "$android_target" == true ]]; then

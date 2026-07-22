@@ -46,6 +46,8 @@ cleanup() {
 trap cleanup EXIT
 url="https://github.com/tun2proxy/tun2proxy/releases/download/${version}/${asset}"
 curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+  --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 \
+  --speed-limit 1024 --speed-time 30 \
   --output "$archive" "$url"
 printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status
 unzip -p "$archive" "$executable" > "$binary"

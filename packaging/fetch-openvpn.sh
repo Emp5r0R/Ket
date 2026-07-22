@@ -36,6 +36,8 @@ case ${platform} in
     done
     archive="$work/openvpn.msi"
     curl --fail --location --proto '=https' --tlsv1.2 \
+      --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 \
+      --speed-limit 1024 --speed-time 30 \
       --output "$archive" \
       "https://build.openvpn.net/downloads/releases/OpenVPN-${version}-I001-amd64.msi"
     printf '%s  %s\n' "$windows_sha256" "$archive" | sha256sum --check --strict -
@@ -56,6 +58,11 @@ case ${platform} in
     ;;
 esac
 
+if [[ -d "$output" ]]; then
+  printf 'Linux OpenVPN output must be a file, but a directory exists: %s\n' "$output" >&2
+  exit 1
+fi
+
 for command in curl make pkg-config sha256sum tar; do
   command -v "$command" >/dev/null || {
     printf 'Required command is unavailable: %s\n' "$command" >&2
@@ -64,6 +71,8 @@ for command in curl make pkg-config sha256sum tar; do
 done
 archive="$work/openvpn-${version}.tar.gz"
 curl --fail --location --proto '=https' --tlsv1.2 \
+  --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 \
+  --speed-limit 1024 --speed-time 30 \
   --output "$archive" \
   "https://github.com/OpenVPN/openvpn/releases/download/v${version}/openvpn-${version}.tar.gz"
 printf '%s  %s\n' "$source_sha256" "$archive" | sha256sum --check --strict -
