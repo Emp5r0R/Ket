@@ -41,7 +41,10 @@ case ${platform} in
       --output "$archive" \
       "https://www.stunnel.org/downloads/stunnel-${version}-win64-installer.exe"
     printf '%s  %s\n' "$windows_sha256" "$archive" | sha256sum --check --strict -
-    7z x -y -o"$work/files" "$archive" >/dev/null
+    (
+      cd "$work"
+      7z x -y -ofiles stunnel-installer.exe >/dev/null
+    )
     install -d "$output/ossl-modules"
     install -m 0755 "$work/files/bin/stunnel.exe" "$output/stunnel.exe"
     for library in libssp-0.dll libcrypto-3-x64.dll libssl-3-x64.dll; do
