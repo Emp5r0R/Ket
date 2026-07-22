@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { tunnelState.value = snapshot }
         }
         setContent {
-            KetTheme {
+            KetTheme(connected = tunnelState.value.phase == TunnelPhase.Connected) {
                 KetApp(
                     snapshot = tunnelState.value,
                     onConnect = ::requestConnection,

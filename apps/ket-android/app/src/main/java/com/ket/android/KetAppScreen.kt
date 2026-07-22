@@ -1,8 +1,15 @@
 package com.ket.android
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.Canvas
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +32,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -34,6 +42,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,22 +58,48 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 private val KetInk = Color(0xFF071014)
+private val KetLiberatedInk = Color(0xFF14090D)
 internal val KetTeal = Color(0xFF28C7B7)
+internal val KetCoral = Color(0xFFF24F5E)
 internal val KetMuted = Color(0xFF8EA5A7)
 private val KetPanel = Color(0xFF11191D)
+private val KetLiberatedPanel = Color(0xFF1B1115)
 private val KetHealthy = Color(0xFF4BD29F)
 private val KetDegraded = Color(0xFFF0B44D)
 private val KetSaturated = Color(0xFFFF6B66)
 
 @Composable
-internal fun KetTheme(content: @Composable () -> Unit) {
+internal fun KetTheme(
+    connected: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    val accent by animateColorAsState(
+        targetValue = if (connected) KetCoral else KetTeal,
+        animationSpec = tween(360),
+        label = "connection accent",
+    )
+    val background by animateColorAsState(
+        targetValue = if (connected) KetLiberatedInk else KetInk,
+        animationSpec = tween(360),
+        label = "connection background",
+    )
+    val panel by animateColorAsState(
+        targetValue = if (connected) KetLiberatedPanel else KetPanel,
+        animationSpec = tween(360),
+        label = "connection surface",
+    )
+    val onAccent by animateColorAsState(
+        targetValue = if (connected) Color.White else KetInk,
+        animationSpec = tween(240),
+        label = "connection on-accent",
+    )
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary = KetTeal,
-            onPrimary = KetInk,
-            background = KetInk,
-            surface = KetPanel,
-            secondary = KetHealthy,
+            primary = accent,
+            onPrimary = onAccent,
+            background = background,
+            surface = panel,
+            secondary = accent,
             error = KetSaturated,
             onBackground = Color.White,
             onSurface = Color.White,
@@ -101,10 +139,10 @@ internal fun KetApp(
         TunnelPhase.Stopping,
     )
     Scaffold(
-        containerColor = KetInk,
+        containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
         bottomBar = {
-            Surface(color = KetInk) {
+            Surface(color = MaterialTheme.colorScheme.background) {
                 Button(
                     enabled = snapshot.phase != TunnelPhase.Stopping &&
                         (connected || busy || (serverUrl.isNotBlank() && accessCode.length == 32)),
@@ -145,12 +183,13 @@ internal fun KetApp(
             Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
+                .animateContentSize(animationSpec = tween(260))
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("KET", style = MaterialTheme.typography.labelLarge, color = KetTeal)
+                Text("KET", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 PhaseStatus(snapshot.phase)
             }
             Text(phaseHeadline(snapshot.phase), style = MaterialTheme.typography.headlineMedium)
@@ -253,7 +292,7 @@ private fun ProtocolLearnMorePage(
     val protocol = KetProtocol.fromWireName(selectedWireName) ?: initialProtocol
     BackHandler(onBack = onBack)
     Scaffold(
-        containerColor = KetInk,
+        containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
     ) { contentPadding ->
         Column(
@@ -266,7 +305,7 @@ private fun ProtocolLearnMorePage(
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = onBack) { Text("Back") }
-                Text("PROTOCOL GUIDE", color = KetTeal, style = MaterialTheme.typography.labelLarge)
+                Text("PROTOCOL GUIDE", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             }
             Box(Modifier.fillMaxWidth()) {
                 OutlinedButton(
@@ -303,7 +342,7 @@ private fun ProtocolLearnMorePage(
 private fun ProtocolGuideSection(title: String, body: String) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         HorizontalDivider(color = Color(0xFF243237))
-        Text(title, color = KetTeal, style = MaterialTheme.typography.labelLarge)
+        Text(title, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         Text(body, color = KetMuted, style = MaterialTheme.typography.bodyMedium)
     }
 }
@@ -312,7 +351,7 @@ private fun ProtocolGuideSection(title: String, body: String) {
 private fun ProtocolGuideList(title: String, items: List<String>) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         HorizontalDivider(color = Color(0xFF243237))
-        Text(title, color = KetTeal, style = MaterialTheme.typography.labelLarge)
+        Text(title, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         items.forEachIndexed { index, item ->
             Text("${index + 1}. $item", color = KetMuted, style = MaterialTheme.typography.bodyMedium)
         }
@@ -323,33 +362,69 @@ private fun ProtocolGuideList(title: String, items: List<String>) {
 private fun PhaseStatus(phase: TunnelPhase) {
     val tone by animateColorAsState(
         targetValue = when (phase) {
-            TunnelPhase.Connected -> KetHealthy
+            TunnelPhase.Connected -> MaterialTheme.colorScheme.primary
             TunnelPhase.Failed -> KetSaturated
             TunnelPhase.Disconnected -> KetMuted
             else -> KetDegraded
         },
+        animationSpec = tween(240),
         label = "phase tone",
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        Canvas(Modifier.size(9.dp)) { drawCircle(tone) }
-        Text(
-            when (phase) {
-                TunnelPhase.Disconnected -> "Offline"
-                TunnelPhase.Enrolling -> "Authorizing"
-                TunnelPhase.Connecting -> "Connecting"
-                TunnelPhase.Reconnecting -> "Recovering"
-                TunnelPhase.Connected -> "Protected"
-                TunnelPhase.Stopping -> "Stopping"
-                TunnelPhase.Failed -> "Attention"
-            },
-            color = tone,
-            style = MaterialTheme.typography.labelMedium,
-        )
+    AnimatedContent(
+        targetState = phase,
+        transitionSpec = {
+            (fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.92f)) togetherWith
+                (fadeOut(tween(120)) + scaleOut(tween(120), targetScale = 0.96f))
+        },
+        label = "connection status",
+    ) { currentPhase ->
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            when (currentPhase) {
+                TunnelPhase.Connected -> Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = tone,
+                )
+                TunnelPhase.Disconnected -> Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = tone,
+                )
+                TunnelPhase.Failed -> Icon(
+                    Icons.Filled.Warning,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = tone,
+                )
+                else -> CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    color = tone,
+                    strokeWidth = 1.8.dp,
+                )
+            }
+            Text(
+                phaseStatusLabel(currentPhase),
+                color = tone,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
     }
 }
 
-private fun phaseHeadline(phase: TunnelPhase): String = when (phase) {
-    TunnelPhase.Connected -> "Protected route"
+internal fun phaseStatusLabel(phase: TunnelPhase): String = when (phase) {
+    TunnelPhase.Disconnected -> "Restricted"
+    TunnelPhase.Enrolling -> "Authorizing"
+    TunnelPhase.Connecting -> "Connecting"
+    TunnelPhase.Reconnecting -> "Recovering"
+    TunnelPhase.Connected -> "Liberated"
+    TunnelPhase.Stopping -> "Stopping"
+    TunnelPhase.Failed -> "Attention"
+}
+
+internal fun phaseHeadline(phase: TunnelPhase): String = when (phase) {
+    TunnelPhase.Connected -> "Liberated route"
     TunnelPhase.Enrolling, TunnelPhase.Connecting -> "Securing route"
     TunnelPhase.Reconnecting -> "Restoring route"
     TunnelPhase.Stopping -> "Closing route"
@@ -362,7 +437,7 @@ private fun ServerMap(node: AndroidNodeStatus?, connected: Boolean) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
-        color = KetPanel,
+        color = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -372,7 +447,7 @@ private fun ServerMap(node: AndroidNodeStatus?, connected: Boolean) {
                 Text("SERVER MAP", color = KetMuted, style = MaterialTheme.typography.labelSmall)
                 Text(
                     node?.location?.countryCode ?: "--",
-                    color = KetTeal,
+                    color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.labelMedium,
                 )
             }

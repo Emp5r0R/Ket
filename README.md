@@ -163,17 +163,41 @@ docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f 
 
 The control, XHTTP, and WireGuard TLS hostnames may remain behind Cloudflare Tunnel, but Hysteria2, REALITY, Shadowsocks, and OpenVPN/stunnel session profiles must advertise a direct server IP or DNS-only hostname. Open only the exact raw-transport ports in both the cloud network policy and host firewall; keep all Cloudflare Tunnel origin ports closed publicly.
 
-Create an access grant:
+Create one client access code on an installed server:
 
 ```bash
-set -a; . ./.env; set +a
-curl --fail-with-body \
-  --request POST \
-  --header "Authorization: Bearer ${KET_ADMIN_TOKEN}" \
-  --header "Content-Type: application/json" \
-  --data '{"label":"Personal devices","max_connections":5,"expires_at_epoch_seconds":null}' \
-  http://127.0.0.1:8787/v1/admin/access-grants
+sudo bash -c '
+  set -e
+  cd /opt/ket
+  set -a; . ./.env; set +a
+  curl --fail-with-body --silent --show-error \
+    --request POST \
+    --header "Authorization: Bearer ${KET_ADMIN_TOKEN}" \
+    --header "Content-Type: application/json" \
+    --data "{\"label\":\"Personal devices\",\"max_connections\":5,\"expires_at_epoch_seconds\":null}" \
+    "http://127.0.0.1:${KET_CONTROL_PORT}/v1/admin/access-grants" |
+    jq -r "\"Grant ID: \\(.id)\\nAccess code: \\(.access_code)\""
+'
 ```
+
+Create ten separate one-device codes:
+
+```bash
+sudo bash -c '
+  set -e
+  cd /opt/ket
+  set -a; . ./.env; set +a
+  curl --fail-with-body --silent --show-error \
+    --request POST \
+    --header "Authorization: Bearer ${KET_ADMIN_TOKEN}" \
+    --header "Content-Type: application/json" \
+    --data "{\"label_prefix\":\"Client\",\"count\":10,\"max_connections\":1,\"expires_at_epoch_seconds\":null}" \
+    "http://127.0.0.1:${KET_CONTROL_PORT}/v1/admin/access-grants/batch" |
+    jq -r ".[] | [.label, .access_code, .id] | @tsv"
+'
+```
+
+Ket returns each plaintext code only once and stores only its Argon2 hash. Existing codes cannot be recovered; create a replacement when a code is lost. Use the server URL such as `https://ket.nsa.tools` plus the returned 32-character code in any Ket client.
 
 ## Develop
 

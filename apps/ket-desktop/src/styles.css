@@ -15,9 +15,10 @@
   --green: #13a884;
   --green-dark: #087c62;
   --green-soft: #dff4ed;
+  --accent-rgb: 19 168 132;
   --blue: #2867d6;
   --blue-soft: #e5edfb;
-  --coral: #f25f4c;
+  --coral: #f24f5e;
   --coral-soft: #feebe8;
   --focus: #2867d6;
 }
@@ -71,6 +72,26 @@ input:disabled {
   height: 100%;
   min-height: 620px;
   background: var(--canvas);
+  transition: background-color 320ms ease, color 240ms ease;
+}
+
+.app-shell.is-liberated {
+  --canvas: #fff7f8;
+  --line: #efd8db;
+  --green: #f24f5e;
+  --green-dark: #c73546;
+  --green-soft: #ffe4e7;
+  --accent-rgb: 242 79 94;
+  --blue: #d83d4e;
+  --blue-soft: #ffe8ea;
+  --focus: #f24f5e;
+}
+
+.app-shell,
+.app-shell * {
+  transition-property: color, background-color, border-color, box-shadow, fill, stroke, opacity, transform;
+  transition-duration: 220ms;
+  transition-timing-function: ease;
 }
 
 .nav-rail {
@@ -182,16 +203,28 @@ input:disabled {
   font-weight: 650;
 }
 
-.connection-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #adb6b1;
+.header-status.is-restricted {
+  color: var(--muted);
 }
 
-.connection-dot.is-connected {
+.header-status.is-liberated {
+  color: var(--green-dark);
+}
+
+.status-symbol {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e8ece9;
+}
+
+.header-status.is-liberated .status-symbol {
+  color: #fff;
   background: var(--green);
-  box-shadow: 0 0 0 4px rgb(19 168 132 / 13%);
+  box-shadow: 0 0 0 5px rgb(var(--accent-rgb) / 12%);
+  animation: liberated-status-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .icon-button {
@@ -262,7 +295,7 @@ input:disabled {
 }
 
 .map-marker-ring {
-  fill: rgb(19 168 132 / 10%);
+  fill: rgb(var(--accent-rgb) / 10%);
   stroke: var(--green);
   stroke-width: 1.5;
   transform-box: fill-box;
@@ -665,7 +698,8 @@ input:disabled {
   border-color: var(--green);
   color: #fff;
   background: var(--green);
-  box-shadow: 0 9px 24px rgb(19 168 132 / 20%);
+  box-shadow: 0 9px 24px rgb(var(--accent-rgb) / 20%);
+  animation: liberated-power-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .power-button.is-connected:hover:not(:disabled) {
@@ -1117,6 +1151,29 @@ input:disabled {
   }
 }
 
+@keyframes liberated-status-in {
+  from {
+    opacity: 0.65;
+    transform: scale(0.82) rotate(-8deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes liberated-power-in {
+  0% {
+    transform: scale(0.94);
+  }
+  65% {
+    transform: scale(1.035);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1286,10 +1343,6 @@ input:disabled {
 @media (max-width: 460px) {
   .connection-header {
     gap: 12px;
-  }
-
-  .header-status > span:not(.connection-dot) {
-    display: none;
   }
 
   .stat-strip,

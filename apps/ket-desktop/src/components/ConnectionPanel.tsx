@@ -139,7 +139,7 @@ export function ConnectionPanel({
           {working ? <LoaderCircle className="spin" size={30} /> : <Power size={30} />}
         </button>
         <strong>{phaseLabel(snapshot.phase)}</strong>
-        <span>{connected ? "Traffic is protected" : "Tunnel is inactive"}</span>
+        <span>{connected ? "Restricted-network bypass active" : "Tunnel is inactive"}</span>
       </div>
     </aside>
   );
@@ -147,12 +147,12 @@ export function ConnectionPanel({
 
 function phaseLabel(phase: ClientSnapshot["phase"]): string {
   const labels: Record<ClientSnapshot["phase"], string> = {
-    disconnected: "Disconnected",
+    disconnected: "Restricted",
     enrolling: "Adding server",
     enrolled: "Ready",
     probing: "Testing route",
     connecting: "Connecting",
-    connected: "Connected",
+    connected: "Liberated",
     reconnecting: "Reconnecting",
     disconnecting: "Disconnecting",
     error: "Needs attention",
