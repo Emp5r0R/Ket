@@ -30,7 +30,7 @@ secrets/openvpn-stunnel/
   privkey.pem
 ```
 
-`ca.crt` signs the OpenVPN server certificate. `stunnel-ca.crt` is the trust anchor for `fullchain.pem`; keep it at or below 3 KiB because the authenticated manifest carries it to the client. `server.crt` must have server usage, and both private keys must remain readable only by the deployment operator. Generate the OpenVPN static key with the pinned image:
+`ca.crt` signs the OpenVPN server certificate. `stunnel-ca.crt` is the trust chain for `fullchain.pem`; keep it at or below 8 KiB because the authenticated manifest carries it to the client. This bound supports current multi-certificate Let's Encrypt chains while rejecting unbounded material. `server.crt` must have server usage, and both private keys must remain readable only by the deployment operator. Generate the OpenVPN static key with the pinned image:
 
 ```bash
 docker build -t ket-control-plane:local .

@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
 use ket_core::{
-    NodeStatus, SecretString, SessionManifest, SessionStatus, SessionTraffic, split_session_token,
+    NodeStatus, SecretString, SessionManifest, SessionStatus, SessionTraffic, TransportProtocol,
+    split_session_token,
 };
 use reqwest::Url;
 
@@ -17,6 +18,7 @@ const MAX_OPTION_KEY_CHARS: usize = 64;
 const MAX_OPTION_VALUE_CHARS: usize = 2_048;
 const MAX_SECRET_ENTRIES: usize = 16;
 const MAX_SECRET_CHARS: usize = 4_096;
+const MAX_OPENVPN_ENCODED_MATERIAL_CHARS: usize = (8 * 1024_usize).div_ceil(3) * 4;
 
 /// Validates the complete untrusted enrollment document before it enters runtime state.
 pub(crate) fn validate_manifest(
@@ -61,7 +63,22 @@ pub(crate) fn validate_manifest(
             }
             for (key, value) in &credential.secrets {
                 validate_option_key(key, "transport secret")?;
-                validate_secret(value.expose_secret(), "transport secret value")?;
+                let maximum_chars = if profile.protocol == TransportProtocol::OpenVpnStunnel
+                    && matches!(
+                        key.as_str(),
+                        "ca_certificate_pem_b64"
+                            | "stunnel_ca_certificate_pem_b64"
+                            | "tls_crypt_key_b64"
+                    ) {
+                    MAX_OPENVPN_ENCODED_MATERIAL_CHARS
+                } else {
+                    MAX_SECRET_CHARS
+                };
+                validate_bounded_secret(
+                    value.expose_secret(),
+                    "transport secret value",
+                    maximum_chars,
+                )?;
             }
         }
     }
@@ -255,8 +272,16 @@ fn validate_bounded_value(
 }
 
 fn validate_secret(value: &str, label: &'static str) -> Result<(), ClientError> {
+    validate_bounded_secret(value, label, MAX_SECRET_CHARS)
+}
+
+fn validate_bounded_secret(
+    value: &str,
+    label: &'static str,
+    maximum_chars: usize,
+) -> Result<(), ClientError> {
     if value.is_empty()
-        || value.chars().count() > MAX_SECRET_CHARS
+        || value.chars().count() > maximum_chars
         || value.chars().any(char::is_control)
     {
         return Err(invalid(label));
@@ -323,6 +348,30 @@ mod tests {
         let mut response = manifest();
         response.transports[0].profile.endpoint = "vpn.example.test/path".to_owned();
         assert_invalid(validate_manifest(&response, NOW), "endpoint");
+    }
+
+    #[test]
+    fn permits_large_bounded_openvpn_material_only_for_known_fields() {
+        let mut response = manifest();
+        response.transports[0].profile.protocol = TransportProtocol::OpenVpnStunnel;
+        response.transports[0]
+            .credential
+            .as_mut()
+            .unwrap()
+            .secrets
+            .insert(
+                "stunnel_ca_certificate_pem_b64".to_owned(),
+                "A".repeat(10_000).into(),
+            );
+        validate_manifest(&response, NOW).unwrap();
+
+        response.transports[0]
+            .credential
+            .as_mut()
+            .unwrap()
+            .secrets
+            .insert("unexpected_secret".to_owned(), "A".repeat(10_000).into());
+        assert_invalid(validate_manifest(&response, NOW), "transport secret value");
     }
 
     #[test]

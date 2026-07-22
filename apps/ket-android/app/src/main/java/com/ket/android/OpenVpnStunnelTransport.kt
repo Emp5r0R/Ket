@@ -19,6 +19,8 @@ private val openVpnSecrets = setOf(
     "tls_crypt_key_b64",
     "username",
 )
+private const val maxOpenVpnMaterialBytes = 8 * 1024
+private const val maxOpenVpnEncodedMaterialChars = ((maxOpenVpnMaterialBytes + 2) / 3) * 4
 
 internal class OpenVpnStunnelTransport private constructor(
     override val id: String,
@@ -120,10 +122,14 @@ internal class OpenVpnStunnelTransport private constructor(
         }
 
         private fun decodePem(encoded: String, label: String, begin: String, end: String): String {
-            validateTransportSecret(encoded, label)
+            require(
+                encoded.isNotEmpty() &&
+                    encoded.length <= maxOpenVpnEncodedMaterialChars &&
+                    encoded.none(Char::isISOControl),
+            ) { "$label is invalid" }
             val decoded = runCatching { Base64.getDecoder().decode(encoded) }
                 .getOrElse { throw IllegalArgumentException("$label is not base64") }
-            require(decoded.size in 1..3 * 1024) { "$label has an invalid size" }
+            require(decoded.size in 1..maxOpenVpnMaterialBytes) { "$label has an invalid size" }
             val material = try {
                 Charsets.UTF_8.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)

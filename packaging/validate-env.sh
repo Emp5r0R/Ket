@@ -25,7 +25,7 @@ valid_material_file() {
   local path=$1 begin=$2 end=$3 size
   [[ -f "$path" && -r "$path" ]] || return 1
   size=$(wc -c < "$path")
-  (( size > 0 && size <= 3072 )) || return 1
+  (( size > 0 && size <= 8192 )) || return 1
   grep -Fqx -- "$begin" "$path" && grep -Fqx -- "$end" "$path"
 }
 valid_public_url() {
@@ -192,9 +192,9 @@ if [[ "${KET_OPENVPN_ENABLED:-false}" == true ]]; then
     "$openvpn_stunnel_tls_dir/privkey.pem"; do
     [[ -f "$path" && -r "$path" ]] || fail "missing readable $path"
   done
-  valid_material_file "$openvpn_pki_dir/ca.crt" '-----BEGIN CERTIFICATE-----' '-----END CERTIFICATE-----' || fail 'OpenVPN ca.crt must be a non-empty PEM certificate no larger than 3 KiB'
-  valid_material_file "$openvpn_pki_dir/stunnel-ca.crt" '-----BEGIN CERTIFICATE-----' '-----END CERTIFICATE-----' || fail 'OpenVPN stunnel-ca.crt must be a non-empty PEM certificate no larger than 3 KiB'
-  valid_material_file "$openvpn_pki_dir/tls-crypt.key" '-----BEGIN OpenVPN Static key V1-----' '-----END OpenVPN Static key V1-----' || fail 'OpenVPN tls-crypt.key must be a non-empty V1 key no larger than 3 KiB'
+  valid_material_file "$openvpn_pki_dir/ca.crt" '-----BEGIN CERTIFICATE-----' '-----END CERTIFICATE-----' || fail 'OpenVPN ca.crt must be a non-empty PEM certificate no larger than 8 KiB'
+  valid_material_file "$openvpn_pki_dir/stunnel-ca.crt" '-----BEGIN CERTIFICATE-----' '-----END CERTIFICATE-----' || fail 'OpenVPN stunnel-ca.crt must be a non-empty PEM certificate no larger than 8 KiB'
+  valid_material_file "$openvpn_pki_dir/tls-crypt.key" '-----BEGIN OpenVPN Static key V1-----' '-----END OpenVPN Static key V1-----' || fail 'OpenVPN tls-crypt.key must be a non-empty V1 key no larger than 8 KiB'
 
   if [[ "${KET_XRAY_ENABLED:-false}" == true \
     && "${KET_OPENVPN_PUBLIC_PORT:-443}" == "${KET_XRAY_PUBLIC_PORT:-443}" \

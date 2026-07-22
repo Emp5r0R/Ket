@@ -39,6 +39,7 @@ const SECRETS: &[&str] = &[
     "username",
 ];
 const MAX_MANAGEMENT_RESPONSE_BYTES: usize = 64 * 1024;
+const MAX_OPENVPN_MATERIAL_BYTES: usize = 8 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct OpenVpnStunnelAdapter {
@@ -620,7 +621,7 @@ fn decode_material(
             false,
         )
     })?);
-    if decoded.is_empty() || decoded.len() > 3 * 1024 {
+    if decoded.is_empty() || decoded.len() > MAX_OPENVPN_MATERIAL_BYTES {
         return Err(ClientError::transport(
             &transport.profile.id,
             format!("OpenVPN secret {key} has an invalid size"),
@@ -803,6 +804,28 @@ mod tests {
         let mut transport = test_transport();
         transport.credential.as_mut().unwrap().auth =
             SecretString::from("Z23456789012ABCDEFGHIJKLMNOPQRSTUVWXYZ123456");
+        assert!(validate_transport(&transport).is_err());
+    }
+
+    #[test]
+    fn accepts_modern_ca_chains_and_rejects_oversized_material() {
+        let encoded_certificate = |body_lines: usize| {
+            STANDARD.encode(format!(
+                "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+                vec!["A".repeat(64); body_lines].join("\n")
+            ))
+        };
+        let mut transport = test_transport();
+        transport.credential.as_mut().unwrap().secrets.insert(
+            "stunnel_ca_certificate_pem_b64".to_owned(),
+            SecretString::from(encoded_certificate(54)),
+        );
+        assert!(validate_transport(&transport).is_ok());
+
+        transport.credential.as_mut().unwrap().secrets.insert(
+            "stunnel_ca_certificate_pem_b64".to_owned(),
+            SecretString::from(encoded_certificate(128)),
+        );
         assert!(validate_transport(&transport).is_err());
     }
 
