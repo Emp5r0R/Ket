@@ -20,7 +20,7 @@ const MAX_OPTION_ENTRIES: usize = 32;
 const MAX_OPTION_KEY_CHARS: usize = 64;
 const MAX_OPTION_VALUE_CHARS: usize = 2_048;
 const MAX_SHADOWSOCKS_MANAGER_SERVERS: u32 = 1_500;
-const MAX_OPENVPN_MATERIAL_BYTES: u64 = 3 * 1024;
+const MAX_OPENVPN_MATERIAL_BYTES: u64 = 8 * 1024;
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -930,7 +930,7 @@ fn read_openvpn_material(name: &str, begin: &str, end: &str) -> Result<String> {
     let metadata = fs::metadata(&path)
         .with_context(|| format!("{name} does not reference a readable regular file"))?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_OPENVPN_MATERIAL_BYTES {
-        bail!("{name} must reference a non-empty regular file no larger than 3 KiB");
+        bail!("{name} must reference a non-empty regular file no larger than 8 KiB");
     }
     let material = fs::read_to_string(&path)
         .with_context(|| format!("{name} must reference UTF-8 PEM material"))?;

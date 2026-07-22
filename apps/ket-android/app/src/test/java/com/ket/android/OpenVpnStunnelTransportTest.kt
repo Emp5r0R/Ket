@@ -64,6 +64,29 @@ class OpenVpnStunnelTransportTest {
         }
     }
 
+    @Test
+    fun `accepts modern CA chains and rejects oversized material`() {
+        fun encodedCertificate(bodyLines: Int): String {
+            val body = List(bodyLines) { "A".repeat(64) }.joinToString("\n")
+            val pem = "-----BEGIN CERTIFICATE-----\n$body\n-----END CERTIFICATE-----\n"
+            return Base64.getEncoder().encodeToString(pem.toByteArray())
+        }
+
+        val bounded = validTransport().apply {
+            getJSONObject("credential").getJSONObject("secrets")
+                .put("stunnel_ca_certificate_pem_b64", encodedCertificate(54))
+        }
+        AndroidTransportSelector.parse(JSONArray().put(bounded))
+
+        val oversized = validTransport().apply {
+            getJSONObject("credential").getJSONObject("secrets")
+                .put("stunnel_ca_certificate_pem_b64", encodedCertificate(128))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidTransportSelector.parse(JSONArray().put(oversized))
+        }
+    }
+
     private fun validTransport(): JSONObject {
         val encode = { value: String -> Base64.getEncoder().encodeToString(value.toByteArray()) }
         return JSONObject()
