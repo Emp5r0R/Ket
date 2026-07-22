@@ -41,10 +41,12 @@ case ${platform} in
       --output "$archive" \
       "https://build.openvpn.net/downloads/releases/OpenVPN-${version}-I001-amd64.msi"
     printf '%s  %s\n' "$windows_sha256" "$archive" | sha256sum --check --strict -
-    7z e -y -o"$work/msi" "$archive" openvpn.cab >/dev/null
-    7z e -y -o"$work/files" "$work/msi/openvpn.cab" \
-      bin.openvpn.exe libcrypto_3_x64.dll libssl_3_x64.dll \
-      libpkcs11_helper_1.dll legacy.dll vcruntime140.dll >/dev/null
+    (
+      cd "$work"
+      7z e -y -ofiles openvpn.msi \
+        bin.openvpn.exe libcrypto_3_x64.dll libssl_3_x64.dll \
+        libpkcs11_helper_1.dll legacy.dll vcruntime140.dll >/dev/null
+    )
     install -d "$output"
     install -m 0755 "$work/files/bin.openvpn.exe" "$output/openvpn.exe"
     for library in libcrypto_3_x64.dll libssl_3_x64.dll libpkcs11_helper_1.dll legacy.dll vcruntime140.dll; do
