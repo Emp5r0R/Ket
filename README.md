@@ -209,3 +209,7 @@ Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting
 7. Implement the remaining IKEv2 adapter without weakening the existing authenticated fallback contract.
 
 Ket must use maintained protocol implementations and authenticated encryption. Obfuscation such as XOR is never treated as security on its own.
+
+## License
+
+Ket is licensed under the [Apache License 2.0](LICENSE). Third-party attributions are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
