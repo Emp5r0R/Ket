@@ -412,7 +412,7 @@ async fn verify_tunnel_path(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs, process::Command as StdCommand};
+    use std::{collections::BTreeMap, fs, path::PathBuf, process::Command as StdCommand};
 
     use ket_core::{TransportCredential, TransportProfile};
     use rand::Rng;
@@ -483,6 +483,15 @@ mod tests {
         let Some(binary) = std::env::var_os("KET_TEST_SHADOWSOCKS_LOCAL_BINARY") else {
             return;
         };
+        let binary = PathBuf::from(binary);
+        let binary = if binary.is_absolute() {
+            binary
+        } else {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(binary)
+        };
+        let binary = fs::canonicalize(binary).expect("resolve Shadowsocks test binary");
         let port = std::net::TcpListener::bind(("127.0.0.1", 0))
             .expect("reserve SOCKS port")
             .local_addr()
