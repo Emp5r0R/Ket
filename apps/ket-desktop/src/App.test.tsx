@@ -32,7 +32,7 @@ describe("Ket desktop shell", () => {
     const { default: App } = await import("./App");
     render(<App />);
 
-    expect(await screen.findByText("Protected")).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Liberated");
     expect(screen.getByRole("img", { name: /Server location: Frankfurt/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Metrics" }));
     expect(screen.getByRole("heading", { name: "Network metrics" })).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe("Ket desktop shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Connection" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect tunnel" }));
-    expect(await screen.findByText("Traffic is protected")).toBeInTheDocument();
+    expect(await screen.findByText("Restricted-network bypass active")).toBeInTheDocument();
     expect(screen.getAllByText("HTTPS Stealth").length).toBeGreaterThan(0);
   });
 });

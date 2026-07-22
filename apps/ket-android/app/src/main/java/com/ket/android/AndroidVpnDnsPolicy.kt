@@ -1,26 +1,13 @@
 package com.ket.android
 
-import java.net.Inet4Address
 import java.net.InetAddress
 
-/** Selects explicit dual-stack resolvers that cannot overlap a transport route exclusion. */
+/** Keeps DNS inside hev so SOCKS engines receive domains instead of client-selected IPv6 addresses. */
 internal object AndroidVpnDnsPolicy {
-    private val candidates = listOf(
-        "1.1.1.1",
-        "1.0.0.1",
-        "2606:4700:4700::1111",
-        "2606:4700:4700::1001",
-    ).map(InetAddress::getByName)
+    const val SERVER = "198.18.0.2"
+    const val NETWORK = "240.0.0.0"
+    const val NETMASK = "240.0.0.0"
+    const val CACHE_SIZE = 10_000
 
-    fun serversFor(bypassAddresses: Collection<InetAddress>): List<InetAddress> {
-        val bypasses = bypassAddresses.toSet()
-        val selected = candidates.filterNot(bypasses::contains)
-        require(selected.any { it is Inet4Address }) {
-            "Every configured IPv4 VPN DNS server overlaps a transport endpoint"
-        }
-        require(selected.any { it !is Inet4Address }) {
-            "Every configured IPv6 VPN DNS server overlaps a transport endpoint"
-        }
-        return selected
-    }
+    fun server(): InetAddress = InetAddress.getByName(SERVER)
 }

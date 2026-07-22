@@ -231,6 +231,12 @@ internal object EngineConfig {
               address: '127.0.0.1'
               port: $socksPort
               udp: 'udp'
+            mapdns:
+              address: ${AndroidVpnDnsPolicy.SERVER}
+              port: 53
+              network: ${AndroidVpnDnsPolicy.NETWORK}
+              netmask: ${AndroidVpnDnsPolicy.NETMASK}
+              cache-size: ${AndroidVpnDnsPolicy.CACHE_SIZE}
             misc:
               log-level: error
               connect-timeout: 10000

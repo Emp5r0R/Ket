@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CircleHelp, MapPin } from "lucide-react";
+import { LockKeyhole, LockOpen, MapPin } from "lucide-react";
 import { bridge } from "./lib/bridge";
 import type {
   ClientIssue,
@@ -208,7 +208,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${connected ? "is-liberated" : "is-restricted"}`}>
       <NavRail active={view} onChange={setView} />
       <main className="app-content">
         {view === "connection" ? (
@@ -218,12 +218,15 @@ export default function App() {
                 <span className="section-kicker">Secure route</span>
                 <h1>{heading}</h1>
               </div>
-              <div className="header-status">
-                <span className={`connection-dot ${connected ? "is-connected" : ""}`} />
-                <span>{connected ? "Protected" : state.configured ? "Ready" : "No server"}</span>
-                <button className="icon-button" type="button" title="Connection status" aria-label="Connection status">
-                  <CircleHelp size={18} />
-                </button>
+              <div
+                className={`header-status ${connected ? "is-liberated" : "is-restricted"}`}
+                role="status"
+                aria-live="polite"
+              >
+                <span className="status-symbol" aria-hidden="true">
+                  {connected ? <LockOpen size={18} /> : <LockKeyhole size={18} />}
+                </span>
+                <span>{connected ? "Liberated" : "Restricted"}</span>
               </div>
             </header>
             <div className="connection-layout">

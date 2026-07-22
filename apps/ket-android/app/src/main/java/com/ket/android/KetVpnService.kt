@@ -258,12 +258,12 @@ class KetVpnService : VpnService() {
             require(vpnRoute.isActive()) { "OpenVPN did not attach its Android tunnel interface" }
             require(selectedEngine.isAlive()) { "OpenVPN stopped while attaching the VPN interface" }
             bridgeActive = false
+            AndroidRoutedInternetProbe.verify(stopping::get)
             return
         }
         val socks = selected.route as AndroidEngineRoute.Socks
         val bypassAddresses =
             (transportAddresses.values + listOfNotNull(selected.bypassAddress)).distinct()
-        val dnsServers = AndroidVpnDnsPolicy.serversFor(bypassAddresses)
         val builder = Builder()
             .setSession("Ket - ${spec.node.displayName}")
             .setMtu(TUN_MTU)
@@ -272,7 +272,7 @@ class KetVpnService : VpnService() {
             .addAddress(TUN_IPV6, 128)
             .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setMetered(false) }
         // Do not call allowBypass(): apps must not bind around the active VPN.
-        dnsServers.forEach(builder::addDnsServer)
+        builder.addDnsServer(AndroidVpnDnsPolicy.server())
         addVpnRoutes(builder, bypassAddresses)
         val established = builder.establish()
             ?: throw IllegalStateException("Android could not establish the VPN interface")
@@ -284,6 +284,7 @@ class KetVpnService : VpnService() {
         if (!selectedEngine.isAlive()) {
             throw IllegalStateException("${selectedEngine.displayName} stopped while attaching the VPN interface")
         }
+        AndroidRoutedInternetProbe.verify(stopping::get)
     }
 
     private fun establishOpenVpnRoute(
@@ -323,13 +324,13 @@ class KetVpnService : VpnService() {
             it.copy(
                 phase = TunnelPhase.Connected,
                 node = spec.node,
-                message = "Protected with ${selected.engine.displayName}",
+                message = "Liberated with ${selected.engine.displayName}",
                 handshakeLatencyMs = selected.started.handshakeLatencyMs,
                 transportName = selected.engine.displayName,
                 reconnectAttempt = 0,
             )
         }
-        updateForegroundNotification("Protected with ${selected.engine.displayName}")
+        updateForegroundNotification("Liberated with ${selected.engine.displayName}")
     }
 
     private fun scheduleHealthChecks() {
