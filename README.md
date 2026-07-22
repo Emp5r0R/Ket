@@ -107,11 +107,11 @@ This publishes Hysteria2 on UDP `443` by default. The hostname must reach the se
 To enable the VLESS + REALITY server data plane, generate the X25519 and server-only credential keys described in [the deployment guide](docs/XRAY_REALITY.md), set `KET_XRAY_ENABLED=true`, and start its overlay:
 
 ```bash
-docker compose -f compose.yaml -f compose.xray.yaml config --quiet
-docker compose -f compose.yaml -f compose.xray.yaml up --build -d
+docker compose -f compose.yaml -f compose.xray.yaml -f compose.edge.yaml config --quiet
+docker compose -f compose.yaml -f compose.xray.yaml -f compose.edge.yaml up --build -d
 ```
 
-This publishes raw TCP `443` by default. Its hostname must resolve directly to the server through a DNS-only record; an ordinary Cloudflare Tunnel or orange-cloud HTTP proxy does not forward unmodified VLESS + REALITY traffic. The pinned Xray image is a multi-architecture manifest, so Docker selects the native `linux/amd64` or `linux/arm64` image for the host.
+The edge inspects only the TLS ClientHello SNI on TCP `443`: the configured REALITY disguise SNI is passed directly to Xray, while normal Ket HTTPS continues to the certificate-terminating HTTP edge. The REALITY hostname must resolve directly to the server through a DNS-only record; an ordinary Cloudflare Tunnel or orange-cloud HTTP proxy does not forward unmodified VLESS + REALITY traffic. The pinned Xray image is a multi-architecture manifest, so Docker selects the native `linux/amd64` or `linux/arm64` image for the host.
 
 To enable the TLS-shaped Stealth path, set `KET_XHTTP_ENABLED=true`, configure the public Cloudflare hostname and an unguessable `KET_XHTTP_PATH`, then include the XHTTP overlay:
 
@@ -152,9 +152,9 @@ The outer stunnel connection is certificate-verified TLS and the inner OpenVPN c
 Hysteria2 and REALITY can share port `443` because they use UDP and TCP respectively. OpenVPN/stunnel is also TCP and therefore needs a different host bind address or public port from REALITY. HTTPS Stealth and WireGuard TLS use separate Cloudflare hostnames and loopback-only origins, while Shadowsocks uses its own TCP+UDP range. To run all six server/desktop transports, enable every environment section, assign OpenVPN a non-conflicting TCP listener, and include all overlays:
 
 ```bash
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml -f compose.openvpn.yaml config --quiet
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml -f compose.openvpn.yaml up --build -d
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml -f compose.openvpn.yaml ps
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml -f compose.openvpn.yaml -f compose.edge.yaml config --quiet
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml -f compose.openvpn.yaml -f compose.edge.yaml up --build -d
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.shadowsocks.yaml -f compose.wireguard.yaml -f compose.openvpn.yaml -f compose.edge.yaml ps
 ```
 
 The control, XHTTP, and WireGuard TLS hostnames may remain behind Cloudflare Tunnel, but Hysteria2, REALITY, Shadowsocks, and OpenVPN/stunnel session profiles must advertise a direct server IP or DNS-only hostname. Open only the exact raw-transport ports in both the cloud network policy and host firewall; keep all Cloudflare Tunnel origin ports closed publicly.

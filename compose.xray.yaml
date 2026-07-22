@@ -20,8 +20,8 @@ services:
         condition: service_healthy
         restart: true
     restart: unless-stopped
-    ports:
-      - "${KET_XRAY_BIND_ADDRESS:-0.0.0.0}:${KET_XRAY_PUBLIC_PORT:-443}:8444/tcp"
+    expose:
+      - "8444"
     volumes:
       - ket-dataplane:/var/lib/ket-dataplane:ro
     read_only: true

@@ -70,7 +70,7 @@ The preflight checks required files, certificate/key envelopes, token independen
 
 Open one stateful OCI and host-firewall TCP rule for `KET_OPENVPN_PUBLIC_PORT`. The DNS record must resolve directly to the server unless a compatible Layer 4 proxy is used. Ordinary Cloudflare orange-cloud HTTP proxying and Cloudflare Tunnel do not forward arbitrary stunnel TLS.
 
-REALITY also defaults to raw TCP `443`. Two containers cannot bind the same host address and port. When both are enabled, assign OpenVPN another public IP or a different port such as `8443`; the preflight rejects an identical bind pair.
+REALITY shares the edge's public TCP `443` through SNI prereading. Assign OpenVPN another public IP or a different port such as the installer's default `9443`; the preflight rejects an identical advertised bind pair.
 
 ## Runtime checks
 

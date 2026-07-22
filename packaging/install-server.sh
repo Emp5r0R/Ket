@@ -179,7 +179,7 @@ shadowsocks_end=$((shadowsocks_start + max_sessions - 1))
 
 if $plan; then
   printf 'Mode: %s\nControl hostname: %s\nRaw transport hostname: %s\n' "$mode" "$domain" "$direct_host"
-  printf 'Required ingress: TCP 80,443,8443,9443,%s-%s; UDP 443,%s-%s\n' \
+  printf 'Required ingress: TCP 80,443,9443,%s-%s; UDP 443,%s-%s\n' \
     "$shadowsocks_start" "$shadowsocks_end" "$shadowsocks_start" "$shadowsocks_end"
   if [[ $location_mode == automatic ]]; then
     printf 'Location: automatic public-IP detection\n'
@@ -284,7 +284,7 @@ KET_HYSTERIA_OBFS_PASSWORD=$(random_secret)
 
 KET_XRAY_ENABLED=true
 KET_XRAY_PUBLIC_HOST=$direct_host
-KET_XRAY_PUBLIC_PORT=8443
+KET_XRAY_PUBLIC_PORT=443
 KET_XRAY_SNI=www.cloudflare.com
 KET_XRAY_SERVER_NAMES=www.cloudflare.com
 KET_XRAY_REALITY_TARGET=www.cloudflare.com:443
@@ -381,7 +381,6 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; the
   ufw allow 80/tcp comment 'Ket ACME renewal'
   ufw allow 443/tcp comment 'Ket HTTPS transports'
   ufw allow 443/udp comment 'Ket Hysteria2'
-  ufw allow 8443/tcp comment 'Ket VLESS REALITY'
   ufw allow 9443/tcp comment 'Ket OpenVPN stunnel'
   ufw allow "$shadowsocks_start:$shadowsocks_end/tcp" comment 'Ket Shadowsocks TCP'
   ufw allow "$shadowsocks_start:$shadowsocks_end/udp" comment 'Ket Shadowsocks UDP'
@@ -415,6 +414,6 @@ trap - EXIT
 printf '\nKet is ready at https://%s\n' "$domain"
 printf 'First 32-character access code: %s\n' "$first_code"
 printf 'Store that code now; the server never stores its plaintext value.\n'
-printf 'Open these cloud firewall ports: TCP 80,443,8443,9443,%s-%s and UDP 443,%s-%s.\n' \
+printf 'Open these cloud firewall ports: TCP 80,443,9443,%s-%s and UDP 443,%s-%s.\n' \
   "$shadowsocks_start" "$shadowsocks_end" "$shadowsocks_start" "$shadowsocks_end"
 printf 'Manage the stack with: cd %s && ./packaging/server/compose.sh ps\n' "$install_dir"

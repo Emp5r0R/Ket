@@ -1,16 +1,18 @@
 services:
   edge-proxy:
     image: nginx:1.29.5-alpine-slim@sha256:032dcd5e58c2a6e767fa8b7bbaa74554fd62e8fd5614fe4f019a05dfba7be8d9
-    entrypoint: ["/usr/sbin/nginx"]
-    command: ["-g", "daemon off;"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        envsubst '$$KET_XRAY_SNI' < /etc/nginx/templates/ket.conf.template > /tmp/nginx.conf
+        exec /usr/sbin/nginx -c /tmp/nginx.conf -g 'daemon off;'
+    environment:
+      KET_XRAY_SNI: "${KET_XRAY_SNI:?KET_XRAY_SNI is required}"
     depends_on:
       control-plane:
         condition: service_healthy
         restart: true
       xray:
-        condition: service_started
-        restart: true
-      wireguard-wstunnel:
         condition: service_started
         restart: true
     restart: unless-stopped
@@ -25,7 +27,7 @@ services:
       - /var/run:size=4m,mode=0755
       - /tmp:size=8m,mode=1777
     volumes:
-      - ./packaging/server/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./packaging/server/nginx.conf:/etc/nginx/templates/ket.conf.template:ro
       - "${KET_HYSTERIA_TLS_DIR:-./secrets/tls}:/etc/nginx/tls:ro"
     cap_drop:
       - ALL
