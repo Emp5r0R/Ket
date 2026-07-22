@@ -4,6 +4,15 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      jobs:
+        description: Jobs to run
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - windows-package
 
 permissions:
   contents: read
@@ -29,12 +38,24 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_JOBS: ${{ inputs.jobs }}
           BEFORE_SHA: ${{ github.event.before }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
           if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
-            .github/scripts/ci-changes.sh --all >> "$GITHUB_OUTPUT"
+            case "$DISPATCH_JOBS" in
+              windows-package)
+                .github/scripts/ci-changes.sh --only windows_package >> "$GITHUB_OUTPUT"
+                ;;
+              all | "")
+                .github/scripts/ci-changes.sh --all >> "$GITHUB_OUTPUT"
+                ;;
+              *)
+                printf 'Unsupported workflow dispatch selection: %s\n' "$DISPATCH_JOBS" >&2
+                exit 2
+                ;;
+            esac
             exit 0
           fi
 
