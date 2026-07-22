@@ -11,11 +11,18 @@ interface SettingsViewProps {
 }
 
 export function SettingsView({ state, serverUrl, deviceName, busy, onForget }: SettingsViewProps) {
+  const tunnelStatus = state.engine.broker_available
+    ? "Ready"
+    : state.engine.status === "not_installed"
+      ? "Not installed"
+      : state.engine.status === "permission_required"
+        ? "Restart required"
+        : "Unavailable";
   const rows = [
     { icon: Server, label: "Control server", value: serverUrl ? endpointHost(serverUrl) : "Not configured" },
     { icon: Laptop, label: "Device", value: deviceName || "Ket desktop" },
     { icon: Binary, label: "Transport engines", value: state.engine.binary_available ? "Available" : "Not installed" },
-    { icon: ShieldCheck, label: "Tunnel service", value: state.engine.broker_available ? "Ready" : "Pending installation" },
+    { icon: ShieldCheck, label: "Tunnel service", value: tunnelStatus },
   ];
 
   return (

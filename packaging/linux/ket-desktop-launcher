@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+desktop_binary=/usr/bin/ket-desktop-bin
+
+if id -nG | tr ' ' '\n' | grep -qx ket; then
+  exec "${desktop_binary}" "$@"
+fi
+
+# Package installation updates /etc/group immediately, but an existing desktop
+# session keeps its old supplementary groups. sg starts the app with the newly
+# assigned Ket group without requiring a logout.
+if id -nG "$(id -un)" | tr ' ' '\n' | grep -qx ket; then
+  if [ "$#" -ne 0 ]; then
+    printf 'Ket was just installed. Start it from the application menu once, or sign in again before passing command-line arguments.\n' >&2
+    exit 1
+  fi
+  exec sg ket -c "${desktop_binary}"
+fi
+
+printf 'Your account does not have Ket tunnel access. Reinstall Ket from this account or ask an administrator to add %s to the ket group.\n' "$(id -un)" >&2
+exit 1

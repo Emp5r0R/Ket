@@ -87,6 +87,6 @@ After deployment, exercise an authenticated Hysteria session from outside the VC
 
 ## Abuse controls
 
-The generated ACL blocks private, loopback, link-local, multicast, carrier-grade NAT, and outbound SMTP destinations. This prevents common metadata-service and lateral-network access through the proxy. Operators needing private-network access must make a conscious code/config change rather than silently weakening the default.
+The generated ACL blocks private, loopback, link-local, multicast, carrier-grade NAT, benchmark-network, and outbound SMTP destinations. This prevents common metadata-service, synthetic-DNS, and lateral-network access through the proxy. Operators needing private-network access must make a conscious code/config change rather than silently weakening the default.
 
 The Hysteria stats API is never published to the host and requires the configured secret on the private Compose network. The engine runs without Linux capabilities and cannot read Ket's control-state volume.

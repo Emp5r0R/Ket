@@ -59,6 +59,7 @@ done
 
 required_payloads=(
   usr/bin/ket-desktop
+  usr/bin/ket-desktop-bin
   usr/libexec/ket/ket-tunnel-service
   usr/libexec/ket/hysteria
   usr/libexec/ket/openvpn
@@ -79,7 +80,7 @@ done
 
 desktop_entry=${scratch}/root/usr/share/applications/Ket.desktop
 [[ -f ${desktop_entry} ]] || fail "desktop entry is missing"
-grep -qx 'Exec=ket-desktop' "${desktop_entry}" || fail "desktop entry has the wrong executable"
+grep -qx 'Exec=ket-desktop' "${desktop_entry}" || fail "desktop entry bypasses the Ket launcher"
 icon_name=$(sed -n 's/^Icon=//p' "${desktop_entry}")
 [[ -n ${icon_name} && ${icon_name} != /* ]] || fail "desktop entry must use a themed icon name"
 icon_path=$(find "${scratch}/root/usr/share/icons" -type f \
@@ -106,6 +107,7 @@ verify_installation() {
     [[ $(stat -c '%U:%G:%a' "/${payload}") == root:root:755 ]] || fail "invalid payload ownership or mode: /${payload}"
   done
   id -nG "${test_user}" | tr ' ' '\n' | grep -qx ket || fail "test user was not added to the ket group"
+  grep -q '/usr/bin/ket-desktop-bin' /usr/bin/ket-desktop || fail "desktop launcher does not use the packaged application"
   for payload in "${required_payloads[@]}"; do
     if ldd "/${payload}" 2>&1 | grep -q 'not found'; then
       fail "executable has unresolved shared libraries: /${payload}"

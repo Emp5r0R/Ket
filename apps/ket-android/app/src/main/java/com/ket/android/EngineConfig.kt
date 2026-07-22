@@ -184,7 +184,7 @@ internal object EngineConfig {
         require(resolvedAddress.isNotBlank()) { "Resolved server address is missing" }
         val serverHost = if (resolvedAddress.contains(':')) "[$resolvedAddress]" else resolvedAddress
         val quic = JSONObject()
-            .put("maxIdleTimeout", "30s")
+            .put("maxIdleTimeout", "60s")
             .put("keepAlivePeriod", "10s")
             .put("sockopts", JSONObject().put("fdControlUnixSocket", "@$fdControlSocket"))
         val document = JSONObject()

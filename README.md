@@ -53,9 +53,7 @@ The installer provisions Docker, certificates, renewal, all six implemented tran
 curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
   --mode direct \
   --domain ket.example.com \
-  --email operator@example.com \
-  --country-code IN --country-name India --city Hyderabad \
-  --latitude 17.3850 --longitude 78.4867
+  --email operator@example.com
 ```
 
 For Cloudflare, create `ket.example.com` as a proxied record and `direct-ket.example.com` as a DNS-only record to the same VPS. The direct record is required because ordinary Cloudflare HTTP proxying cannot carry raw Hysteria2, REALITY, Shadowsocks, or OpenVPN traffic:
@@ -65,12 +63,10 @@ curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-
   --mode cloudflare \
   --domain ket.example.com \
   --direct-host direct-ket.example.com \
-  --email operator@example.com \
-  --country-code IN --country-name India --city Hyderabad \
-  --latitude 17.3850 --longitude 78.4867
+  --email operator@example.com
 ```
 
-Cloudflare SSL/TLS mode must be **Full (strict)** and WebSockets must remain enabled. Before making changes, append `--plan` to validate arguments and print the exact TCP/UDP ingress range. The complete prerequisites, port map, certificate lifecycle, operations, and limitations are in the [server installation guide](docs/SERVER_INSTALL.md).
+The installer detects the node city, country, and map coordinates from the VPS public IP. Cloudflare SSL/TLS mode must be **Full (strict)** and WebSockets must remain enabled. Before making changes, append `--plan` to validate arguments and print the exact TCP/UDP ingress range. The complete prerequisites, location override, port map, certificate lifecycle, operations, and limitations are in the [server installation guide](docs/SERVER_INSTALL.md).
 
 ## Run with Docker manually
 

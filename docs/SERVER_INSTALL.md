@@ -1,6 +1,6 @@
 # Server installation
 
-`packaging/install-server.sh` provides a fail-fast installation path for Debian 12+ and Ubuntu 22.04+ on `amd64` or `arm64`. It installs the official Docker packages when needed, obtains a Let's Encrypt certificate, creates independent protocol keys and OpenVPN PKI, enables all six implemented transports, installs certificate renewal, applies rules when UFW is already active, and returns one access code exactly once.
+`packaging/install-server.sh` provides a fail-fast installation path for Debian 12+ and Ubuntu 22.04+ on `amd64` or `arm64`. It installs the official Docker packages when needed, obtains a Let's Encrypt certificate, detects node location from the VPS public IP, creates independent protocol keys and OpenVPN PKI, enables all six implemented transports, installs certificate renewal, applies rules when UFW is already active, and returns one access code exactly once.
 
 ## DNS modes
 
@@ -35,6 +35,17 @@ Set Cloudflare SSL/TLS encryption to **Full (strict)** and leave WebSockets enab
 Cloudflare must forward `/.well-known/acme-challenge/` over HTTP during initial issuance and renewal. Temporarily disable an account-level HTTP-to-HTTPS redirect if it prevents the standalone Certbot challenge from reaching TCP `80` on the VPS.
 
 Use a release tag in place of `main` for a reproducible production installation after a Ket release is published.
+
+## Node location
+
+The normal install commands require no location flags. Ket tries two HTTPS public-IP location providers and validates the returned country, city, latitude, and longitude before writing `.env`. Installation stops instead of publishing an `Unknown` or `0,0` node when both providers fail.
+
+To override provider data, supply the complete location as one consistent set. Partial overrides are rejected:
+
+```bash
+--country-code SG --country-name Singapore --city Singapore \
+--latitude 1.290270 --longitude 103.851959
+```
 
 ## Ingress
 

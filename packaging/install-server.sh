@@ -21,11 +21,13 @@ Modes:
   --direct-host HOST     Raw Hysteria/REALITY/Shadowsocks/OpenVPN hostname
 
 Location and capacity:
-  --country-code XX      Two-letter country code (default: ZZ)
-  --country-name NAME    Display country (default: Unknown)
-  --city NAME            Display city (default: Unknown)
-  --latitude NUMBER      Map latitude (default: 0)
-  --longitude NUMBER     Map longitude (default: 0)
+  Location is detected from the VPS public IP by default. To override it,
+  provide all five location options together:
+  --country-code XX      Two-letter country code
+  --country-name NAME    Display country
+  --city NAME            Display city
+  --latitude NUMBER      Map latitude
+  --longitude NUMBER     Map longitude
   --max-sessions N       Maximum concurrent sessions, 1-512 (default: 32)
 
 Other:
@@ -57,6 +59,46 @@ valid_hostname() {
 valid_display_text() {
   [[ -n $1 && ${#1} -le 64 && $1 =~ ^[A-Za-z0-9][A-Za-z0-9.,_\ -]*$ ]]
 }
+validate_location() {
+  [[ $country_code =~ ^[A-Z]{2}$ ]] || fail '--country-code must contain two letters'
+  valid_display_text "$country_name" || fail '--country-name contains unsupported characters'
+  valid_display_text "$city" || fail '--city contains unsupported characters'
+  [[ $latitude =~ ^-?[0-9]+([.][0-9]+)?$ ]] || fail '--latitude must be numeric'
+  [[ $longitude =~ ^-?[0-9]+([.][0-9]+)?$ ]] || fail '--longitude must be numeric'
+  awk -v value="$latitude" 'BEGIN { exit !(value >= -90 && value <= 90) }' \
+    || fail '--latitude must be between -90 and 90'
+  awk -v value="$longitude" 'BEGIN { exit !(value >= -180 && value <= 180) }' \
+    || fail '--longitude must be between -180 and 180'
+}
+parse_ipwho_location() {
+  local response=$1
+  [[ $(jq -r '.success // false' <<<"$response") == true ]] || return 1
+  country_code=$(jq -er '.country_code | select(type == "string" and length == 2) | ascii_upcase' <<<"$response") || return 1
+  country_name=$(jq -er '.country | select(type == "string" and length > 0)' <<<"$response") || return 1
+  city=$(jq -er '.city | select(type == "string" and length > 0)' <<<"$response") || return 1
+  latitude=$(jq -er '.latitude | select(type == "number")' <<<"$response") || return 1
+  longitude=$(jq -er '.longitude | select(type == "number")' <<<"$response") || return 1
+}
+parse_ipapi_location() {
+  local response=$1
+  country_code=$(jq -er '.country_code | select(type == "string" and length == 2) | ascii_upcase' <<<"$response") || return 1
+  country_name=$(jq -er '.country_name | select(type == "string" and length > 0)' <<<"$response") || return 1
+  city=$(jq -er '.city | select(type == "string" and length > 0)' <<<"$response") || return 1
+  latitude=$(jq -er '.latitude | select(type == "number")' <<<"$response") || return 1
+  longitude=$(jq -er '.longitude | select(type == "number")' <<<"$response") || return 1
+}
+detect_location() {
+  local response
+  if response=$(curl -fsS --connect-timeout 5 --max-time 10 https://ipwho.is/ 2>/dev/null) \
+    && parse_ipwho_location "$response"; then
+    return 0
+  fi
+  if response=$(curl -fsS --connect-timeout 5 --max-time 10 https://ipapi.co/json/ 2>/dev/null) \
+    && parse_ipapi_location "$response"; then
+    return 0
+  fi
+  return 1
+}
 random_secret() { openssl rand -base64 48 | tr -d '\n'; }
 random_hex() { openssl rand -hex "$1"; }
 
@@ -64,11 +106,16 @@ mode=direct
 domain=
 direct_host=
 email=
-country_code=ZZ
-country_name=Unknown
-city=Unknown
-latitude=0
-longitude=0
+country_code=
+country_name=
+city=
+latitude=
+longitude=
+country_code_set=false
+country_name_set=false
+city_set=false
+latitude_set=false
+longitude_set=false
 max_sessions=32
 git_ref=main
 install_dir=/opt/ket
@@ -80,11 +127,11 @@ while (($#)); do
     --direct-host) need_value "$@"; direct_host=$2; shift 2 ;;
     --email) need_value "$@"; email=$2; shift 2 ;;
     --mode) need_value "$@"; mode=$2; shift 2 ;;
-    --country-code) need_value "$@"; country_code=${2^^}; shift 2 ;;
-    --country-name) need_value "$@"; country_name=$2; shift 2 ;;
-    --city) need_value "$@"; city=$2; shift 2 ;;
-    --latitude) need_value "$@"; latitude=$2; shift 2 ;;
-    --longitude) need_value "$@"; longitude=$2; shift 2 ;;
+    --country-code) need_value "$@"; country_code=${2^^}; country_code_set=true; shift 2 ;;
+    --country-name) need_value "$@"; country_name=$2; country_name_set=true; shift 2 ;;
+    --city) need_value "$@"; city=$2; city_set=true; shift 2 ;;
+    --latitude) need_value "$@"; latitude=$2; latitude_set=true; shift 2 ;;
+    --longitude) need_value "$@"; longitude=$2; longitude_set=true; shift 2 ;;
     --max-sessions) need_value "$@"; max_sessions=$2; shift 2 ;;
     --ref) need_value "$@"; git_ref=$2; shift 2 ;;
     --install-dir) need_value "$@"; install_dir=$2; shift 2 ;;
@@ -108,17 +155,20 @@ valid_hostname "$direct_host" || fail '--direct-host must be a valid hostname'
 if [[ $mode == cloudflare && $direct_host == "$domain" ]]; then
   fail 'cloudflare mode requires a separate DNS-only --direct-host'
 fi
-[[ $country_code =~ ^[A-Z]{2}$ ]] || fail '--country-code must contain two letters'
-valid_display_text "$country_name" || fail '--country-name contains unsupported characters'
-valid_display_text "$city" || fail '--city contains unsupported characters'
+location_fields=0
+for supplied in "$country_code_set" "$country_name_set" "$city_set" "$latitude_set" "$longitude_set"; do
+  $supplied && location_fields=$((location_fields + 1))
+done
+if ((location_fields != 0 && location_fields != 5)); then
+  fail 'provide all five location options together, or omit all five for automatic detection'
+fi
+location_mode=automatic
+if ((location_fields == 5)); then
+  location_mode=manual
+  validate_location
+fi
 [[ $max_sessions =~ ^[1-9][0-9]*$ ]] && ((max_sessions <= 512)) \
   || fail '--max-sessions must be between 1 and 512'
-[[ $latitude =~ ^-?[0-9]+([.][0-9]+)?$ ]] || fail '--latitude must be numeric'
-[[ $longitude =~ ^-?[0-9]+([.][0-9]+)?$ ]] || fail '--longitude must be numeric'
-awk -v value="$latitude" 'BEGIN { exit !(value >= -90 && value <= 90) }' \
-  || fail '--latitude must be between -90 and 90'
-awk -v value="$longitude" 'BEGIN { exit !(value >= -180 && value <= 180) }' \
-  || fail '--longitude must be between -180 and 180'
 [[ $git_ref =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ && $git_ref != *..* ]] \
   || fail '--ref is invalid'
 [[ $install_dir == /* && $install_dir != / && $install_dir != *$'\n'* ]] \
@@ -131,6 +181,11 @@ if $plan; then
   printf 'Mode: %s\nControl hostname: %s\nRaw transport hostname: %s\n' "$mode" "$domain" "$direct_host"
   printf 'Required ingress: TCP 80,443,8443,9443,%s-%s; UDP 443,%s-%s\n' \
     "$shadowsocks_start" "$shadowsocks_end" "$shadowsocks_start" "$shadowsocks_end"
+  if [[ $location_mode == automatic ]]; then
+    printf 'Location: automatic public-IP detection\n'
+  else
+    printf 'Location: %s, %s (%s; %s,%s)\n' "$city" "$country_name" "$country_code" "$latitude" "$longitude"
+  fi
   printf 'Install directory: %s\nGit ref: %s\n' "$install_dir" "$git_ref"
   exit 0
 fi
@@ -147,6 +202,13 @@ case "${ID:-}" in debian|ubuntu) ;; *) fail 'only Debian and Ubuntu are currentl
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates certbot curl git gnupg iproute2 jq openssl wireguard-tools
+
+if [[ $location_mode == automatic ]]; then
+  detect_location || fail 'could not detect VPS location; rerun with all five location options'
+  validate_location
+  printf 'Detected VPS location: %s, %s (%s; %s,%s)\n' \
+    "$city" "$country_name" "$country_code" "$latitude" "$longitude"
+fi
 
 if ! docker compose version >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
@@ -198,7 +260,7 @@ KET_PUBLIC_URL=https://$domain
 KET_CONTROL_PORT=8787
 KET_CERTBOT_NAME=$domain
 KET_NODE_ID=$node_id
-KET_NODE_NAME="Ket $country_code node"
+KET_NODE_NAME="Ket $city"
 KET_COUNTRY_CODE=$country_code
 KET_COUNTRY_NAME="$country_name"
 KET_CITY="$city"

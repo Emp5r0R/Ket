@@ -58,13 +58,18 @@ internal class AndroidHysteriaEngine(
             ensureEngineStartActive(cancelled)
             if (!child.isAlive) throw IllegalStateException(diagnostic.get() ?: "Hysteria2 exited during startup")
             if (connected.get() && socksReady(socksPort)) {
-                configFile?.delete()
-                configFile = null
-                return AndroidEngineStarted(
-                    AndroidEngineRoute.Socks(socksPort),
-                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
-                    resolved,
-                )
+                try {
+                    verifySocksTunnel(socksPort, "one.one.one.one")
+                    configFile?.delete()
+                    configFile = null
+                    return AndroidEngineStarted(
+                        AndroidEngineRoute.Socks(socksPort),
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
+                        resolved,
+                    )
+                } catch (error: Exception) {
+                    diagnostic.compareAndSet(null, error.message)
+                }
             }
             Thread.sleep(100)
         }

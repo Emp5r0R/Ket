@@ -113,7 +113,12 @@ function mockBridge(): DesktopBridge {
     state: async () => ({
       snapshot,
       configured,
-      engine: { binary_available: true, broker_available: true, mode: "privileged_broker" },
+      engine: {
+        binary_available: true,
+        broker_available: true,
+        mode: "privileged_broker",
+        status: "ready",
+      },
       platform: "linux",
       version: "0.1.0",
     }),

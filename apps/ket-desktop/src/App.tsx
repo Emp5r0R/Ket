@@ -44,7 +44,12 @@ const emptySnapshot: ClientSnapshot = {
 const initialState: DesktopState = {
   snapshot: emptySnapshot,
   configured: false,
-  engine: { binary_available: false, broker_available: false, mode: "privileged_broker" },
+  engine: {
+    binary_available: false,
+    broker_available: false,
+    mode: "privileged_broker",
+    status: "unavailable",
+  },
   platform: "desktop",
   version: "0.1.0",
 };
