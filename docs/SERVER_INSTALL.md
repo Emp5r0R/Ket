@@ -54,9 +54,8 @@ With the default capacity of 32 sessions, allow these stateful rules in the VPS 
 | Protocol | Port | Purpose |
 | --- | --- | --- |
 | TCP | `80` | ACME issuance and unattended renewal |
-| TCP | `443` | Control, XHTTP/TLS, WireGuard WebSocket/TLS |
+| TCP | `443` | Control, VLESS + REALITY, XHTTP/TLS, WireGuard WebSocket/TLS |
 | UDP | `443` | Hysteria2 |
-| TCP | `8443` | VLESS + REALITY |
 | TCP | `9443` | OpenVPN over stunnel |
 | TCP+UDP | `20000-20031` | Shadowsocks lease ports |
 
@@ -105,4 +104,4 @@ Review release notes before checkout when a version declares a state or configur
 
 ## Security boundary
 
-The edge publishes only HTTPS `443`; control remains host-loopback on `8787`, XHTTP on `8445`, and WireGuard WebSocket on `8446`. `/internal` always returns `404` at the edge. The WireGuard and OpenVPN manager APIs remain on private Compose networks. Hysteria2 and REALITY share port `443` only when one is UDP and the other TCP; the one-command layout moves REALITY to TCP `8443` because the HTTPS edge owns TCP `443`.
+The edge is the only public TCP `443` listener. It prereads SNI and passes the configured REALITY disguise name to Xray without TLS termination; all other names continue to the HTTPS edge. Control remains host-loopback on `8787`, XHTTP on `8445`, and WireGuard WebSocket on `8446`. `/internal` always returns `404` at the HTTP edge. The WireGuard and OpenVPN manager APIs remain on private Compose networks. Hysteria2 independently shares public port `443` over UDP.

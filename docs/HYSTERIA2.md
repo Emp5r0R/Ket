@@ -48,9 +48,9 @@ docker compose -f compose.yaml -f compose.hysteria.yaml ps
 Hysteria2 UDP `443` and REALITY TCP `443` can run simultaneously:
 
 ```bash
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml config --quiet
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml up --build -d
-docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml ps
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.edge.yaml config --quiet
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.edge.yaml up --build -d
+docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f compose.edge.yaml ps
 ```
 
 The control API remains loopback-only by default. The overlay publishes only the Hysteria UDP port publicly. Terminate control-plane HTTPS in a separate reverse proxy and deny public access to `/internal/`, which is reserved for the Hysteria container's private authentication callback.

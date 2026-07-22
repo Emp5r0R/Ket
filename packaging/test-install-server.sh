@@ -12,7 +12,7 @@ direct=$(
     --plan
 )
 grep -Fq 'Mode: direct' <<<"$direct"
-grep -Fq 'TCP 80,443,8443,9443,20000-20031' <<<"$direct"
+grep -Fq 'TCP 80,443,9443,20000-20031' <<<"$direct"
 grep -Fq 'Location: automatic public-IP detection' <<<"$direct"
 
 cloudflare=$(

@@ -60,13 +60,13 @@ Validate before starting:
 ```bash
 set -a; . ./.env; set +a
 ./packaging/validate-env.sh
-docker compose -f compose.yaml -f compose.xray.yaml config --quiet
-docker compose -f compose.yaml -f compose.xray.yaml up --build -d
-docker compose -f compose.yaml -f compose.xray.yaml ps
+docker compose -f compose.yaml -f compose.xray.yaml -f compose.edge.yaml config --quiet
+docker compose -f compose.yaml -f compose.xray.yaml -f compose.edge.yaml up --build -d
+docker compose -f compose.yaml -f compose.xray.yaml -f compose.edge.yaml ps
 curl --fail http://127.0.0.1:8787/readyz
 ```
 
-The control container writes `/var/lib/ket-dataplane/xray.json` atomically with mode `0600` before serving liveness. Compose starts Xray only after that liveness check passes and propagates control-service upgrades to the dependent sidecar, preventing Xray from retaining or loading a stale volume configuration. The Xray sidecar mounts the volume read-only and exposes its gRPC API only on the private Compose network. Ket keeps `/readyz` and session exchange unavailable while it retries startup reconciliation, and reports ready only after Xray responds.
+The control container writes `/var/lib/ket-dataplane/xray.json` atomically with mode `0600` before serving liveness. Compose starts Xray only after that liveness check passes and propagates control-service upgrades to the dependent sidecar, preventing Xray from retaining or loading a stale volume configuration. The Xray sidecar mounts the volume read-only and exposes its REALITY listener and gRPC API only on the private Compose network. The edge uses SNI prereading to share public TCP `443` without terminating or modifying REALITY traffic. Ket keeps `/readyz` and session exchange unavailable while it retries startup reconciliation, and reports ready only after Xray responds.
 
 ## Operations
 
@@ -76,7 +76,7 @@ Inspect readiness and logs without printing the generated configuration or `.env
 
 ```bash
 curl --fail http://127.0.0.1:8787/readyz
-docker compose -f compose.yaml -f compose.xray.yaml logs --tail=100 control-plane xray
+docker compose -f compose.yaml -f compose.xray.yaml -f compose.edge.yaml logs --tail=100 control-plane xray edge-proxy
 ```
 
 Use the normal session release or grant revocation APIs to remove users. Do not expose Xray's port `10085`; it is an unauthenticated private control API within this deployment boundary.

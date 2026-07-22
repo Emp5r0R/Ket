@@ -41,8 +41,8 @@ docker compose -f compose.yaml -f compose.xhttp.yaml up --build -d
 To run REALITY from the same Xray container, set `KET_XRAY_ENABLED=true` and include both Xray overlays. The Rust control plane renders two inbounds and provisions, reconciles, accounts, and revokes the same lease-scoped UUID in both:
 
 ```bash
-docker compose -f compose.yaml -f compose.xray.yaml -f compose.xhttp.yaml config --quiet
-docker compose -f compose.yaml -f compose.xray.yaml -f compose.xhttp.yaml up --build -d
+docker compose -f compose.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.edge.yaml config --quiet
+docker compose -f compose.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f compose.edge.yaml up --build -d
 ```
 
 ## Route Cloudflare Tunnel
