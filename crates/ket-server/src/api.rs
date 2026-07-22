@@ -249,6 +249,7 @@ async fn create_session(
     let response = SessionManifest {
         session_token: created.token,
         session_expires_at_epoch_seconds: created.expires_at_epoch_seconds,
+        access_expires_at_epoch_seconds: created.access_expires_at_epoch_seconds,
         node: build_node_status(&state).await,
         transports,
     };
@@ -539,6 +540,7 @@ async fn build_session_status(
         session_id: session.id,
         client_name: session.client_name,
         expires_at_epoch_seconds: session.expires_at_epoch_seconds,
+        access_expires_at_epoch_seconds: session.access_expires_at_epoch_seconds,
         node: build_node_status(state).await,
         traffic,
     }
@@ -844,7 +846,7 @@ mod tests {
                 serde_json::json!({
                     "label": "Personal devices",
                     "max_connections": 1,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await
@@ -860,7 +862,7 @@ mod tests {
                 serde_json::json!({
                     "label": "Personal devices",
                     "max_connections": 1,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await
@@ -868,6 +870,11 @@ mod tests {
         assert_eq!(grant_response.status(), StatusCode::CREATED);
         let grant: CreateAccessGrantResponse = response_json(grant_response).await;
         assert_eq!(grant.access_code.len(), ket_core::ACCESS_CODE_LENGTH);
+        assert_eq!(grant.valid_for_minutes, 60);
+        assert_eq!(
+            grant.expires_at_epoch_seconds - grant.created_at_epoch_seconds,
+            60 * 60
+        );
         assert!(
             !repository
                 .encoded_state()
@@ -884,7 +891,7 @@ mod tests {
                     "label_prefix": "Fleet",
                     "count": 2,
                     "max_connections": 1,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await
@@ -910,6 +917,11 @@ mod tests {
             .expect("request should complete");
         assert_eq!(session_response.status(), StatusCode::CREATED);
         let session: SessionManifest = response_json(session_response).await;
+        assert_eq!(
+            session.access_expires_at_epoch_seconds,
+            Some(grant.expires_at_epoch_seconds)
+        );
+        assert!(session.session_expires_at_epoch_seconds <= grant.expires_at_epoch_seconds);
         assert!(
             !repository
                 .encoded_state()
@@ -945,6 +957,10 @@ mod tests {
         assert_eq!(status_response.status(), StatusCode::OK);
         let status: SessionStatus = response_json(status_response).await;
         assert_eq!(status.client_name, "Linux workstation");
+        assert_eq!(
+            status.access_expires_at_epoch_seconds,
+            Some(grant.expires_at_epoch_seconds)
+        );
         assert_eq!(status.node.active_sessions, 1);
         assert_eq!(status.node.capacity_percent, 25.0);
 
@@ -1053,7 +1069,7 @@ mod tests {
                 serde_json::json!({
                     "label": "Hysteria test",
                     "max_connections": 1,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await
@@ -1173,7 +1189,7 @@ mod tests {
                 serde_json::json!({
                     "label": "OpenVPN test",
                     "max_connections": 1,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await
@@ -1313,7 +1329,7 @@ mod tests {
                 serde_json::json!({
                     "label": "Startup gate test",
                     "max_connections": 1,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await
@@ -1363,7 +1379,7 @@ mod tests {
                 serde_json::json!({
                     "label": "REALITY test",
                     "max_connections": 1,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await
@@ -1476,7 +1492,7 @@ mod tests {
                 serde_json::json!({
                     "label": "Shadowsocks test",
                     "max_connections": 2,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await
@@ -1567,7 +1583,7 @@ mod tests {
                 serde_json::json!({
                     "label": "WireGuard test",
                     "max_connections": 2,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await
@@ -1663,7 +1679,7 @@ mod tests {
                 serde_json::json!({
                     "label": "Provision failure test",
                     "max_connections": 1,
-                    "expires_at_epoch_seconds": null
+                    "valid_for_minutes": 60
                 }),
             ))
             .await

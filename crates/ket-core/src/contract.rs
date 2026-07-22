@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::SecretString;
 
+pub const MAX_ACCESS_GRANT_VALIDITY_MINUTES: u32 = 365 * 24 * 60;
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct NodeLocation {
     pub country_code: String,
@@ -96,7 +98,7 @@ pub struct NodeStatus {
 pub struct CreateAccessGrantRequest {
     pub label: String,
     pub max_connections: u32,
-    pub expires_at_epoch_seconds: Option<u64>,
+    pub valid_for_minutes: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -104,7 +106,7 @@ pub struct CreateAccessGrantBatchRequest {
     pub label_prefix: String,
     pub count: u16,
     pub max_connections: u32,
-    pub expires_at_epoch_seconds: Option<u64>,
+    pub valid_for_minutes: u32,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -114,7 +116,8 @@ pub struct CreateAccessGrantResponse {
     pub access_code: SecretString,
     pub label: String,
     pub max_connections: u32,
-    pub expires_at_epoch_seconds: Option<u64>,
+    pub valid_for_minutes: u32,
+    pub expires_at_epoch_seconds: u64,
     pub created_at_epoch_seconds: u64,
 }
 
@@ -126,6 +129,7 @@ impl std::fmt::Debug for CreateAccessGrantResponse {
             .field("access_code", &self.access_code)
             .field("label", &self.label)
             .field("max_connections", &self.max_connections)
+            .field("valid_for_minutes", &self.valid_for_minutes)
             .field("expires_at_epoch_seconds", &self.expires_at_epoch_seconds)
             .field("created_at_epoch_seconds", &self.created_at_epoch_seconds)
             .finish()
@@ -187,6 +191,8 @@ pub struct SessionTransport {
 pub struct SessionManifest {
     pub session_token: SecretString,
     pub session_expires_at_epoch_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_expires_at_epoch_seconds: Option<u64>,
     pub node: NodeStatus,
     pub transports: Vec<SessionTransport>,
 }
@@ -199,6 +205,10 @@ impl std::fmt::Debug for SessionManifest {
             .field(
                 "session_expires_at_epoch_seconds",
                 &self.session_expires_at_epoch_seconds,
+            )
+            .field(
+                "access_expires_at_epoch_seconds",
+                &self.access_expires_at_epoch_seconds,
             )
             .field("node", &self.node)
             .field("transports", &self.transports)
@@ -220,6 +230,8 @@ pub struct SessionStatus {
     pub session_id: String,
     pub client_name: String,
     pub expires_at_epoch_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_expires_at_epoch_seconds: Option<u64>,
     pub node: NodeStatus,
     pub traffic: SessionTraffic,
 }

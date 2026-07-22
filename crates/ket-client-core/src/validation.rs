@@ -28,6 +28,11 @@ pub(crate) fn validate_manifest(
     split_session_token(manifest.session_token.expose_secret())
         .map_err(|_| invalid("session token has an invalid shape"))?;
     validate_future_expiry(manifest.session_expires_at_epoch_seconds, now_epoch_seconds)?;
+    validate_access_expiry(
+        manifest.access_expires_at_epoch_seconds,
+        manifest.session_expires_at_epoch_seconds,
+        now_epoch_seconds,
+    )?;
     validate_node(&manifest.node)?;
     if manifest.transports.is_empty() || manifest.transports.len() > MAX_TRANSPORTS {
         return Err(invalid("server advertised an invalid transport count"));
@@ -104,8 +109,27 @@ pub(crate) fn validate_status(
         ));
     }
     validate_future_expiry(status.expires_at_epoch_seconds, now_epoch_seconds)?;
+    validate_access_expiry(
+        status.access_expires_at_epoch_seconds,
+        status.expires_at_epoch_seconds,
+        now_epoch_seconds,
+    )?;
     validate_node(&status.node)?;
     validate_traffic(&status.traffic)
+}
+
+fn validate_access_expiry(
+    access_expiry: Option<u64>,
+    session_expiry: u64,
+    now_epoch_seconds: u64,
+) -> Result<(), ClientError> {
+    if let Some(access_expiry) = access_expiry {
+        validate_future_expiry(access_expiry, now_epoch_seconds)?;
+        if session_expiry > access_expiry {
+            return Err(invalid("session lease outlives access time"));
+        }
+    }
+    Ok(())
 }
 
 fn validate_node(node: &NodeStatus) -> Result<(), ClientError> {
@@ -342,6 +366,10 @@ mod tests {
         assert_invalid(validate_manifest(&response, NOW), "expired");
 
         let mut response = manifest();
+        response.access_expires_at_epoch_seconds = Some(NOW + 299);
+        assert_invalid(validate_manifest(&response, NOW), "outlives access time");
+
+        let mut response = manifest();
         response.transports.push(response.transports[0].clone());
         assert_invalid(validate_manifest(&response, NOW), "transport profile");
 
@@ -377,6 +405,13 @@ mod tests {
     #[test]
     fn binds_status_to_the_enrolled_identity() {
         let manifest = manifest();
+        let mut response = status();
+        response.access_expires_at_epoch_seconds = Some(NOW + 299);
+        assert_invalid(
+            validate_status(&response, &manifest.session_token, "Desktop", NOW),
+            "outlives access time",
+        );
+
         let mut response = status();
         response.session_id = "Z23456789012".to_owned();
         assert_invalid(
@@ -414,6 +449,7 @@ mod tests {
         SessionManifest {
             session_token: TOKEN.into(),
             session_expires_at_epoch_seconds: NOW + 300,
+            access_expires_at_epoch_seconds: Some(NOW + 3_600),
             node: node(),
             transports: vec![SessionTransport {
                 profile: TransportProfile {
@@ -440,6 +476,7 @@ mod tests {
             session_id: "A23456789012".to_owned(),
             client_name: "Desktop".to_owned(),
             expires_at_epoch_seconds: NOW + 300,
+            access_expires_at_epoch_seconds: Some(NOW + 3_600),
             node: node(),
             traffic: SessionTraffic {
                 available: true,

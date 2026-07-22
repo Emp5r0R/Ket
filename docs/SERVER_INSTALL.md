@@ -2,6 +2,8 @@
 
 `packaging/install-server.sh` provides a fail-fast installation path for Debian 12+ and Ubuntu 22.04+ on `amd64` or `arm64`. It installs the official Docker packages when needed, obtains a Let's Encrypt certificate, detects node location from the VPS public IP, creates independent protocol keys and OpenVPN PKI, enables all six implemented transports, installs certificate renewal, applies rules when UFW is already active, and returns one access code exactly once.
 
+The first code is valid for 43,200 minutes (30 days) by default. Set `--first-code-valid-minutes` to any value from `1` through `525600`; the installer prints the server-derived absolute expiry with the code.
+
 ## DNS modes
 
 ### Direct VPS
@@ -10,7 +12,8 @@ Create an `A` or `AAAA` record for the control hostname that resolves directly t
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
-  --mode direct --domain ket.example.com --email operator@example.com
+  --mode direct --domain ket.example.com --email operator@example.com \
+  --first-code-valid-minutes 43200
 ```
 
 ### Cloudflare proxy
@@ -27,7 +30,8 @@ curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-
   --mode cloudflare \
   --domain ket.example.com \
   --direct-host direct-ket.example.com \
-  --email operator@example.com
+  --email operator@example.com \
+  --first-code-valid-minutes 43200
 ```
 
 Set Cloudflare SSL/TLS encryption to **Full (strict)** and leave WebSockets enabled. This mode uses Cloudflare's normal reverse proxy, not a pre-existing Cloudflare Tunnel. A Tunnel deployment can use the same loopback XHTTP and WireGuard origins, but its tunnel credentials and ingress ownership remain an explicit operator step.

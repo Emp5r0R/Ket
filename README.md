@@ -12,11 +12,11 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 
 - Rust workspace with shared, serializable client/server contracts.
 - Shared Rust client controller with hardened HTTPS enrollment, bounded and identity-bound control-response validation, UI-safe last-known-good state snapshots, lease renewal, metrics refresh, bounded fallback, persistent reconnect intent across fully blocked rounds, and clean release.
-- Map-first Tauri 2 desktop UI with secure enrollment, explicit or automatic protocol choice, an in-app guide for every implemented protocol, node geography, connection control, health/capacity telemetry, traffic history, and responsive Linux/Windows layouts.
+- Map-first Tauri 2 desktop UI with retained time-bounded profiles, remaining-access display, explicit or automatic protocol choice, an in-app guide for every implemented protocol, node geography, connection control, health/capacity telemetry, traffic history, and responsive Linux/Windows layouts.
 - Authenticated loopback privilege broker with HMAC-SHA-256 installation identity, bounded framing, one-tunnel ownership, heartbeat expiry, and redacted diagnostics.
 - Privileged desktop transport service with strict Hysteria2, VLESS + REALITY, XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard TLS, and OpenVPN/stunnel validation, full-route ownership, every resolved server IP excluded, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
 - Hardened `systemd` and Windows Service Control Manager installers with read-only desktop token access and non-destructive upgrades.
-- Exactly 32-character access grants with Argon2-protected at-rest storage.
+- Exactly 32-character access grants with Argon2-protected at-rest storage and server-derived lifetimes in minutes.
 - Per-grant connection limits, global capacity, expiry, renewal, release, and revocation.
 - Lease-scoped Hysteria2 credentials, HTTP authentication, traffic counters, online state, and connection kicks.
 - Generated Hysteria2 2.10 server configuration with TLS, HTTP/3 masquerading, optional Salamander/Gecko obfuscation, and abuse-resistant ACLs.
@@ -24,7 +24,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 - Maintained `shadowsocks-rust` 1.24.0 SIP022 AEAD-2022 server manager with deterministic lease-scoped keys, crash-safe per-lease TCP/UDP ports, reconciliation/revocation, and abuse-resistant ACLs.
 - Maintained WireGuard kernel server and Xray userspace clients carried through checksum-pinned `wstunnel` 10.6.2, with deterministic lease-scoped keys, preshared keys, addresses, peer reconciliation/revocation, and certificate-verified WSS.
 - Checksum-pinned OpenVPN 2.7.5 inside stunnel 5.79 TLS, with two independent certificate chains, `tls-crypt`, scoped username/password authentication, session reconciliation/revocation, traffic counters, and a capability-limited Linux agent.
-- Android Compose client with explicit or automatic protocol choice, an in-app guide for every implemented protocol, a real Natural Earth server map, coordinate-based location marker, node health/capacity/CPU/memory/uptime telemetry, bounded and identity-bound HTTPS control responses, Keystore-sealed durable credentials including the selected preference, process/reboot-safe lease restoration, system always-on entry, ranked OpenVPN TLS, WireGuard TLS, Shadowsocks 2022, XHTTP/TLS Stealth, VLESS + REALITY, and Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, collision-safe dual-stack VPN DNS, a fail-closed replacement-route guard, Doze-aware lease validation, graceful VPN-permission revocation, protected carrier sockets, server-route exclusion for upstream engines, maintained hev TUN-to-SOCKS forwarding, OpenVPN management/TUN descriptor handoff, local traffic metrics, and engine supervision.
+- Android Compose client with explicit or automatic protocol choice, an in-app guide for every implemented protocol, a real Natural Earth server map, coordinate-based location marker, node health/capacity/CPU/memory/uptime telemetry, remaining-access display, bounded and identity-bound HTTPS control responses, Keystore-sealed durable credentials including the selected preference and access expiry, automatic profile erasure at expiry, process/reboot-safe lease restoration, system always-on entry, ranked OpenVPN TLS, WireGuard TLS, Shadowsocks 2022, XHTTP/TLS Stealth, VLESS + REALITY, and Hysteria2 startup fallback, bounded post-connect and underlying-network-change recovery, foreground `VpnService` ownership, collision-safe dual-stack VPN DNS, a fail-closed replacement-route guard, Doze-aware lease validation, graceful VPN-permission revocation, protected carrier sockets, server-route exclusion for upstream engines, maintained hev TUN-to-SOCKS forwarding, OpenVPN management/TUN descriptor handoff, local traffic metrics, and engine supervision.
 - Fail-closed Android release signing with operator-supplied version metadata and signer-certificate pinning; CI exercises the complete release path with a disposable identity that is never published as a trusted release.
 - Typed discovery identifiers remain for future IKEv2 and XOR-wrapped adapters. These identifiers are not executable protocol support.
 - Country/city coordinates, health, capacity, CPU, memory, uptime, and Prometheus metrics.
@@ -170,9 +170,9 @@ sudo bash -c '
     --request POST \
     --header "Authorization: Bearer ${KET_ADMIN_TOKEN}" \
     --header "Content-Type: application/json" \
-    --data "{\"label\":\"Personal devices\",\"max_connections\":5,\"expires_at_epoch_seconds\":null}" \
+    --data "{\"label\":\"Personal devices\",\"max_connections\":5,\"valid_for_minutes\":43200}" \
     "http://127.0.0.1:${KET_CONTROL_PORT}/v1/admin/access-grants" |
-    jq -r "\"Grant ID: \\(.id)\\nAccess code: \\(.access_code)\""
+    jq -r "\"Grant ID: \\(.id)\\nAccess code: \\(.access_code)\\nValid for: \\(.valid_for_minutes) minutes\\nExpires at: \\(.expires_at_epoch_seconds)\""
 '
 ```
 
@@ -187,13 +187,13 @@ sudo bash -c '
     --request POST \
     --header "Authorization: Bearer ${KET_ADMIN_TOKEN}" \
     --header "Content-Type: application/json" \
-    --data "{\"label_prefix\":\"Client\",\"count\":10,\"max_connections\":1,\"expires_at_epoch_seconds\":null}" \
+    --data "{\"label_prefix\":\"Client\",\"count\":10,\"max_connections\":1,\"valid_for_minutes\":43200}" \
     "http://127.0.0.1:${KET_CONTROL_PORT}/v1/admin/access-grants/batch" |
-    jq -r ".[] | [.label, .access_code, .id] | @tsv"
+    jq -r ".[] | [.label, .access_code, .valid_for_minutes, .expires_at_epoch_seconds, .id] | @tsv"
 '
 ```
 
-Ket returns each plaintext code only once and stores only its Argon2 hash. Existing codes cannot be recovered; create a replacement when a code is lost. Use the server URL such as `https://ket.nsa.tools` plus the returned 32-character code in any Ket client.
+`valid_for_minutes` is required and accepts `1` through `525600` minutes. Ket returns each plaintext code only once and stores only its Argon2 hash. Existing codes cannot be recovered; create a replacement when a code is lost. Use the server URL such as `https://ket.nsa.tools` plus the returned 32-character code in any Ket client. Clients retain the profile and show its remaining access time until this server-enforced lifetime ends.
 
 ## Develop
 

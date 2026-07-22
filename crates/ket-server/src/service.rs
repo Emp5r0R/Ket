@@ -9,9 +9,9 @@ use std::{
 
 use ket_core::{
     AccessGrantSummary, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
-    CreateAccessGrantResponse, SecretString, generate_access_code, generate_scoped_token,
-    generate_session_token, hash_secret, hash_token_secret, split_access_code, split_session_token,
-    verify_secret, verify_token_secret,
+    CreateAccessGrantResponse, MAX_ACCESS_GRANT_VALIDITY_MINUTES, SecretString,
+    generate_access_code, generate_scoped_token, generate_session_token, hash_secret,
+    hash_token_secret, split_access_code, split_session_token, verify_secret, verify_token_secret,
 };
 use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
@@ -35,6 +35,7 @@ pub struct CreatedSession {
     pub expired_allocations: Vec<SessionAllocation>,
     pub client_name: String,
     pub expires_at_epoch_seconds: u64,
+    pub access_expires_at_epoch_seconds: Option<u64>,
 }
 
 impl std::fmt::Debug for CreatedSession {
@@ -48,6 +49,10 @@ impl std::fmt::Debug for CreatedSession {
             .field("expired_allocations", &self.expired_allocations.len())
             .field("client_name", &self.client_name)
             .field("expires_at_epoch_seconds", &self.expires_at_epoch_seconds)
+            .field(
+                "access_expires_at_epoch_seconds",
+                &self.access_expires_at_epoch_seconds,
+            )
             .finish()
     }
 }
@@ -58,6 +63,7 @@ pub struct SessionView {
     pub resource_slot: u32,
     pub client_name: String,
     pub expires_at_epoch_seconds: u64,
+    pub access_expires_at_epoch_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -148,15 +154,16 @@ impl AccessService {
                 self.max_sessions
             )));
         }
-        let now = unix_time();
-        if request
-            .expires_at_epoch_seconds
-            .is_some_and(|expires_at| expires_at <= now)
+        if request.valid_for_minutes == 0
+            || request.valid_for_minutes > MAX_ACCESS_GRANT_VALIDITY_MINUTES
         {
-            return Err(ServiceError::InvalidInput(
-                "expires_at_epoch_seconds must be in the future".to_owned(),
-            ));
+            return Err(ServiceError::InvalidInput(format!(
+                "valid_for_minutes must be between 1 and {MAX_ACCESS_GRANT_VALIDITY_MINUTES}"
+            )));
         }
+        let now = unix_time();
+        let expires_at_epoch_seconds =
+            now.saturating_add(u64::from(request.valid_for_minutes) * 60);
 
         let code = generate_access_code();
         let parts = split_access_code(&code).map_err(|_| ServiceError::Crypto)?;
@@ -166,7 +173,7 @@ impl AccessService {
             secret_hash,
             label: label.clone(),
             max_connections: request.max_connections,
-            expires_at_epoch_seconds: request.expires_at_epoch_seconds,
+            expires_at_epoch_seconds: Some(expires_at_epoch_seconds),
             created_at_epoch_seconds: now,
         };
 
@@ -184,7 +191,8 @@ impl AccessService {
             access_code: code.into(),
             label,
             max_connections: request.max_connections,
-            expires_at_epoch_seconds: request.expires_at_epoch_seconds,
+            valid_for_minutes: request.valid_for_minutes,
+            expires_at_epoch_seconds,
             created_at_epoch_seconds: now,
         })
     }
@@ -205,7 +213,7 @@ impl AccessService {
                 self.create_grant(CreateAccessGrantRequest {
                     label: format!("{label_prefix}-{index}"),
                     max_connections: request.max_connections,
-                    expires_at_epoch_seconds: request.expires_at_epoch_seconds,
+                    valid_for_minutes: request.valid_for_minutes,
                 })
                 .await?,
             );
@@ -327,8 +335,9 @@ impl AccessService {
         let resource_slot =
             next_resource_slot(&next, self.max_sessions).ok_or(ServiceError::NodeCapacity)?;
 
+        let access_expires_at_epoch_seconds = grant.expires_at_epoch_seconds;
         let mut expires_at = now.saturating_add(self.session_ttl.as_secs());
-        if let Some(grant_expiry) = grant.expires_at_epoch_seconds {
+        if let Some(grant_expiry) = access_expires_at_epoch_seconds {
             expires_at = expires_at.min(grant_expiry);
         }
         let session = SessionRecord {
@@ -356,17 +365,19 @@ impl AccessService {
             expired_allocations,
             client_name,
             expires_at_epoch_seconds: expires_at,
+            access_expires_at_epoch_seconds,
         })
     }
 
     pub async fn session(&self, token: &str) -> Result<SessionView, ServiceError> {
-        let (record, _) = self.authenticate(token).await?;
+        let (record, grant) = self.authenticate(token).await?;
         let resource_slot = required_resource_slot(&record)?;
         Ok(SessionView {
             id: record.id,
             resource_slot,
             client_name: record.client_name,
             expires_at_epoch_seconds: record.expires_at_epoch_seconds,
+            access_expires_at_epoch_seconds: grant.expires_at_epoch_seconds,
         })
     }
 
@@ -409,6 +420,7 @@ impl AccessService {
             resource_slot,
             client_name: session.client_name,
             expires_at_epoch_seconds: session.expires_at_epoch_seconds,
+            access_expires_at_epoch_seconds: grant.expires_at_epoch_seconds,
         })
     }
 
@@ -436,6 +448,7 @@ impl AccessService {
             resource_slot,
             client_name: record.client_name,
             expires_at_epoch_seconds: expires_at,
+            access_expires_at_epoch_seconds: grant.expires_at_epoch_seconds,
         })
     }
 
@@ -677,6 +690,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn grant_duration_is_required_bounded_and_returned_as_an_absolute_expiry() {
+        let service = AccessService::load(Arc::new(EmptyRepository), Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+
+        for valid_for_minutes in [0, MAX_ACCESS_GRANT_VALIDITY_MINUTES + 1] {
+            let result = service
+                .create_grant(CreateAccessGrantRequest {
+                    label: "Invalid duration".to_owned(),
+                    max_connections: 1,
+                    valid_for_minutes,
+                })
+                .await;
+            assert!(matches!(result, Err(ServiceError::InvalidInput(_))));
+        }
+
+        let grant = service
+            .create_grant(CreateAccessGrantRequest {
+                label: "One day".to_owned(),
+                max_connections: 1,
+                valid_for_minutes: 1_440,
+            })
+            .await
+            .expect("bounded grant should be created");
+        assert_eq!(grant.valid_for_minutes, 1_440);
+        assert_eq!(
+            grant.expires_at_epoch_seconds - grant.created_at_epoch_seconds,
+            1_440 * 60
+        );
+    }
+
+    #[tokio::test]
     async fn crypto_overload_fails_before_queuing_more_work() {
         let service = AccessService::load(Arc::new(EmptyRepository), Duration::from_secs(300), 4)
             .await
@@ -696,7 +741,7 @@ mod tests {
             .create_grant(CreateAccessGrantRequest {
                 label: "Overload test".to_owned(),
                 max_connections: 1,
-                expires_at_epoch_seconds: None,
+                valid_for_minutes: 60,
             })
             .await;
 

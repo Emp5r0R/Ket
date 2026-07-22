@@ -5,8 +5,8 @@ import org.junit.Test
 
 class KetAppStatusTest {
     @Test
-    fun `connection copy names the restricted and liberated states`() {
-        assertEquals("Restricted", phaseStatusLabel(TunnelPhase.Disconnected))
+    fun `connection copy names the watched and liberated states`() {
+        assertEquals("You are being watched", phaseStatusLabel(TunnelPhase.Disconnected))
         assertEquals("Liberated", phaseStatusLabel(TunnelPhase.Connected))
         assertEquals("Choose your node", phaseHeadline(TunnelPhase.Disconnected))
         assertEquals("Liberated route", phaseHeadline(TunnelPhase.Connected))

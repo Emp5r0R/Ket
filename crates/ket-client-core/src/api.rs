@@ -419,6 +419,7 @@ mod tests {
         SessionManifest {
             session_token: generate_session_token().into(),
             session_expires_at_epoch_seconds: 4_000_000_000,
+            access_expires_at_epoch_seconds: Some(4_000_003_600),
             node: NodeStatus {
                 node_id: "test-node".to_owned(),
                 display_name: "Test node".to_owned(),

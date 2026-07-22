@@ -14,6 +14,7 @@ internal const val KET_ANDROID_CLIENT_NAME = "Ket Android"
 class EnrollmentResult(
     val token: String,
     val expiresAtEpochSeconds: Long,
+    val accessExpiresAtEpochSeconds: Long?,
     val node: AndroidNodeStatus,
     val transports: List<AndroidTransport>,
     internal val manifestJson: String,
@@ -23,6 +24,7 @@ class EnrollmentResult(
 }
 data class SessionTelemetry(
     val expiresAtEpochSeconds: Long,
+    val accessExpiresAtEpochSeconds: Long?,
     val node: AndroidNodeStatus,
     val available: Boolean,
     val sent: Long,
@@ -104,9 +106,14 @@ object KetControlApi : TunnelSessionApi {
         val expiresAt = positiveLong(json, "session_expires_at_epoch_seconds").also {
             if (requireActiveLease) require(it > epochSeconds()) { "Session lease is already expired" }
         }
+        val accessExpiresAt = optionalPositiveLong(json, "access_expires_at_epoch_seconds").also {
+            if (requireActiveLease && it != null) require(it > epochSeconds()) { "Access time has expired" }
+            require(it == null || expiresAt <= it) { "Session lease outlives access time" }
+        }
         return EnrollmentResult(
             token = validateSessionToken(json.getString("session_token")),
             expiresAtEpochSeconds = expiresAt,
+            accessExpiresAtEpochSeconds = accessExpiresAt,
             node = AndroidNodeStatusParser.parse(json.getJSONObject("node")),
             transports = AndroidTransportSelector.parse(json.getJSONArray("transports")),
             manifestJson = json.toString(),
@@ -130,6 +137,10 @@ object KetControlApi : TunnelSessionApi {
         val expiresAt = positiveLong(json, "expires_at_epoch_seconds").also {
             require(it > epochSeconds()) { "Session lease is already expired" }
         }
+        val accessExpiresAt = optionalPositiveLong(json, "access_expires_at_epoch_seconds").also {
+            require(it == null || it > epochSeconds()) { "Access time has expired" }
+            require(it == null || expiresAt <= it) { "Session lease outlives access time" }
+        }
         val traffic = json.getJSONObject("traffic")
         val available = traffic.getBoolean("available")
         val sent = nonNegativeLong(traffic, "bytes_sent")
@@ -144,6 +155,7 @@ object KetControlApi : TunnelSessionApi {
         }
         return SessionTelemetry(
             expiresAtEpochSeconds = expiresAt,
+            accessExpiresAtEpochSeconds = accessExpiresAt,
             node = AndroidNodeStatusParser.parse(json.getJSONObject("node")),
             available = available,
             sent = sent,
@@ -152,6 +164,9 @@ object KetControlApi : TunnelSessionApi {
             observedAtEpochSeconds = positiveLong(traffic, "observed_at_epoch_seconds"),
         )
     }
+
+    private fun optionalPositiveLong(json: JSONObject, key: String): Long? =
+        if (json.has(key) && !json.isNull(key)) positiveLong(json, key) else null
 
     internal fun normalizeBaseUrl(serverUrl: String): String {
         val url = URL(serverUrl.trim().trimEnd('/'))

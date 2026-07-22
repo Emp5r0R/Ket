@@ -324,6 +324,7 @@ class KetVpnService : VpnService() {
             it.copy(
                 phase = TunnelPhase.Connected,
                 node = spec.node,
+                accessExpiresAtEpochSeconds = spec.accessExpiresAtEpochSeconds,
                 message = "Liberated with ${selected.engine.displayName}",
                 handshakeLatencyMs = selected.started.handshakeLatencyMs,
                 transportName = selected.engine.displayName,
@@ -488,6 +489,8 @@ class KetVpnService : VpnService() {
                 KetTunnelRuntime.update {
                     it.copy(
                         node = remote?.node ?: it.node,
+                        accessExpiresAtEpochSeconds = remote?.accessExpiresAtEpochSeconds
+                            ?: it.accessExpiresAtEpochSeconds,
                         sentBytes = local?.getOrNull(1) ?: remoteTraffic?.sent ?: it.sentBytes,
                         receivedBytes = local?.getOrNull(3) ?: remoteTraffic?.received ?: it.receivedBytes,
                         onlineConnections = remoteTraffic?.online ?: it.onlineConnections,
@@ -514,7 +517,13 @@ class KetVpnService : VpnService() {
         val spec = launchSpec
         launchSpec = null
         if (spec != null) runCatching { KetControlApi.release(spec.controlEndpoint, spec.sessionToken) }
-        runCatching { credentialStore.clearSession() }
+        runCatching {
+            if (spec?.accessExpiresAtEpochSeconds?.let { it <= System.currentTimeMillis() / 1_000 } == true) {
+                credentialStore.clearAll()
+            } else {
+                credentialStore.clearSession()
+            }
+        }
         if (failure == null) {
             KetTunnelRuntime.publish(TunnelSnapshot())
         } else {

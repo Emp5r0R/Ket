@@ -27,6 +27,7 @@ class KetControlApiTest {
 
         assertEquals(token, enrollment.token)
         assertEquals(FUTURE_EPOCH_SECONDS, enrollment.expiresAtEpochSeconds)
+        assertEquals(ACCESS_EXPIRY_EPOCH_SECONDS, enrollment.accessExpiresAtEpochSeconds)
         assertEquals("Test node", enrollment.node.displayName)
         assertEquals("hy2-primary", enrollment.transports.single().id)
 
@@ -55,6 +56,7 @@ class KetControlApiTest {
         )
 
         assertEquals(FUTURE_EPOCH_SECONDS, telemetry.expiresAtEpochSeconds)
+        assertEquals(ACCESS_EXPIRY_EPOCH_SECONDS, telemetry.accessExpiresAtEpochSeconds)
         assertEquals("Test node", telemetry.node.displayName)
         assertTrue(telemetry.available)
         assertEquals(1_024L, telemetry.sent)
@@ -146,6 +148,7 @@ internal fun testSessionToken(seed: Char): String = seed.toString().repeat(12) +
 internal fun testSessionManifest(token: String): String = JSONObject()
     .put("session_token", token)
     .put("session_expires_at_epoch_seconds", FUTURE_EPOCH_SECONDS)
+    .put("access_expires_at_epoch_seconds", ACCESS_EXPIRY_EPOCH_SECONDS)
     .put("node", testNodeJson())
     .put(
         "transports",
@@ -173,6 +176,7 @@ private fun testSessionStatus(sessionId: String): JSONObject = JSONObject()
     .put("session_id", sessionId)
     .put("client_name", KET_ANDROID_CLIENT_NAME)
     .put("expires_at_epoch_seconds", FUTURE_EPOCH_SECONDS)
+    .put("access_expires_at_epoch_seconds", ACCESS_EXPIRY_EPOCH_SECONDS)
     .put("node", testNodeJson())
     .put(
         "traffic",
@@ -185,3 +189,4 @@ private fun testSessionStatus(sessionId: String): JSONObject = JSONObject()
     )
 
 private const val FUTURE_EPOCH_SECONDS = 4_000_000_000L
+private const val ACCESS_EXPIRY_EPOCH_SECONDS = FUTURE_EPOCH_SECONDS + 3_600L

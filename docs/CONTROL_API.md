@@ -74,11 +74,11 @@ Create a grant:
 {
   "label": "Personal devices",
   "max_connections": 5,
-  "expires_at_epoch_seconds": null
+  "valid_for_minutes": 43200
 }
 ```
 
-The plaintext `access_code` is available only in the creation response. Store it in a password manager. Revocation removes its leases before the server asks each configured data plane to kick the corresponding client IDs.
+`valid_for_minutes` is required and accepts `1` through `525600` minutes. The server derives one absolute expiry and returns it as `expires_at_epoch_seconds`; session manifests and status responses carry the same access expiry so clients can retain the profile and display its remaining time. The plaintext `access_code` is available only in the creation response. Store it in a password manager. Revocation removes its leases before the server asks each configured data plane to kick the corresponding client IDs.
 
 ## Data-plane endpoint
 
@@ -90,7 +90,7 @@ The WireGuard agent exposes its own bearer-authenticated `/healthz` and `/v1/pee
 
 The OpenVPN agent similarly exposes bearer-authenticated `/healthz`, `GET /v1/sessions`, `PUT /v1/sessions/reconcile`, and `POST /v1/sessions/remove` endpoints only on `openvpn-control`. They wrap a Unix OpenVPN management socket and must never be publicly routed.
 
-The batch request uses `label_prefix`, `count`, `max_connections`, and optional `expires_at_epoch_seconds`. Labels receive `-1` through `-N` suffixes. Each response contains a distinct 32-character code, returned only once and never persisted in plaintext.
+The batch request uses `label_prefix`, `count`, `max_connections`, and required `valid_for_minutes`. Labels receive `-1` through `-N` suffixes. Each response contains a distinct 32-character code and its server-derived expiry; codes are returned only once and never persisted in plaintext.
 
 ## Errors
 

@@ -55,7 +55,7 @@ export function SettingsView({ state, serverUrl, deviceName, busy, onForget }: S
         <div className="settings-heading">
           <div>
             <h2 id="access-heading">Server access</h2>
-            <span>Session credentials remain in memory.</span>
+            <span>The saved profile is removed when its access time expires.</span>
           </div>
           <KeyRound size={19} aria-hidden="true" />
         </div>

@@ -29,6 +29,8 @@ Location and capacity:
   --latitude NUMBER      Map latitude
   --longitude NUMBER     Map longitude
   --max-sessions N       Maximum concurrent sessions, 1-512 (default: 32)
+  --first-code-valid-minutes N
+                         First access-code lifetime, 1-525600 (default: 43200)
 
 Other:
   --ref REF              Git tag or branch to install (default: main)
@@ -117,6 +119,7 @@ city_set=false
 latitude_set=false
 longitude_set=false
 max_sessions=32
+first_code_valid_minutes=43200
 git_ref=main
 install_dir=/opt/ket
 plan=false
@@ -133,6 +136,7 @@ while (($#)); do
     --latitude) need_value "$@"; latitude=$2; latitude_set=true; shift 2 ;;
     --longitude) need_value "$@"; longitude=$2; longitude_set=true; shift 2 ;;
     --max-sessions) need_value "$@"; max_sessions=$2; shift 2 ;;
+    --first-code-valid-minutes) need_value "$@"; first_code_valid_minutes=$2; shift 2 ;;
     --ref) need_value "$@"; git_ref=$2; shift 2 ;;
     --install-dir) need_value "$@"; install_dir=$2; shift 2 ;;
     --plan) plan=true; shift ;;
@@ -169,6 +173,8 @@ if ((location_fields == 5)); then
 fi
 [[ $max_sessions =~ ^[1-9][0-9]*$ ]] && ((max_sessions <= 512)) \
   || fail '--max-sessions must be between 1 and 512'
+[[ $first_code_valid_minutes =~ ^[1-9][0-9]*$ ]] && ((first_code_valid_minutes <= 525600)) \
+  || fail '--first-code-valid-minutes must be between 1 and 525600'
 [[ $git_ref =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ && $git_ref != *..* ]] \
   || fail '--ref is invalid'
 [[ $install_dir == /* && $install_dir != / && $install_dir != *$'\n'* ]] \
@@ -187,6 +193,7 @@ if $plan; then
     printf 'Location: %s, %s (%s; %s,%s)\n' "$city" "$country_name" "$country_code" "$latitude" "$longitude"
   fi
   printf 'Install directory: %s\nGit ref: %s\n' "$install_dir" "$git_ref"
+  printf 'First access-code lifetime: %s minutes\n' "$first_code_valid_minutes"
   exit 0
 fi
 
@@ -399,7 +406,8 @@ $ready || { ./packaging/server/compose.sh ps; fail 'Ket did not become ready wit
 
 grant_file=$(mktemp /run/ket-first-grant.XXXXXX)
 trap 'rm -f "$grant_file"' EXIT
-jq -n '{label:"First devices",max_connections:5,expires_at_epoch_seconds:null}' \
+jq -n --argjson valid_for_minutes "$first_code_valid_minutes" \
+  '{label:"First devices",max_connections:5,valid_for_minutes:$valid_for_minutes}' \
   | curl --fail --silent --show-error \
       --request POST \
       --header "Authorization: Bearer $KET_ADMIN_TOKEN" \
@@ -408,11 +416,14 @@ jq -n '{label:"First devices",max_connections:5,expires_at_epoch_seconds:null}' 
       http://127.0.0.1:8787/v1/admin/access-grants \
   > "$grant_file"
 first_code=$(jq -er '.access_code' "$grant_file")
+first_code_expires_at=$(jq -er '.expires_at_epoch_seconds' "$grant_file")
 rm -f "$grant_file"
 trap - EXIT
 
 printf '\nKet is ready at https://%s\n' "$domain"
 printf 'First 32-character access code: %s\n' "$first_code"
+printf 'First access code expires at Unix time: %s (%s minutes after creation)\n' \
+  "$first_code_expires_at" "$first_code_valid_minutes"
 printf 'Store that code now; the server never stores its plaintext value.\n'
 printf 'Open these cloud firewall ports: TCP 80,443,9443,%s-%s and UDP 443,%s-%s.\n' \
   "$shadowsocks_start" "$shadowsocks_end" "$shadowsocks_start" "$shadowsocks_end"

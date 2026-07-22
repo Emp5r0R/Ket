@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { LockKeyhole, LockOpen, MapPin } from "lucide-react";
+import { Binoculars, LockOpen, MapPin } from "lucide-react";
 import { bridge } from "./lib/bridge";
 import type {
   ClientIssue,
@@ -23,8 +23,43 @@ import {
 } from "./lib/protocols";
 
 const SERVER_KEY = "ket.server-url";
+const ACCESS_CODE_KEY = "ket.access-code";
 const DEVICE_KEY = "ket.device-name";
 const PROTOCOL_KEY = "ket.protocol-preference";
+const ACCESS_EXPIRY_KEY = "ket.access-expires-at";
+
+interface SavedEnrollment {
+  serverUrl: string;
+  accessCode: string;
+  accessExpiresAt: number | null;
+}
+
+function clearSavedEnrollment() {
+  localStorage.removeItem(SERVER_KEY);
+  localStorage.removeItem(ACCESS_CODE_KEY);
+  localStorage.removeItem(ACCESS_EXPIRY_KEY);
+}
+
+function loadSavedEnrollment(): SavedEnrollment {
+  const savedExpiry = localStorage.getItem(ACCESS_EXPIRY_KEY);
+  const expiresAt = savedExpiry === null ? null : Number(savedExpiry);
+  if (expiresAt !== null && Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now() / 1000) {
+    clearSavedEnrollment();
+    return { serverUrl: "", accessCode: "", accessExpiresAt: null };
+  }
+  const validExpiry = expiresAt !== null && Number.isFinite(expiresAt) && expiresAt > 0
+    ? expiresAt
+    : null;
+  if (validExpiry === null) {
+    localStorage.removeItem(ACCESS_CODE_KEY);
+    localStorage.removeItem(ACCESS_EXPIRY_KEY);
+  }
+  return {
+    serverUrl: localStorage.getItem(SERVER_KEY) ?? "",
+    accessCode: validExpiry === null ? "" : (localStorage.getItem(ACCESS_CODE_KEY) ?? ""),
+    accessExpiresAt: validExpiry,
+  };
+}
 
 const emptySnapshot: ClientSnapshot = {
   phase: "disconnected",
@@ -35,6 +70,7 @@ const emptySnapshot: ClientSnapshot = {
   traffic: null,
   handshake_latency_ms: null,
   session_expires_at_epoch_seconds: null,
+  access_expires_at_epoch_seconds: null,
   connected_at_epoch_seconds: null,
   reconnect_attempt: 0,
   issue: null,
@@ -55,12 +91,15 @@ const initialState: DesktopState = {
 };
 
 export default function App() {
+  const [initialEnrollment] = useState(loadSavedEnrollment);
   const [state, setState] = useState<DesktopState>(initialState);
   const [view, setView] = useState<AppView>("connection");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [localIssue, setLocalIssue] = useState<ClientIssue | null>(null);
-  const [serverUrl, setServerUrl] = useState(() => localStorage.getItem(SERVER_KEY) ?? "");
+  const [serverUrl, setServerUrl] = useState(initialEnrollment.serverUrl);
+  const [savedAccessCode, setSavedAccessCode] = useState(initialEnrollment.accessCode);
+  const [accessExpiresAt, setAccessExpiresAt] = useState(initialEnrollment.accessExpiresAt);
   const [deviceName, setDeviceName] = useState(
     () => localStorage.getItem(DEVICE_KEY) ?? "Ket desktop",
   );
@@ -138,6 +177,26 @@ export default function App() {
   }, [state.configured]);
 
   useEffect(() => {
+    if (accessExpiresAt === null) return;
+    const expire = () => {
+      clearSavedEnrollment();
+      setServerUrl("");
+      setSavedAccessCode("");
+      setAccessExpiresAt(null);
+      setState((current) => ({ ...current, configured: false, snapshot: emptySnapshot }));
+      void bridge.forget().catch(() => undefined);
+    };
+    if (accessExpiresAt * 1_000 <= Date.now()) {
+      expire();
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (accessExpiresAt * 1_000 <= Date.now()) expire();
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [accessExpiresAt]);
+
+  useEffect(() => {
     if (
       protocolPreference !== "auto" &&
       state.snapshot.available_transports.length > 0 &&
@@ -169,6 +228,20 @@ export default function App() {
       const snapshot = await bridge.enroll(input);
       localStorage.setItem(SERVER_KEY, input.serverUrl.trim());
       localStorage.setItem(DEVICE_KEY, input.deviceName.trim());
+      if (snapshot.access_expires_at_epoch_seconds !== null) {
+        localStorage.setItem(ACCESS_CODE_KEY, input.accessCode);
+        localStorage.setItem(
+          ACCESS_EXPIRY_KEY,
+          snapshot.access_expires_at_epoch_seconds.toString(),
+        );
+        setSavedAccessCode(input.accessCode);
+        setAccessExpiresAt(snapshot.access_expires_at_epoch_seconds);
+      } else {
+        localStorage.removeItem(ACCESS_CODE_KEY);
+        localStorage.removeItem(ACCESS_EXPIRY_KEY);
+        setSavedAccessCode("");
+        setAccessExpiresAt(null);
+      }
       setState((current) => ({ ...current, configured: true }));
       return snapshot;
     });
@@ -178,6 +251,10 @@ export default function App() {
     await run(async () => {
       const snapshot = await bridge.forget();
       setState((current) => ({ ...current, configured: false }));
+      clearSavedEnrollment();
+      setServerUrl("");
+      setSavedAccessCode("");
+      setAccessExpiresAt(null);
       setHistory([]);
       setView("connection");
       return snapshot;
@@ -235,9 +312,9 @@ export default function App() {
                 aria-live="polite"
               >
                 <span className="status-symbol" aria-hidden="true">
-                  {connected ? <LockOpen size={18} /> : <LockKeyhole size={18} />}
+                  {connected ? <LockOpen size={18} /> : <Binoculars size={18} />}
                 </span>
-                <span>{connected ? "Liberated" : "Restricted"}</span>
+                <span>{connected ? "Liberated" : "You are being watched"}</span>
               </div>
             </header>
             <div className="connection-layout">
@@ -269,6 +346,8 @@ export default function App() {
               ) : (
                 <EnrollmentPanel
                   initialServerUrl={serverUrl}
+                  initialAccessCode={savedAccessCode}
+                  accessExpiresAtEpochSeconds={accessExpiresAt}
                   initialDeviceName={deviceName}
                   busy={busy}
                   issue={localIssue}

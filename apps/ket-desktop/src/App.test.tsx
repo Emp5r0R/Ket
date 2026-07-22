@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("Ket desktop shell", () => {
-  it("enrolls from the map-first empty state without retaining the access code", async () => {
+  it("retains a successful profile and access expiry", async () => {
     window.history.replaceState({}, "", "/");
     const { default: App } = await import("./App");
     render(<App />);
@@ -25,6 +25,40 @@ describe("Ket desktop shell", () => {
     expect(await screen.findByRole("heading", { name: "Frankfurt, Germany" })).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByLabelText("Access code")).not.toBeInTheDocument());
     expect(localStorage.getItem("ket.server-url")).toBe("https://de-fra.ket.example");
+    expect(localStorage.getItem("ket.access-code")).toBe("A2345678901234567890123456789012");
+    expect(Number(localStorage.getItem("ket.access-expires-at"))).toBeGreaterThan(
+      Date.now() / 1_000,
+    );
+    expect(screen.getByText(/access left/)).toBeInTheDocument();
+  });
+
+  it("removes an expired saved profile before rendering enrollment", async () => {
+    localStorage.setItem("ket.server-url", "https://expired.example.test");
+    localStorage.setItem("ket.access-code", "Z".repeat(32));
+    localStorage.setItem("ket.access-expires-at", "1");
+
+    const { default: App } = await import("./App");
+    render(<App />);
+
+    expect(await screen.findByLabelText("Server URL")).toHaveValue("");
+    expect(screen.getByLabelText("Access code")).toHaveValue("");
+    expect(localStorage.getItem("ket.server-url")).toBeNull();
+    expect(localStorage.getItem("ket.access-code")).toBeNull();
+    expect(localStorage.getItem("ket.access-expires-at")).toBeNull();
+  });
+
+  it("prefills an unexpired profile and shows its remaining access", async () => {
+    const expiry = Math.floor(Date.now() / 1_000) + 3_600;
+    localStorage.setItem("ket.server-url", "https://saved.example.test");
+    localStorage.setItem("ket.access-code", "S".repeat(32));
+    localStorage.setItem("ket.access-expires-at", expiry.toString());
+
+    const { default: App } = await import("./App");
+    render(<App />);
+
+    expect(await screen.findByLabelText("Server URL")).toHaveValue("https://saved.example.test");
+    expect(screen.getByLabelText("Access code")).toHaveValue("S".repeat(32));
+    expect(screen.getByText(/access left/)).toBeInTheDocument();
   });
 
   it("shows connected telemetry and navigates to metrics", async () => {

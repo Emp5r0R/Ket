@@ -44,6 +44,7 @@ const reconnecting: ClientSnapshot = {
   traffic: null,
   handshake_latency_ms: null,
   session_expires_at_epoch_seconds: 120,
+  access_expires_at_epoch_seconds: 3_600,
   connected_at_epoch_seconds: null,
   reconnect_attempt: 1,
   issue: null,
