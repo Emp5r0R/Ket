@@ -6,7 +6,7 @@
 
 Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows/Android clients implement six authenticated data planes with lease revocation: Hysteria2, VLESS + REALITY, CDN-carried VLESS + XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard over WebSocket/TLS, and OpenVPN over stunnel-compatible TLS. Hysteria2 and REALITY have carried traffic on a physical current arm64 Android device. XHTTP/TLS and Shadowsocks TCP traffic, accounting, and revocation are verified locally through real upstream engines. WireGuard TLS and OpenVPN have local code, engine, package, container, or handshake validation rather than restricted-network end-to-end results. Physical lifecycle and network tests remain before this is a complete end-user VPN.
+> **Current state:** the Docker server and Linux/Windows/Android clients implement six authenticated data planes with lease revocation: Hysteria2, VLESS + REALITY, CDN-carried VLESS + XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard over WebSocket/TLS, and OpenVPN over stunnel-compatible TLS. An owner-signed physical arm64 Android client has passed the routed HTTPS gate on a restricted network through REALITY, XHTTP/TLS Stealth, and Shadowsocks 2022. Hysteria2 currently reaches the deployed service but has not passed that restricted-network route gate; WireGuard TLS and OpenVPN have deployment, engine, package, or handshake validation rather than Android restricted-network packet-flow proof. Physical lifecycle and wider-network tests remain before this is a complete end-user VPN.
 
 ## Implemented now
 
@@ -34,10 +34,10 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 
 | Transport | Server | Linux/Windows | Android | Deployment status |
 | --- | --- | --- | --- | --- |
-| Hysteria2 + Salamander/Gecko | Implemented | Implemented | Implemented | Physical arm64 traffic verified |
-| VLESS + REALITY | Implemented | Implemented | Implemented on 64-bit | Physical arm64 traffic verified |
-| HTTPS Stealth (VLESS + XHTTP/TLS) | Implemented | Implemented | Implemented on 64-bit | Local real-engine TLS traffic/revocation verified; CDN and restricted-network gates pending |
-| Shadowsocks 2022 | Implemented | Implemented | Implemented on 64-bit API 28+ | Public TCP+UDP traffic and revocation verified on Oracle ARM64; restricted-network Android gate pending |
+| Hysteria2 + Salamander/Gecko | Implemented | Implemented | Implemented | Deployed authentication exercised; restricted-network routed-traffic gate pending |
+| VLESS + REALITY | Implemented | Implemented | Implemented on 64-bit | Owner-signed Android restricted-network egress verified on Oracle ARM64 |
+| HTTPS Stealth (VLESS + XHTTP/TLS) | Implemented | Implemented | Implemented on 64-bit | Owner-signed Android restricted-network route verified through the production HTTPS edge |
+| Shadowsocks 2022 | Implemented | Implemented | Implemented on 64-bit API 28+ | Public TCP+UDP lifecycle and owner-signed Android restricted-network route verified |
 | WireGuard over WebSocket/TLS | Implemented | Implemented | Implemented on arm64 API 28+ | Oracle ARM64 kernel deployment, enrollment, and peer revocation verified; restricted-network traffic pending |
 | OpenVPN over stunnel TLS | Implemented | Implemented | Implemented on API 26+ | Public certificate-pinned nested-TLS handshake and telemetry verified on Oracle ARM64; revocation lifecycle verified; Android physical traffic pending |
 | IKEv2 | Identifier only | Not implemented | Not implemented | Future adapter |
@@ -216,14 +216,14 @@ The Android project is under `apps/ket-android`. It consumes the same control co
 
 For a local Android build, install Android SDK Platform 34 and Build Tools 34, then run `./packaging/build-android.sh debug`. It auto-detects the SDK used by Abyssal when present; set `KET_ANDROID_SDK` to override it. Gradle installs pinned NDK r27d when needed, while the build downloads and verifies Hysteria 2.10, Xray-core 26.3.27, shadowsocks-rust 1.24.0, wstunnel 10.6.2, OpenVPN for Android 0.7.64, and hev-socks5-tunnel 2.14.0. OpenVPN and Hysteria payloads are included for all four ABIs; Xray and Shadowsocks are included for `arm64-v8a` and `x86_64`; the official Android wstunnel payload is currently arm64-only. Shadowsocks and WireGuard TLS require API 28 or newer, and unsupported devices retain ranked fallback. The generated APK is under `apps/ket-android/app/build/outputs/apk/debug/`. The signer-pinned release procedure is in [the release checklist](docs/RELEASE.md).
 
-Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting/tests/lints, desktop UI tests/build, native packages, Android debug packaging, and the control-plane container build run when their inputs change. Workflow changes and manual runs execute the complete matrix, while documentation-only changes avoid unnecessary builds.
+Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting/tests/lints, desktop UI tests/build, native packages, Android debug packaging, and the control-plane container build run when their inputs change. Workflow changes execute the complete matrix, manual runs may select the complete matrix or only the Windows package, and documentation-only changes avoid unnecessary builds.
 
 ## Delivery order
 
 1. Sign the implemented Linux/Windows packages and exercise their signed artifacts on target machines; the unsigned Linux and Windows installer, service, reinstall, and removal lifecycles are CI-gated.
 2. Retest fail-closed network handover on the current API 36 device, repeat the Android matrix on physical API 26, then complete Doze, revoke, connected-state DNS-leak, and owner-signed installation tests.
 3. Exercise the implemented Android process/reboot restoration and always-on/lockdown lifecycle on physical API 36 and API 26 devices.
-4. Exercise HTTPS Stealth, Shadowsocks 2022, WireGuard TLS, and OpenVPN/stunnel on restricted networks, including desktop startup fallback and live revocation.
+4. Extend the proven HTTPS Stealth and Shadowsocks 2022 restricted-network coverage to desktop, then exercise WireGuard TLS and OpenVPN/stunnel with startup fallback and live revocation.
 5. Exercise the Android OpenVPN management/TUN bridge against the deployed stunnel listener, including restricted-network fallback, revocation, and network-change recovery.
 6. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.
 7. Implement the remaining IKEv2 adapter without weakening the existing authenticated fallback contract.

@@ -17,7 +17,7 @@ This separation keeps the API and user experience consistent while allowing a no
 | Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Six implemented transports with bounded fallback |
 | Desktop privilege broker | Authenticated TUN/route ownership and engine supervision | Rust system service | Implemented for Linux/Windows |
 | Linux/Windows desktop | Map-first connection UI and native packaging | Tauri 2 plus shared Rust core | UI, service installers, and unsigned lifecycle gates implemented; signed bundles pending |
-| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Natural Earth, Android Keystore, Hysteria2, Xray, shadowsocks-rust, wstunnel, OpenVPN 2, hev-socks5-tunnel | Six-transport implementation; current arm64 Hysteria2/REALITY packet flow verified; OpenVPN/WireGuard TLS/Shadowsocks/XHTTP restricted-network, corrected handover, Doze/revoke, API 26, DNS leak, always-on/reboot, and owner-signing physical gates pending |
+| Android | `VpnService`, map-first Compose UI, shared contracts | Kotlin/Compose, Natural Earth, Android Keystore, Hysteria2, Xray, shadowsocks-rust, wstunnel, OpenVPN 2, hev-socks5-tunnel | Six-transport implementation; owner-signed arm64 restricted-network routes verified for REALITY, XHTTP/TLS, and Shadowsocks; Hysteria/OpenVPN/WireGuard TLS traffic, corrected handover, Doze/revoke, API 26, DNS leak, and always-on/reboot physical gates pending |
 
 ## Control flow
 

@@ -86,4 +86,4 @@ The disposable local traffic harness uses the pinned Xray server and client, a o
 ./packaging/verify-xhttp-tls-traffic.sh
 ```
 
-The client configuration contains no insecure TLS override. The one-run CA is trusted only through the client Xray process environment, and the production Xray abuse guards remain enabled. This proves the local XHTTP/TLS engine and lease lifecycle. It does not prove Cloudflare routing, sustained provider limits, platform full-route behavior, or restricted-network behavior; those remain deployment release gates.
+The client configuration contains no insecure TLS override. The one-run CA is trusted only through the client Xray process environment, and the production Xray abuse guards remain enabled. The local harness proves the engine and lease lifecycle. Separately, on 2026-07-22, the production Cloudflare route passed Ket's full-route HTTPS gate on an owner-signed arm64 Android client over a restricted Wi-Fi network. Sustained provider limits and broader platform/network coverage remain deployment gates.
