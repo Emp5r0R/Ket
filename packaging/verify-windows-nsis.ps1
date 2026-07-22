@@ -251,14 +251,6 @@ function Assert-KetInstallation {
     Invoke-CheckedNative (Join-Path $InstallDir "hysteria.exe") @("version")
     Invoke-CheckedNative (Join-Path $InstallDir "openvpn\openvpn.exe") @("--version")
     Invoke-CheckedNative (Join-Path $InstallDir "sslocal.exe") @("--version")
-    $PreviousOpenSslModules = $env:OPENSSL_MODULES
-    $env:OPENSSL_MODULES = Join-Path $InstallDir "stunnel\ossl-modules"
-    try {
-        Invoke-CheckedNative (Join-Path $InstallDir "stunnel\stunnel.exe") @("-version")
-    }
-    finally {
-        $env:OPENSSL_MODULES = $PreviousOpenSslModules
-    }
     Invoke-CheckedNative (Join-Path $InstallDir "xray.exe") @("version")
     Invoke-CheckedNative (Join-Path $InstallDir "tun2proxy.exe") @("--version")
 

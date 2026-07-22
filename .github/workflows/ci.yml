@@ -13,7 +13,10 @@ on:
         options:
           - all
           - packages
+          - linux-package
           - windows-package
+          - android
+          - container
 
 permissions:
   contents: read
@@ -49,8 +52,17 @@ jobs:
               packages)
                 .github/scripts/ci-changes.sh --only linux_package windows_package android container >> "$GITHUB_OUTPUT"
                 ;;
+              linux-package)
+                .github/scripts/ci-changes.sh --only linux_package >> "$GITHUB_OUTPUT"
+                ;;
               windows-package)
                 .github/scripts/ci-changes.sh --only windows_package >> "$GITHUB_OUTPUT"
+                ;;
+              android)
+                .github/scripts/ci-changes.sh --only android >> "$GITHUB_OUTPUT"
+                ;;
+              container)
+                .github/scripts/ci-changes.sh --only container >> "$GITHUB_OUTPUT"
                 ;;
               all | "")
                 .github/scripts/ci-changes.sh --all >> "$GITHUB_OUTPUT"
@@ -244,7 +256,13 @@ jobs:
         run: ./packaging/validate-desktop-assets.sh windows
       - run: npm exec tauri build -- --bundles nsis --config src-tauri/tauri.nsis.conf.json
         working-directory: apps/ket-desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ket-windows-nsis
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error
       - name: Verify install, reinstall, service, and uninstall
+        if: github.event_name != 'workflow_dispatch' || inputs.jobs != 'windows-package'
         shell: powershell
         env:
           KET_PACKAGE_TEST_ALLOW_HOST_MUTATION: "1"
@@ -252,11 +270,6 @@ jobs:
           $installer = Get-ChildItem target/release/bundle/nsis/*.exe -File
           if ($installer.Count -ne 1) { throw "Expected exactly one NSIS installer" }
           ./packaging/verify-windows-nsis.ps1 -Installer $installer.FullName
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ket-windows-nsis
-          path: target/release/bundle/nsis/*.exe
-          if-no-files-found: error
 
   android:
     needs: changes

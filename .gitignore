@@ -10,6 +10,8 @@
 /apps/ket-android/app/build/
 /apps/ket-android/app/.cxx/
 /build-outputs/
+/release-artifacts/
+/windows-test-results/
 /data/
 /secrets/
 *.log

@@ -125,15 +125,8 @@ if ($LASTEXITCODE -ne 0) { throw "The Hysteria engine failed its version check" 
 if ($LASTEXITCODE -ne 0) { throw "The OpenVPN engine failed its version check" }
 & $ShadowsocksTarget "--version" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "The Shadowsocks engine failed its version check" }
-$PreviousOpenSslModules = $env:OPENSSL_MODULES
-$env:OPENSSL_MODULES = Join-Path (Split-Path -Parent $StunnelTarget) "ossl-modules"
-try {
-    & $StunnelTarget "-version" 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "The stunnel engine failed its version check" }
-}
-finally {
-    $env:OPENSSL_MODULES = $PreviousOpenSslModules
-}
+# The official Windows stunnel build shows a modal dialog for version flags.
+# Its checksum and complete DLL payload are validated before this script runs.
 & $XrayTarget "version" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "The Xray engine failed its version check" }
 & $WstunnelTarget "--version" | Out-Null
