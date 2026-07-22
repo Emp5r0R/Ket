@@ -7,7 +7,7 @@
 | Rust control plane image | `docker build --pull -t ket-control-plane:<tag> .` | Verified on Oracle ARM64 host |
 | Server data planes | Compose transport overlays | All six overlays deployed on Oracle ARM64; REALITY, XHTTP/TLS Stealth, and Shadowsocks passed owner-signed Android restricted-network routes; Hysteria2, WireGuard TLS, and OpenVPN Android packet flow remains pending |
 | Linux desktop `.deb` | CI job `linux-package` | Bundles pinned engines including OpenVPN/stunnel; clean install, reinstall, remove, and purge are CI-gated |
-| Windows desktop NSIS installer | CI job `windows-package` | Bundles pinned engines, isolated OpenSSL DLL sets, and Wintun; install, reinstall, service, and uninstall are CI-gated |
+| Windows desktop NSIS installer | CI job `windows-package` | Bundles pinned engines, isolated OpenSSL DLL sets, and Wintun; normal CI gates the lifecycle, while the manual build-only run is followed by the [real-Windows test plan](WINDOWS_TESTING.md) |
 | Android debug APK | `./packaging/build-android.sh` | Six-transport parser/engine packaging; REALITY, XHTTP/TLS Stealth, and Shadowsocks routed traffic exercised on current hardware; Hysteria2/OpenVPN/WireGuard TLS gates pending |
 | Android release APK | `./packaging/build-android.sh release` | Fail-closed signing and signer pinning verified; owner-signed installation and restricted-network egress passed on current arm64 hardware |
 
@@ -38,6 +38,8 @@ $env:KET_PACKAGE_TEST_ALLOW_HOST_MUTATION = "1"
 $installer = Get-ChildItem target/release/bundle/nsis/*.exe -File
 ./packaging/verify-windows-nsis.ps1 -Installer $installer.FullName
 ```
+
+For the complete physical-host checklist, evidence capture, protocol matrix, reconnect checks, and manual uninstall procedure, use [the Windows package test plan](WINDOWS_TESTING.md).
 
 For a production server, source `.env`, run `./packaging/validate-env.sh`, and validate the base file plus each enabled overlay with `docker compose config --quiet`. The preflight validates client-visible URL, node identity/location, and enabled transport inputs; `ket-server` then repeats authoritative structured URL and manifest-field validation before it binds a listener. The local OpenVPN handshake check uses `dev null`; it does not replace a TUN-backed packet-flow test. The local Shadowsocks harness proves TCP through real upstream engines without the production egress ACL. The Oracle ARM64 deployment separately passed authenticated public TCP egress and UDP DNS forwarding through the production Shadowsocks listener and ACL. The XHTTP harness proves certificate-verified TLS, real XHTTP traffic, counters, and revocation through a local stunnel intermediary; the production Cloudflare route also passed the owner-signed Android restricted-network HTTPS gate, while sustained provider-limit testing remains pending. Hysteria2 requires direct UDP reachability; VLESS + REALITY and OpenVPN/stunnel require separate direct raw TCP listeners. XHTTP/TLS Stealth and WireGuard TLS instead require path-specific Cloudflare or compatible HTTP routes to separate loopback-only origins. WireGuard TLS and OpenVPN require a rootful Linux Docker host with `/dev/net/tun`; WireGuard additionally needs kernel WireGuard support.
 
