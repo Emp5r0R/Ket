@@ -707,6 +707,17 @@ input:disabled {
   background: var(--green-dark);
 }
 
+.power-button.is-cancellable {
+  border-color: #d74c57;
+  color: #b42331;
+  background: #fff4f4;
+}
+
+.power-button.is-cancellable:hover:not(:disabled) {
+  color: #fff;
+  background: #b42331;
+}
+
 .power-button:disabled {
   opacity: 0.55;
 }

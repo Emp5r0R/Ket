@@ -32,6 +32,7 @@ pub struct KetClient {
     selector: TransportSelector,
     operation: Mutex<()>,
     runtime: Mutex<RuntimeState>,
+    connect_cancellation: watch::Sender<u64>,
     snapshot: watch::Sender<ClientSnapshot>,
 }
 
@@ -53,6 +54,7 @@ impl KetClient {
             updated_at_epoch_seconds: unix_time(),
             ..ClientSnapshot::default()
         });
+        let (connect_cancellation, _) = watch::channel(0);
         Ok(Arc::new(Self {
             endpoint,
             client_name,
@@ -67,6 +69,7 @@ impl KetClient {
                 preferred_protocol: None,
                 history: TransportHistory::default(),
             }),
+            connect_cancellation,
             snapshot,
         }))
     }
@@ -209,6 +212,7 @@ impl KetClient {
     }
 
     pub async fn disconnect(&self) -> Result<ClientSnapshot, ClientError> {
+        self.cancel_connection_attempt();
         let _operation = self.operation.lock().await;
         let (tunnel, token) = {
             let mut runtime = self.runtime.lock().await;
@@ -279,6 +283,7 @@ impl KetClient {
     /// the current lease without re-entering an access grant. `disconnect`
     /// remains the explicit release/forget operation.
     pub async fn stop_tunnel(&self) -> Result<ClientSnapshot, ClientError> {
+        self.cancel_connection_attempt();
         let _operation = self.operation.lock().await;
         let (tunnel, enrolled) = {
             let mut runtime = self.runtime.lock().await;
@@ -346,6 +351,7 @@ impl KetClient {
     }
 
     async fn connect_locked(&self, reconnecting: bool) -> Result<ClientSnapshot, ClientError> {
+        let mut cancellation = self.connect_cancellation.subscribe();
         {
             let mut runtime = self.runtime.lock().await;
             if runtime
@@ -396,9 +402,16 @@ impl KetClient {
                 snapshot.reconnect_attempt = if reconnecting { (index + 1) as u32 } else { 0 };
                 snapshot.issue = None;
             });
-            let probe = match adapter.probe(&transport).await {
-                Ok(probe) => probe,
-                Err(error) => {
+            let probe = match tokio::select! {
+                result = adapter.probe(&transport) => Some(result),
+                changed = cancellation.changed() => {
+                    debug_assert!(changed.is_ok(), "KetClient owns the cancellation sender");
+                    None
+                }
+            } {
+                None => return Ok(self.finish_cancelled_connection().await),
+                Some(Ok(probe)) => probe,
+                Some(Err(error)) => {
                     self.record_failure(&transport.profile.id).await;
                     last_error = Some(error);
                     continue;
@@ -411,8 +424,20 @@ impl KetClient {
                     ClientPhase::Connecting
                 };
             });
-            match adapter.connect(&transport, &probe).await {
-                Ok(started) => {
+            let connected = tokio::select! {
+                result = adapter.connect(&transport, &probe) => Some(result),
+                changed = cancellation.changed() => {
+                    debug_assert!(changed.is_ok(), "KetClient owns the cancellation sender");
+                    None
+                }
+            };
+            match connected {
+                None => return Ok(self.finish_cancelled_connection().await),
+                Some(Ok(started)) => {
+                    if cancellation.has_changed().unwrap_or(false) {
+                        let _ = started.tunnel.stop().await;
+                        return Ok(self.finish_cancelled_connection().await);
+                    }
                     let latency =
                         started.handshake_latency.as_millis().min(u64::MAX as u128) as u64;
                     {
@@ -432,7 +457,7 @@ impl KetClient {
                     });
                     return Ok(self.snapshot());
                 }
-                Err(error) => {
+                Some(Err(error)) => {
                     self.record_failure(&transport.profile.id).await;
                     last_error = Some(error);
                 }
@@ -441,6 +466,24 @@ impl KetClient {
         let error = last_error.unwrap_or(ClientError::NoCompatibleTransport);
         self.fail(&error);
         Err(error)
+    }
+
+    fn cancel_connection_attempt(&self) {
+        self.connect_cancellation
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
+    }
+
+    async fn finish_cancelled_connection(&self) -> ClientSnapshot {
+        self.runtime.lock().await.connection_requested = false;
+        self.update_snapshot(|snapshot| {
+            snapshot.phase = ClientPhase::Enrolled;
+            snapshot.active_transport = None;
+            snapshot.connected_at_epoch_seconds = None;
+            snapshot.handshake_latency_ms = None;
+            snapshot.reconnect_attempt = 0;
+            snapshot.issue = None;
+        });
+        self.snapshot()
     }
 
     async fn reconnect_locked(&self) -> Result<ClientSnapshot, ClientError> {
@@ -633,6 +676,7 @@ mod tests {
 
     use super::*;
     use crate::{ProbeReport, StartedTunnel};
+    use tokio::sync::Notify;
 
     #[tokio::test]
     async fn lifecycle_falls_back_updates_metrics_and_releases_the_session() {
@@ -746,6 +790,47 @@ mod tests {
                 .map(|item| item.id.as_str()),
             Some("reality-primary")
         );
+    }
+
+    #[tokio::test]
+    async fn stop_interrupts_an_inflight_transport_probe() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("blocking-probe", 1)];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(BlockingAdapter {
+            probe_started: Notify::new(),
+        });
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+
+        let connecting_client = Arc::clone(&client);
+        let connecting = tokio::spawn(async move { connecting_client.connect().await });
+        adapter.probe_started.notified().await;
+
+        let stopped = tokio::time::timeout(Duration::from_secs(1), client.stop_tunnel())
+            .await
+            .expect("stop should interrupt a blocked probe")
+            .unwrap();
+        let cancelled = tokio::time::timeout(Duration::from_secs(1), connecting)
+            .await
+            .expect("connect task should finish after cancellation")
+            .expect("connect task should not panic")
+            .unwrap();
+
+        assert_eq!(stopped.phase, ClientPhase::Enrolled);
+        assert_eq!(cancelled.phase, ClientPhase::Enrolled);
+        assert_eq!(client.snapshot().active_transport, None);
+        assert_eq!(client.snapshot().issue, None);
     }
 
     #[tokio::test]
@@ -924,6 +1009,30 @@ mod tests {
         tunnels: StdMutex<BTreeMap<String, watch::Sender<TunnelStatus>>>,
         connection_attempts: AtomicUsize,
         stops: Arc<AtomicUsize>,
+    }
+
+    struct BlockingAdapter {
+        probe_started: Notify,
+    }
+
+    #[async_trait]
+    impl TransportAdapter for BlockingAdapter {
+        fn supports(&self, transport: &SessionTransport) -> bool {
+            transport.profile.protocol == TransportProtocol::Hysteria2
+        }
+
+        async fn probe(&self, _transport: &SessionTransport) -> Result<ProbeReport, ClientError> {
+            self.probe_started.notify_one();
+            std::future::pending().await
+        }
+
+        async fn connect(
+            &self,
+            _transport: &SessionTransport,
+            _probe: &ProbeReport,
+        ) -> Result<StartedTunnel, ClientError> {
+            std::future::pending().await
+        }
     }
 
     impl RecoveryAdapter {
