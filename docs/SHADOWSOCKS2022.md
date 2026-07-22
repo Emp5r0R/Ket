@@ -64,4 +64,4 @@ The disposable local traffic harness downloads checksum-pinned `ssmanager` and `
 ./packaging/verify-shadowsocks-traffic.sh
 ```
 
-The harness deliberately omits the production egress ACL so its loopback HTTP origin is reachable. It proves the shipped Shadowsocks 2022 TCP engine and lease lifecycle, not UDP forwarding, public ingress, ACL behavior, or restricted-network Android behavior. Current deployment evidence for those separate gates is recorded in [the release guide](RELEASE.md).
+The harness deliberately omits the production egress ACL so its loopback HTTP origin is reachable. It proves the shipped Shadowsocks 2022 TCP engine and lease lifecycle. Separately, the Oracle ARM64 deployment passed authenticated TCP egress, UDP DNS, ACL, and revocation checks; on 2026-07-22, an owner-signed arm64 Android client also passed Ket's full-route HTTPS gate through Shadowsocks on a restricted Wi-Fi network. Current evidence and remaining gates are recorded in [the release guide](RELEASE.md).
