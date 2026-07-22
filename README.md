@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/ket-mark.svg" width="104" height="104" alt="Ket Dirac wavefunction mark">
+  <img src="assets/ket-mark.svg" width="104" height="104" alt="Ket Psi wavefront mark">
 </p>
 
 # Ket
@@ -37,9 +37,9 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 | Hysteria2 + Salamander/Gecko | Implemented | Implemented | Implemented | Physical arm64 traffic verified |
 | VLESS + REALITY | Implemented | Implemented | Implemented on 64-bit | Physical arm64 traffic verified |
 | HTTPS Stealth (VLESS + XHTTP/TLS) | Implemented | Implemented | Implemented on 64-bit | Local real-engine TLS traffic/revocation verified; CDN and restricted-network gates pending |
-| Shadowsocks 2022 | Implemented | Implemented | Implemented on 64-bit API 28+ | Local real-engine TCP traffic/revocation verified; UDP and restricted-network physical gates pending |
+| Shadowsocks 2022 | Implemented | Implemented | Implemented on 64-bit API 28+ | Local real-engine TCP traffic/revocation and Oracle ARM64 deployment verified; public ingress, UDP, and restricted-network gates pending |
 | WireGuard over WebSocket/TLS | Implemented | Implemented | Implemented on arm64 API 28+ | Oracle ARM64 kernel deployment, enrollment, and peer revocation verified; restricted-network traffic pending |
-| OpenVPN over stunnel TLS | Implemented | Implemented | Implemented on API 26+ | Local code/engine/package/container validation; deployment and Android physical traffic pending |
+| OpenVPN over stunnel TLS | Implemented | Implemented | Implemented on API 26+ | Real nested-TLS handshake/revocation and Oracle ARM64 deployment verified; public ingress and Android physical traffic pending |
 | IKEv2 | Identifier only | Not implemented | Not implemented | Future adapter |
 | XOR scrambling | Obfuscation identifier only | Not standalone security | Not standalone security | May only wrap authenticated encryption |
 
