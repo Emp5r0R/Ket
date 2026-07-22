@@ -12,6 +12,7 @@ secrets/
 # Frontend and local tooling artifacts are not needed by the server image.
 apps/ket-desktop/node_modules/
 apps/ket-desktop/dist/
+apps/ket-desktop/src-tauri/binaries/
 .agents/
 .codex/
 

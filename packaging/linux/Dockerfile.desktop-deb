@@ -31,11 +31,18 @@ COPY Cargo.toml Cargo.lock ./
 COPY THIRD_PARTY_NOTICES.md ./
 COPY crates ./crates
 COPY vendor ./vendor
+COPY apps/ket-desktop/package.json apps/ket-desktop/package-lock.json ./apps/ket-desktop/
+
+RUN --mount=type=cache,target=/root/.npm \
+    npm --prefix apps/ket-desktop ci
+
 COPY apps/ket-desktop ./apps/ket-desktop
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo build --locked --release --package ket-tunnel-service
+
 COPY packaging ./packaging
 
-RUN npm --prefix apps/ket-desktop ci
-RUN cargo build --locked --release --package ket-tunnel-service
 RUN packaging/fetch-hysteria.sh "linux-${TARGETARCH}" \
     apps/ket-desktop/src-tauri/binaries/hysteria
 RUN packaging/fetch-openvpn.sh "linux-${TARGETARCH}" \
@@ -55,7 +62,8 @@ RUN chmod 0644 packaging/linux/ket-tunnel.service \
     && chmod 0755 packaging/linux/postinst packaging/linux/prerm packaging/linux/postrm
 
 WORKDIR /source/apps/ket-desktop
-RUN npm exec tauri build -- --bundles deb
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    npm exec tauri build -- --bundles deb
 
 FROM scratch AS artifacts
 COPY --from=builder /source/target/release/bundle/deb/ /

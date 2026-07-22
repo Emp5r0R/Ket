@@ -70,6 +70,8 @@ trap cleanup EXIT
 
 url="https://github.com/schwabe/ics-openvpn/releases/download/v${openvpn_android_version}/ics-openvpn-${openvpn_android_version}.apk"
 curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+  --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 \
+  --speed-limit 1024 --speed-time 30 \
   --output "$archive" "$url"
 printf '%s  %s\n' "$openvpn_android_checksum" "$archive" | sha256sum --check --status
 for abi in armeabi-v7a arm64-v8a x86 x86_64; do
@@ -83,6 +85,8 @@ done
 
 url="https://github.com/heiher/hev-socks5-tunnel/releases/download/${hev_version}/hev-socks5-tunnel-${hev_version}.tar.xz"
 curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+  --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 \
+  --speed-limit 1024 --speed-time 30 \
   --output "$archive" "$url"
 printf '%s  %s\n' "$hev_checksum" "$archive" | sha256sum --check --status
 tar -xJf "$archive" -C "$stage"
