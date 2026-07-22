@@ -107,13 +107,27 @@ case "${1:-}" in
       classify "$path"
     done
     ;;
+  --only)
+    shift
+    if [[ $# -eq 0 ]]; then
+      printf '%s\n' '--only requires at least one job' >&2
+      exit 2
+    fi
+    for job in "$@"; do
+      if [[ ! -v "selected[$job]" ]]; then
+        printf 'Unknown job: %s\n' "$job" >&2
+        exit 2
+      fi
+      enable "$job"
+    done
+    ;;
   "")
     while IFS= read -r path; do
       [[ -n "$path" ]] && classify "$path"
     done
     ;;
   *)
-    printf 'Usage: %s [--all|--null]\n' "$0" >&2
+    printf 'Usage: %s [--all|--null|--only JOB...]\n' "$0" >&2
     exit 2
     ;;
 esac
