@@ -12,6 +12,7 @@ on:
         type: choice
         options:
           - all
+          - packages
           - windows-package
 
 permissions:
@@ -45,6 +46,9 @@ jobs:
         run: |
           if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
             case "$DISPATCH_JOBS" in
+              packages)
+                .github/scripts/ci-changes.sh --only linux_package windows_package android container >> "$GITHUB_OUTPUT"
+                ;;
               windows-package)
                 .github/scripts/ci-changes.sh --only windows_package >> "$GITHUB_OUTPUT"
                 ;;
