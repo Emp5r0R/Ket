@@ -123,6 +123,7 @@ impl KetClient {
 
         let node = manifest.node.clone();
         let expires_at = manifest.session_expires_at_epoch_seconds;
+        let access_expires_at = manifest.access_expires_at_epoch_seconds;
         let available_transports = manifest
             .transports
             .iter()
@@ -139,6 +140,7 @@ impl KetClient {
             snapshot.node = Some(node);
             snapshot.available_transports = available_transports;
             snapshot.session_expires_at_epoch_seconds = Some(expires_at);
+            snapshot.access_expires_at_epoch_seconds = access_expires_at;
             snapshot.issue = None;
         });
         Ok(self.snapshot())
@@ -234,6 +236,8 @@ impl KetClient {
                 snapshot.available_transports.clear();
                 snapshot.preferred_protocol = None;
                 snapshot.traffic = None;
+                snapshot.session_expires_at_epoch_seconds = None;
+                snapshot.access_expires_at_epoch_seconds = None;
                 snapshot.issue = None;
             });
             return Ok(self.snapshot());
@@ -266,6 +270,7 @@ impl KetClient {
             snapshot.preferred_protocol = None;
             snapshot.traffic = None;
             snapshot.session_expires_at_epoch_seconds = None;
+            snapshot.access_expires_at_epoch_seconds = None;
             snapshot.connected_at_epoch_seconds = None;
             snapshot.handshake_latency_ms = None;
             snapshot.reconnect_attempt = 0;
@@ -555,6 +560,7 @@ impl KetClient {
                     snapshot.available_transports.clear();
                     snapshot.preferred_protocol = None;
                     snapshot.session_expires_at_epoch_seconds = None;
+                    snapshot.access_expires_at_epoch_seconds = None;
                     snapshot.connected_at_epoch_seconds = None;
                     snapshot.issue = Some(error.issue());
                 });
@@ -575,12 +581,14 @@ impl KetClient {
             if let Some(session) = &mut runtime.session {
                 session.node = status.node.clone();
                 session.session_expires_at_epoch_seconds = status.expires_at_epoch_seconds;
+                session.access_expires_at_epoch_seconds = status.access_expires_at_epoch_seconds;
             }
         }
         self.update_snapshot(|snapshot| {
             snapshot.node = Some(status.node);
             snapshot.traffic = Some(status.traffic);
             snapshot.session_expires_at_epoch_seconds = Some(status.expires_at_epoch_seconds);
+            snapshot.access_expires_at_epoch_seconds = status.access_expires_at_epoch_seconds;
             snapshot.issue = None;
         });
     }
@@ -1198,6 +1206,7 @@ mod tests {
         SessionManifest {
             session_token: SecretString::from("A23456789012B3456789012345678901234567890123"),
             session_expires_at_epoch_seconds: unix_time() + 300,
+            access_expires_at_epoch_seconds: Some(unix_time() + 3_600),
             node: test_node(),
             transports: vec![
                 test_transport("hy2-blocked", 1),
@@ -1265,6 +1274,7 @@ mod tests {
             session_id: "A23456789012".to_owned(),
             client_name: "Linux workstation".to_owned(),
             expires_at_epoch_seconds: unix_time() + 300,
+            access_expires_at_epoch_seconds: Some(unix_time() + 3_600),
             node: test_node(),
             traffic: SessionTraffic {
                 available: true,

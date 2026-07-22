@@ -9,11 +9,13 @@ direct=$(
     --domain ket.example.com \
     --email operator@example.com \
     --max-sessions 32 \
+    --first-code-valid-minutes 1440 \
     --plan
 )
 grep -Fq 'Mode: direct' <<<"$direct"
 grep -Fq 'TCP 80,443,9443,20000-20031' <<<"$direct"
 grep -Fq 'Location: automatic public-IP detection' <<<"$direct"
+grep -Fq 'First access-code lifetime: 1440 minutes' <<<"$direct"
 
 cloudflare=$(
   "$installer" \
@@ -51,6 +53,8 @@ reject() {
 reject --mode cloudflare --domain ket.example.com --email operator@example.com
 reject --domain bad..example.com --email operator@example.com
 reject --domain ket.example.com --email operator@example.com --max-sessions 513
+reject --domain ket.example.com --email operator@example.com --first-code-valid-minutes 0
+reject --domain ket.example.com --email operator@example.com --first-code-valid-minutes 525601
 reject --domain ket.example.com --email operator@example.com --country-name 'bad$name'
 reject --domain ket.example.com --email operator@example.com --country-code SG
 

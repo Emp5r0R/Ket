@@ -67,6 +67,7 @@ export interface ClientSnapshot {
   traffic: SessionTraffic | null;
   handshake_latency_ms: number | null;
   session_expires_at_epoch_seconds: number | null;
+  access_expires_at_epoch_seconds: number | null;
   connected_at_epoch_seconds: number | null;
   reconnect_attempt: number;
   issue: ClientIssue | null;

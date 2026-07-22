@@ -92,6 +92,7 @@ function demoSnapshot(
       : null,
     handshake_latency_ms: connected ? 42 : null,
     session_expires_at_epoch_seconds: phase === "disconnected" ? null : now() + 3_240,
+    access_expires_at_epoch_seconds: phase === "disconnected" ? null : now() + 86_400,
     connected_at_epoch_seconds: connected ? now() - 1_842 : null,
     reconnect_attempt: 0,
     issue: null,

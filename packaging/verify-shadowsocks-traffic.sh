@@ -273,7 +273,7 @@ wait_ready "http://127.0.0.1:$control_port/readyz" 'Ket control plane'
 
 grant=$(curl --fail --silent --show-error \
   -H "Authorization: Bearer $admin_token" -H 'Content-Type: application/json' \
-  --data '{"label":"Shadowsocks traffic","max_connections":2,"expires_at_epoch_seconds":null}' \
+  --data '{"label":"Shadowsocks traffic","max_connections":2,"valid_for_minutes":60}' \
   "http://127.0.0.1:$control_port/v1/admin/access-grants")
 grant_id=$(jq -er '.id' <<< "$grant")
 access_code=$(jq -er '.access_code' <<< "$grant")

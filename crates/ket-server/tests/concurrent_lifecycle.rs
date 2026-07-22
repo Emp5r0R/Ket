@@ -90,7 +90,7 @@ async fn concurrent_multi_code_sessions_respect_limits_and_survive_restart() {
         .create_grant(CreateAccessGrantRequest {
             label: "Personal".to_owned(),
             max_connections: 2,
-            expires_at_epoch_seconds: None,
+            valid_for_minutes: 60,
         })
         .await
         .expect("personal grant should be created");
@@ -121,7 +121,7 @@ async fn concurrent_multi_code_sessions_respect_limits_and_survive_restart() {
         .create_grant(CreateAccessGrantRequest {
             label: "Fleet".to_owned(),
             max_connections: 3,
-            expires_at_epoch_seconds: None,
+            valid_for_minutes: 60,
         })
         .await
         .expect("fleet grant should be created");

@@ -1,9 +1,12 @@
-import { Eye, EyeOff, Link2, LoaderCircle } from "lucide-react";
+import { Clock3, Eye, EyeOff, Link2, LoaderCircle } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import { formatDuration } from "../lib/format";
 import type { ClientIssue, EnrollmentInput } from "../types";
 
 interface EnrollmentPanelProps {
   initialServerUrl: string;
+  initialAccessCode: string;
+  accessExpiresAtEpochSeconds: number | null;
   initialDeviceName: string;
   busy: boolean;
   issue: ClientIssue | null;
@@ -12,6 +15,8 @@ interface EnrollmentPanelProps {
 
 export function EnrollmentPanel({
   initialServerUrl,
+  initialAccessCode,
+  accessExpiresAtEpochSeconds,
   initialDeviceName,
   busy,
   issue,
@@ -19,8 +24,11 @@ export function EnrollmentPanel({
 }: EnrollmentPanelProps) {
   const [serverUrl, setServerUrl] = useState(initialServerUrl);
   const [deviceName, setDeviceName] = useState(initialDeviceName);
-  const [accessCode, setAccessCode] = useState("");
+  const [accessCode, setAccessCode] = useState(initialAccessCode);
   const [revealCode, setRevealCode] = useState(false);
+  const accessRemaining = accessExpiresAtEpochSeconds === null
+    ? null
+    : Math.max(0, accessExpiresAtEpochSeconds - Math.floor(Date.now() / 1_000));
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -54,6 +62,12 @@ export function EnrollmentPanel({
             />
           </span>
         </div>
+        {accessRemaining !== null ? (
+          <div className="saved-access-status" role="status">
+            <Clock3 size={15} aria-hidden="true" />
+            <span>{formatDuration(accessRemaining)} access left</span>
+          </div>
+        ) : null}
         <div className="field">
           <label htmlFor="access-code">Access code</label>
           <span className="input-shell access-code-shell">

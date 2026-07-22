@@ -29,6 +29,8 @@ internal class TunnelEnrollmentProfile(
 internal class DurableTunnelCredentials(
     val profile: TunnelEnrollmentProfile,
     val sessionManifest: String?,
+    val accessExpiresAtEpochSeconds: Long? = sessionManifest
+        ?.let { KetControlApi.parseEnrollment(it).accessExpiresAtEpochSeconds },
 ) {
     fun launchSpec(): TunnelLaunchSpec? = sessionManifest?.let { manifest ->
         TunnelLaunchSpec.fromEnrollment(
@@ -40,12 +42,16 @@ internal class DurableTunnelCredentials(
 
     override fun toString(): String =
         "DurableTunnelCredentials(profile=$profile, sessionManifest=${if (sessionManifest == null) "none" else "[REDACTED]"})"
+
+    fun accessExpired(nowEpochSeconds: Long = System.currentTimeMillis() / 1_000): Boolean =
+        accessExpiresAtEpochSeconds?.let { it <= nowEpochSeconds } == true
 }
 
 internal interface TunnelCredentialStore {
     fun load(): DurableTunnelCredentials?
     fun save(credentials: DurableTunnelCredentials)
     fun clearSession()
+    fun clearAll()
 }
 
 internal object DurableTunnelCredentialsCodec {
@@ -57,6 +63,7 @@ internal object DurableTunnelCredentialsCodec {
         "access_code",
         "preferred_protocol",
         "session_manifest",
+        "access_expires_at_epoch_seconds",
     )
 
     fun encode(credentials: DurableTunnelCredentials): ByteArray {
@@ -66,6 +73,7 @@ internal object DurableTunnelCredentialsCodec {
             .put("access_code", credentials.profile.accessCode)
         credentials.profile.preferredProtocol?.let { root.put("preferred_protocol", it.wireName) }
         credentials.sessionManifest?.let { root.put("session_manifest", JSONObject(it)) }
+        credentials.accessExpiresAtEpochSeconds?.let { root.put("access_expires_at_epoch_seconds", it) }
         return root.toString().toByteArray(StandardCharsets.UTF_8).also {
             require(it.size <= MAX_PLAINTEXT_BYTES) { "Saved tunnel credentials are too large" }
         }
@@ -88,8 +96,15 @@ internal object DurableTunnelCredentialsCodec {
                 ?.let { KetProtocol.fromWireName(it) ?: throw IllegalArgumentException("Saved protocol is unsupported") },
         )
         val manifest = root.optJSONObject("session_manifest")?.toString()
-        manifest?.let(KetControlApi::parseEnrollment)
-        return DurableTunnelCredentials(profile, manifest)
+        val enrollment = manifest?.let(KetControlApi::parseEnrollment)
+        val accessExpiresAt = if (root.has("access_expires_at_epoch_seconds")) {
+            root.getLong("access_expires_at_epoch_seconds").also {
+                require(it > 0) { "Saved access expiry is invalid" }
+            }
+        } else {
+            enrollment?.accessExpiresAtEpochSeconds
+        }
+        return DurableTunnelCredentials(profile, manifest, accessExpiresAt)
     }
 }
 
@@ -180,8 +195,12 @@ internal class AndroidTunnelCredentialStore private constructor(context: Context
     override fun clearSession() = synchronized(fileLock) {
         val current = load() ?: return@synchronized
         if (current.sessionManifest != null) {
-            save(DurableTunnelCredentials(current.profile, null))
+            save(DurableTunnelCredentials(current.profile, null, current.accessExpiresAtEpochSeconds))
         }
+    }
+
+    override fun clearAll() = synchronized(fileLock) {
+        atomicFile.delete()
     }
 
     private fun encryptionKey(): SecretKey {
@@ -233,13 +252,18 @@ internal class DurableTunnelSessionResolver(
     fun resolveForApp(profile: TunnelEnrollmentProfile): TunnelLaunchSpec {
         val saved = store.load()
         if (saved != null && saved.profile.matches(profile)) {
-            val updated = DurableTunnelCredentials(profile, saved.sessionManifest)
+            rejectExpired(saved)
+            val updated = DurableTunnelCredentials(
+                profile,
+                saved.sessionManifest,
+                saved.accessExpiresAtEpochSeconds,
+            )
             if (saved.profile.preferredProtocol != profile.preferredProtocol) store.save(updated)
             return resolveSaved(updated)
         }
         saved?.launchSpec()?.let { previous ->
             runCatching { api.release(previous.controlEndpoint, previous.sessionToken) }
-            store.clearSession()
+            store.clearAll()
         }
         return enroll(profile)
     }
@@ -248,6 +272,7 @@ internal class DurableTunnelSessionResolver(
         pending?.let { return it }
         val saved = store.load()
             ?: throw IllegalStateException("Connect once in Ket before enabling always-on VPN")
+        rejectExpired(saved)
         return resolveSaved(saved)
     }
 
@@ -260,7 +285,11 @@ internal class DurableTunnelSessionResolver(
             } catch (error: Exception) {
                 if ((error as? KetControlException)?.authorizationLost != true) return existing
                 store.clearSession()
-                saved = DurableTunnelCredentials(saved.profile, null)
+                saved = DurableTunnelCredentials(
+                    saved.profile,
+                    null,
+                    saved.accessExpiresAtEpochSeconds,
+                )
             }
         }
 
@@ -269,7 +298,11 @@ internal class DurableTunnelSessionResolver(
 
     private fun enroll(profile: TunnelEnrollmentProfile): TunnelLaunchSpec {
         val result = api.enroll(profile.serverUrl, profile.accessCode, CLIENT_NAME)
-        val next = DurableTunnelCredentials(profile, result.manifestJson)
+        val next = DurableTunnelCredentials(
+            profile,
+            result.manifestJson,
+            result.accessExpiresAtEpochSeconds,
+        )
         try {
             store.save(next)
         } catch (error: Exception) {
@@ -277,6 +310,12 @@ internal class DurableTunnelSessionResolver(
             throw error
         }
         return TunnelLaunchSpec.fromEnrollment(profile.serverUrl, result, profile.preferredProtocol)
+    }
+
+    private fun rejectExpired(credentials: DurableTunnelCredentials) {
+        if (!credentials.accessExpired()) return
+        store.clearAll()
+        throw IllegalStateException("Access time has expired")
     }
 
     companion object {

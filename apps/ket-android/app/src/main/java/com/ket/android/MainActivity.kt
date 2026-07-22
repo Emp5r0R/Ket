@@ -57,6 +57,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val savedCredentials = runCatching {
+            AndroidTunnelCredentialStore.get(this).load()?.let { credentials ->
+                if (credentials.accessExpired()) {
+                    AndroidTunnelCredentialStore.get(this).clearAll()
+                    null
+                } else {
+                    credentials
+                }
+            }
+        }.getOrNull()
         subscription = KetTunnelRuntime.subscribe { snapshot ->
             runOnUiThread { tunnelState.value = snapshot }
         }
@@ -64,6 +74,13 @@ class MainActivity : ComponentActivity() {
             KetTheme(connected = tunnelState.value.phase == TunnelPhase.Connected) {
                 KetApp(
                     snapshot = tunnelState.value,
+                    initialServerUrl = savedCredentials?.profile?.serverUrl.orEmpty(),
+                    initialAccessCode = savedCredentials?.profile?.accessCode.orEmpty(),
+                    initialPreferredProtocol = savedCredentials?.profile?.preferredProtocol,
+                    initialAccessExpiresAtEpochSeconds = savedCredentials?.accessExpiresAtEpochSeconds,
+                    onAccessExpired = {
+                        runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
+                    },
                     onConnect = ::requestConnection,
                     onDisconnect = { KetTunnelController.disconnect(this) },
                 )

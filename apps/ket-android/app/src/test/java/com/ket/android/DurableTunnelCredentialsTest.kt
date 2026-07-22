@@ -206,6 +206,26 @@ class DurableTunnelCredentialsTest {
         assertNull(store.current)
     }
 
+    @Test
+    fun `expired access erases the saved profile before contacting the server`() {
+        val expired = DurableTunnelCredentials(
+            TunnelEnrollmentProfile(SERVER_URL, ACCESS_CODE),
+            testSessionManifest(EXISTING_TOKEN),
+            accessExpiresAtEpochSeconds = 1,
+        )
+        val store = FakeCredentialStore(expired)
+        val api = FakeSessionApi(enrollment(UNUSED_TOKEN))
+
+        val error = assertThrows(IllegalStateException::class.java) {
+            DurableTunnelSessionResolver(api, store).resolve(null)
+        }
+
+        assertTrue(error.message.orEmpty().contains("expired"))
+        assertNull(store.current)
+        assertEquals(0, api.renewals)
+        assertEquals(0, api.enrollments)
+    }
+
     private class FakeCredentialStore(
         var current: DurableTunnelCredentials?,
         private val failSaves: Boolean = false,
@@ -227,7 +247,14 @@ class DurableTunnelCredentialsTest {
 
         override fun clearSession() {
             clears += 1
-            current = current?.let { DurableTunnelCredentials(it.profile, null) }
+            current = current?.let {
+                DurableTunnelCredentials(it.profile, null, it.accessExpiresAtEpochSeconds)
+            }
+        }
+
+        override fun clearAll() {
+            clears += 1
+            current = null
         }
     }
 

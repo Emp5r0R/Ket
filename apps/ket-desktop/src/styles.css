@@ -196,15 +196,23 @@ input:disabled {
 
 .header-status {
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  max-width: 190px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 650;
+  text-align: right;
 }
 
 .header-status.is-restricted {
   color: var(--muted);
+}
+
+.header-status.is-restricted .status-symbol {
+  animation: watched-status 2.4s ease-in-out infinite;
 }
 
 .header-status.is-liberated {
@@ -213,6 +221,7 @@ input:disabled {
 
 .status-symbol {
   display: inline-grid;
+  flex: 0 0 auto;
   width: 30px;
   height: 30px;
   place-items: center;
@@ -483,6 +492,15 @@ input:disabled {
   flex: 0 0 auto;
   color: var(--subtle);
   font-size: 10px;
+}
+
+.saved-access-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .input-action {
@@ -1170,6 +1188,18 @@ input:disabled {
   to {
     opacity: 1;
     transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes watched-status {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: translateX(-1px) scale(0.97);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(1px) scale(1.03);
   }
 }
 

@@ -28,6 +28,7 @@ data class TunnelSnapshot(
     val handshakeLatencyMs: Long? = null,
     val transportName: String = "Auto",
     val reconnectAttempt: Int = 0,
+    val accessExpiresAtEpochSeconds: Long? = null,
 )
 
 internal class TunnelLaunchSpec(
@@ -35,6 +36,7 @@ internal class TunnelLaunchSpec(
     val sessionToken: String,
     val node: AndroidNodeStatus,
     val transports: List<AndroidTransport>,
+    val accessExpiresAtEpochSeconds: Long?,
     val preferredProtocol: KetProtocol? = null,
 ) {
     override fun toString(): String =
@@ -46,7 +48,14 @@ internal class TunnelLaunchSpec(
             result: EnrollmentResult,
             preferredProtocol: KetProtocol? = null,
         ): TunnelLaunchSpec =
-            TunnelLaunchSpec(controlEndpoint, result.token, result.node, result.transports, preferredProtocol)
+            TunnelLaunchSpec(
+                controlEndpoint,
+                result.token,
+                result.node,
+                result.transports,
+                result.accessExpiresAtEpochSeconds,
+                preferredProtocol,
+            )
     }
 }
 
@@ -120,6 +129,7 @@ object KetTunnelController {
                         TunnelSnapshot(
                             phase = TunnelPhase.Connecting,
                             node = preparedSpec.node,
+                            accessExpiresAtEpochSeconds = preparedSpec.accessExpiresAtEpochSeconds,
                             message = "Starting protected route...",
                         ),
                     )

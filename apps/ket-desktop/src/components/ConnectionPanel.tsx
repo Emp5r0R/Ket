@@ -50,8 +50,8 @@ export function ConnectionPanel({
   const cancellable = cancellablePhases.has(snapshot.phase);
   const disconnecting = snapshot.phase === "disconnecting";
   const runtimeReady = engine.broker_available && engine.binary_available;
-  const expiresIn = snapshot.session_expires_at_epoch_seconds
-    ? snapshot.session_expires_at_epoch_seconds - Math.floor(Date.now() / 1000)
+  const expiresIn = snapshot.access_expires_at_epoch_seconds !== null
+    ? snapshot.access_expires_at_epoch_seconds - Math.floor(Date.now() / 1000)
     : null;
   const location = [node.location.city, node.location.country_name].filter(Boolean).join(", ");
   const offeredProtocols = Array.from(
@@ -84,7 +84,7 @@ export function ConnectionPanel({
         </div>
         <div>
           <Clock3 size={16} aria-hidden="true" />
-          <span>{formatDuration(expiresIn)} lease</span>
+          <span>{formatDuration(expiresIn)} access left</span>
         </div>
         <div>
           <Radio size={16} aria-hidden="true" />
@@ -162,7 +162,7 @@ function tunnelServiceMessage(status: EngineReadiness["status"]): string {
 
 function phaseLabel(phase: ClientSnapshot["phase"]): string {
   const labels: Record<ClientSnapshot["phase"], string> = {
-    disconnected: "Restricted",
+    disconnected: "You are being watched",
     enrolling: "Adding server",
     enrolled: "Ready",
     probing: "Testing route",

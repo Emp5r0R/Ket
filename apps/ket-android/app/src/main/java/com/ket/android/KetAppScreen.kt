@@ -10,6 +10,10 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,18 +48,21 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 private val KetInk = Color(0xFF071014)
 private val KetLiberatedInk = Color(0xFF14090D)
@@ -116,12 +123,44 @@ internal fun KetTheme(
 @Composable
 internal fun KetApp(
     snapshot: TunnelSnapshot,
+    initialServerUrl: String = "",
+    initialAccessCode: String = "",
+    initialPreferredProtocol: KetProtocol? = null,
+    initialAccessExpiresAtEpochSeconds: Long? = null,
+    onAccessExpired: () -> Unit = {},
     onConnect: (String, String, KetProtocol?) -> Unit,
     onDisconnect: () -> Unit,
 ) {
-    var serverUrl by rememberSaveable { mutableStateOf("") }
-    var accessCode by rememberSaveable { mutableStateOf("") }
-    var preferredProtocolWireName by rememberSaveable { mutableStateOf<String?>(null) }
+    var serverUrl by rememberSaveable { mutableStateOf(initialServerUrl) }
+    var accessCode by rememberSaveable { mutableStateOf(initialAccessCode) }
+    var preferredProtocolWireName by rememberSaveable {
+        mutableStateOf(initialPreferredProtocol?.wireName)
+    }
+    var accessExpiresAtEpochSeconds by rememberSaveable {
+        mutableStateOf(initialAccessExpiresAtEpochSeconds)
+    }
+    var accessRemainingSeconds by rememberSaveable { mutableStateOf<Long?>(null) }
+    LaunchedEffect(snapshot.accessExpiresAtEpochSeconds) {
+        snapshot.accessExpiresAtEpochSeconds?.let { accessExpiresAtEpochSeconds = it }
+    }
+    LaunchedEffect(accessExpiresAtEpochSeconds) {
+        val expiry = accessExpiresAtEpochSeconds ?: run {
+            accessRemainingSeconds = null
+            return@LaunchedEffect
+        }
+        while (true) {
+            val remaining = (expiry - System.currentTimeMillis() / 1_000).coerceAtLeast(0)
+            accessRemainingSeconds = remaining
+            if (remaining == 0L) {
+                serverUrl = ""
+                accessCode = ""
+                accessExpiresAtEpochSeconds = null
+                onAccessExpired()
+                break
+            }
+            delay(minOf(remaining * 1_000, 30_000))
+        }
+    }
     var guideProtocolWireName by rememberSaveable { mutableStateOf<String?>(null) }
     val preferredProtocol = preferredProtocolWireName?.let(KetProtocol::fromWireName)
     guideProtocolWireName?.let(KetProtocol::fromWireName)?.let { guideProtocol ->
@@ -216,6 +255,13 @@ internal fun KetApp(
                         guideProtocolWireName = (preferredProtocol ?: KetProtocol.Stealth).wireName
                     },
                 )
+                accessRemainingSeconds?.let {
+                    Text(
+                        "Access left ${formatDuration(it)}",
+                        color = KetMuted,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
             ServerMap(snapshot.node, connected)
             snapshot.node?.let { node ->
@@ -360,6 +406,13 @@ private fun ProtocolGuideList(title: String, items: List<String>) {
 
 @Composable
 private fun PhaseStatus(phase: TunnelPhase) {
+    val watchTransition = rememberInfiniteTransition(label = "watched status")
+    val watchedAlpha by watchTransition.animateFloat(
+        initialValue = 0.58f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1_800), RepeatMode.Reverse),
+        label = "watched status alpha",
+    )
     val tone by animateColorAsState(
         targetValue = when (phase) {
             TunnelPhase.Connected -> MaterialTheme.colorScheme.primary
@@ -387,9 +440,9 @@ private fun PhaseStatus(phase: TunnelPhase) {
                     tint = tone,
                 )
                 TunnelPhase.Disconnected -> Icon(
-                    Icons.Filled.Lock,
+                    Icons.Filled.Visibility,
                     contentDescription = null,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(17.dp).alpha(watchedAlpha),
                     tint = tone,
                 )
                 TunnelPhase.Failed -> Icon(
@@ -414,7 +467,7 @@ private fun PhaseStatus(phase: TunnelPhase) {
 }
 
 internal fun phaseStatusLabel(phase: TunnelPhase): String = when (phase) {
-    TunnelPhase.Disconnected -> "Restricted"
+    TunnelPhase.Disconnected -> "You are being watched"
     TunnelPhase.Enrolling -> "Authorizing"
     TunnelPhase.Connecting -> "Connecting"
     TunnelPhase.Reconnecting -> "Recovering"
@@ -500,6 +553,9 @@ private fun NodeCapacity(node: AndroidNodeStatus) {
 
 @Composable
 private fun Telemetry(snapshot: TunnelSnapshot, node: AndroidNodeStatus) {
+    val accessRemaining = snapshot.accessExpiresAtEpochSeconds
+        ?.minus(System.currentTimeMillis() / 1_000)
+        ?.coerceAtLeast(0)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         MetricRow(
             "Download" to formatBytes(snapshot.receivedBytes),
@@ -514,8 +570,8 @@ private fun Telemetry(snapshot: TunnelSnapshot, node: AndroidNodeStatus) {
         )
         MetricRow(
             "Memory" to formatMemory(node),
+            "Access left" to formatDuration(accessRemaining),
             "Node load" to "${node.capacityPercent.toInt()}%",
-            "Device flows" to snapshot.onlineConnections.toString(),
         )
     }
 }

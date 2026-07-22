@@ -47,6 +47,7 @@ pub struct ClientSnapshot {
     pub traffic: Option<SessionTraffic>,
     pub handshake_latency_ms: Option<u64>,
     pub session_expires_at_epoch_seconds: Option<u64>,
+    pub access_expires_at_epoch_seconds: Option<u64>,
     pub connected_at_epoch_seconds: Option<u64>,
     pub reconnect_attempt: u32,
     pub issue: Option<ClientIssue>,
