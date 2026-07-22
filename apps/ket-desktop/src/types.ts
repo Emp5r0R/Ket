@@ -77,6 +77,7 @@ export interface EngineReadiness {
   binary_available: boolean;
   broker_available: boolean;
   mode: "privileged_broker";
+  status: "ready" | "permission_required" | "not_installed" | "unavailable";
 }
 
 export interface DesktopState {

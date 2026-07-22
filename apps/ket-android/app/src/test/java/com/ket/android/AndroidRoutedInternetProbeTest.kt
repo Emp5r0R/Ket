@@ -43,6 +43,26 @@ class AndroidRoutedInternetProbeTest {
     }
 
     @Test
+    fun `retries all endpoints after resolver fallback`() {
+        val requests = mutableListOf<String>()
+        val pauses = mutableListOf<Long>()
+        val probe = RoutedInternetProbe(
+            endpoints = listOf("first", "second"),
+            attempts = 2,
+            retryDelayMillis = 250,
+            pause = { pauses += it },
+        ) { endpoint ->
+            requests += endpoint
+            requests.size == 3
+        }
+
+        probe.verify()
+
+        assertEquals(listOf("first", "second", "first"), requests)
+        assertEquals(listOf(250L), pauses)
+    }
+
+    @Test
     fun `honors disconnect before probing`() {
         val error = assertThrows(InterruptedException::class.java) {
             RoutedInternetProbe(listOf("first")) { true }.verify { true }

@@ -1,0 +1,36 @@
+diff --git a/src/hev-socks5-tunnel.c b/src/hev-socks5-tunnel.c
+--- a/src/hev-socks5-tunnel.c
++++ b/src/hev-socks5-tunnel.c
+@@ -159,6 +159,19 @@ hev_socks5_session_task_entry (void *data)
+     hev_object_unref (HEV_OBJECT (s));
+ }
+ 
++static int
++is_mapped_dns_tcp (struct tcp_pcb *pcb)
++{
++    int faddr;
++
++    if (!hev_mapped_dns_get () || !IP_IS_V4_VAL (pcb->local_ip))
++        return 0;
++
++    faddr = hev_config_get_mapdns_address ();
++
++    return faddr == ip_2_ip4 (&pcb->local_ip)->addr;
++}
++
+ static err_t
+ tcp_accept_handler (void *arg, struct tcp_pcb *pcb, err_t err)
+ {
+@@ -173,6 +186,12 @@ tcp_accept_handler (void *arg, struct tcp_pcb *pcb, err_t err)
+     if (!run)
+         return ERR_RST;
+ 
++    if (is_mapped_dns_tcp (pcb)) {
++        LOG_D ("reject mapped dns tcp");
++        tcp_abort (pcb);
++        return ERR_ABRT;
++    }
++
+     tcp = hev_socks5_session_tcp_new (pcb, &mutex);
+     if (!tcp)
+         return ERR_MEM;

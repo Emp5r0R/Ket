@@ -33,6 +33,7 @@ struct EngineReadiness {
     binary_available: bool,
     broker_available: bool,
     mode: &'static str,
+    status: &'static str,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -58,6 +59,7 @@ impl DesktopController {
                 binary_available: readiness.engine_available,
                 broker_available: true,
                 mode: "privileged_broker",
+                status: "ready",
             },
             Err(error) => {
                 tracing::debug!(error = %error, "privileged tunnel service is unavailable");
@@ -65,10 +67,43 @@ impl DesktopController {
                     binary_available: false,
                     broker_available: false,
                     mode: "privileged_broker",
+                    status: readiness_error_status(&error),
                 }
             }
         }
     }
+}
+
+fn readiness_error_status(error: &ket_client_core::ClientError) -> &'static str {
+    let message = error.to_string().to_ascii_lowercase();
+    if message.contains("credentials are unavailable")
+        || message.contains("permission denied")
+        || message.contains("authentication failed")
+    {
+        "permission_required"
+    } else if tunnel_service_installed() {
+        "unavailable"
+    } else {
+        "not_installed"
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn tunnel_service_installed() -> bool {
+    std::path::Path::new("/usr/libexec/ket/ket-tunnel-service").is_file()
+}
+
+#[cfg(target_os = "windows")]
+fn tunnel_service_installed() -> bool {
+    std::env::var_os("PROGRAMFILES")
+        .map(std::path::PathBuf::from)
+        .map(|path| path.join("Ket").join("ket-tunnel-service.exe").is_file())
+        .unwrap_or(false)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn tunnel_service_installed() -> bool {
+    false
 }
 
 #[tauri::command]

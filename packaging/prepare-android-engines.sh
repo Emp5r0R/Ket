@@ -7,6 +7,7 @@ output="$app_dir/build/generated/ket-engines"
 stamp="$output/versions"
 hev_version=2.14.0
 hev_checksum=f0c5909b188272a6cee2b3c92e13cf16d927ba29a20bd1d750a2ff3419cda381
+hev_patch="$repo_root/packaging/patches/hev-socks5-tunnel-2.14.0-mapdns-tcp.patch"
 openvpn_android_version=0.7.64
 openvpn_android_checksum=50eaa5539778ce20fe3ed23e097aa811cce45be8eeea39904e31984c98c0b74e
 versions="hysteria=v2.10.0
@@ -14,7 +15,8 @@ shadowsocks=1.24.0
 xray=v26.3.27
 wstunnel=10.6.2
 openvpn-for-android=$openvpn_android_version
-hev-socks5-tunnel=$hev_version"
+hev-socks5-tunnel=$hev_version
+ket-hev-mapdns-tcp=1"
 
 complete=true
 for artifact in \
@@ -91,6 +93,7 @@ curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
 printf '%s  %s\n' "$hev_checksum" "$archive" | sha256sum --check --status
 tar -xJf "$archive" -C "$stage"
 mv "$stage/hev-socks5-tunnel-${hev_version}" "$stage/hev-socks5-tunnel"
+patch --batch --forward --directory="$stage/hev-socks5-tunnel" --strip=1 < "$hev_patch"
 printf '%s\n' "$versions" > "$stage/versions"
 
 rm -rf "$output"

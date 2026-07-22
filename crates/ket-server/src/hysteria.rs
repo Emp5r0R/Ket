@@ -48,6 +48,7 @@ fn render_runtime_config(config: &HysteriaConfig) -> Value {
                 "reject(169.254.0.0/16)",
                 "reject(172.16.0.0/12)",
                 "reject(192.168.0.0/16)",
+                "reject(198.18.0.0/15)",
                 "reject(224.0.0.0/4)",
                 "reject(::1/128)",
                 "reject(fc00::/7)",
@@ -134,6 +135,7 @@ mod tests {
             .as_array()
             .expect("ACL must be an array");
         assert!(acl.contains(&json!("reject(169.254.0.0/16)")));
+        assert!(acl.contains(&json!("reject(198.18.0.0/15)")));
         assert!(acl.contains(&json!("reject(all, tcp/25)")));
         assert_eq!(acl.last(), Some(&json!("direct(all)")));
     }

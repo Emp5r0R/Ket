@@ -8,6 +8,8 @@ fi
 install -d -o root -g root -m 0755 /usr/libexec/ket
 install -d -o root -g ket -m 0750 /etc/ket
 chmod 0755 \
+  /usr/bin/ket-desktop \
+  /usr/bin/ket-desktop-bin \
   /usr/libexec/ket/ket-tunnel-service \
   /usr/libexec/ket/hysteria \
   /usr/libexec/ket/openvpn \

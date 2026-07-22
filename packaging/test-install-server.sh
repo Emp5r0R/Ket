@@ -13,6 +13,7 @@ direct=$(
 )
 grep -Fq 'Mode: direct' <<<"$direct"
 grep -Fq 'TCP 80,443,8443,9443,20000-20031' <<<"$direct"
+grep -Fq 'Location: automatic public-IP detection' <<<"$direct"
 
 cloudflare=$(
   "$installer" \
@@ -27,6 +28,19 @@ grep -Fq 'Mode: cloudflare' <<<"$cloudflare"
 grep -Fq 'Raw transport hostname: direct-ket.example.com' <<<"$cloudflare"
 grep -Fq '20000-20063' <<<"$cloudflare"
 
+manual=$(
+  "$installer" \
+    --domain ket.example.com \
+    --email operator@example.com \
+    --country-code SG \
+    --country-name Singapore \
+    --city Singapore \
+    --latitude 1.29 \
+    --longitude 103.85 \
+    --plan
+)
+grep -Fq 'Location: Singapore, Singapore (SG; 1.29,103.85)' <<<"$manual"
+
 reject() {
   if "$installer" "$@" --plan >/dev/null 2>&1; then
     printf 'Expected installer arguments to fail: %s\n' "$*" >&2
@@ -38,5 +52,6 @@ reject --mode cloudflare --domain ket.example.com --email operator@example.com
 reject --domain bad..example.com --email operator@example.com
 reject --domain ket.example.com --email operator@example.com --max-sessions 513
 reject --domain ket.example.com --email operator@example.com --country-name 'bad$name'
+reject --domain ket.example.com --email operator@example.com --country-code SG
 
 printf 'Ket installer argument tests passed.\n'

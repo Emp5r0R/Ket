@@ -113,7 +113,7 @@ export function ConnectionPanel({
       {!engine.broker_available ? (
         <div className="engine-warning" role="status">
           <AlertTriangle size={17} aria-hidden="true" />
-          <span>Tunnel service is not installed or unavailable.</span>
+          <span>{tunnelServiceMessage(engine.status)}</span>
         </div>
       ) : !engine.binary_available ? (
         <div className="engine-warning" role="status">
@@ -143,6 +143,17 @@ export function ConnectionPanel({
       </div>
     </aside>
   );
+}
+
+function tunnelServiceMessage(status: EngineReadiness["status"]): string {
+  switch (status) {
+    case "permission_required":
+      return "Restart Ket from the application menu to activate tunnel access.";
+    case "not_installed":
+      return "Tunnel service is not installed.";
+    default:
+      return "Tunnel service is installed but is not responding.";
+  }
 }
 
 function phaseLabel(phase: ClientSnapshot["phase"]): string {

@@ -58,8 +58,9 @@ RUN packaging/fetch-wstunnel.sh "linux-${TARGETARCH}" \
 RUN packaging/fetch-tun2proxy.sh "linux-${TARGETARCH}" \
     apps/ket-desktop/src-tauri/binaries/tun2proxy
 RUN packaging/validate-desktop-assets.sh linux
-RUN chmod 0644 packaging/linux/ket-tunnel.service \
-    && chmod 0755 packaging/linux/postinst packaging/linux/prerm packaging/linux/postrm
+RUN chmod 0644 packaging/linux/ket-tunnel.service packaging/linux/Ket.desktop.hbs \
+    && chmod 0755 packaging/linux/ket-desktop-launcher \
+      packaging/linux/postinst packaging/linux/prerm packaging/linux/postrm
 
 WORKDIR /source/apps/ket-desktop
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

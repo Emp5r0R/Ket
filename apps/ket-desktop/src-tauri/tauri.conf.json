@@ -44,9 +44,11 @@
       "deb": {
         "depends": [
           "libcap-ng0",
-          "libssl3"
+          "libssl3",
+          "util-linux-extra | login"
         ],
         "files": {
+          "/usr/bin/ket-desktop": "../../../packaging/linux/ket-desktop-launcher",
           "/usr/libexec/ket/ket-tunnel-service": "../../../target/release/ket-tunnel-service",
           "/usr/libexec/ket/hysteria": "binaries/hysteria",
           "/usr/libexec/ket/openvpn": "binaries/openvpn",
@@ -58,6 +60,7 @@
           "/usr/share/doc/ket/THIRD_PARTY_NOTICES.md": "../../../THIRD_PARTY_NOTICES.md",
           "/usr/lib/systemd/system/ket-tunnel.service": "../../../packaging/linux/ket-tunnel.service"
         },
+        "desktopTemplate": "../../../packaging/linux/Ket.desktop.hbs",
         "postInstallScript": "../../../packaging/linux/postinst",
         "preRemoveScript": "../../../packaging/linux/prerm",
         "postRemoveScript": "../../../packaging/linux/postrm"

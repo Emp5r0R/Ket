@@ -72,6 +72,7 @@ val prepareAndroidEngines by tasks.registering(Exec::class) {
         rootProject.layout.projectDirectory.dir("../..").file("packaging/fetch-shadowsocks.sh"),
         rootProject.layout.projectDirectory.dir("../..").file("packaging/fetch-xray.sh"),
         rootProject.layout.projectDirectory.dir("../..").file("packaging/fetch-wstunnel.sh"),
+        rootProject.layout.projectDirectory.dir("../..").file("packaging/patches/hev-socks5-tunnel-2.14.0-mapdns-tcp.patch"),
     )
     outputs.dir(layout.buildDirectory.dir("generated/ket-engines"))
 }
