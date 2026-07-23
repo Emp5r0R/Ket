@@ -163,16 +163,25 @@ Create one client access code on an installed server:
 
 ```bash
 sudo bash -c '
-  set -e
+  set -euo pipefail
   cd /opt/ket
   set -a; . ./.env; set +a
-  curl --fail-with-body --silent --show-error \
+  max_connections=$((KET_MAX_SESSIONS < 5 ? KET_MAX_SESSIONS : 5))
+  response_file=$(mktemp)
+  trap "rm -f \"$response_file\"" EXIT
+  http_status=$(curl --silent --show-error \
     --request POST \
     --header "Authorization: Bearer ${KET_ADMIN_TOKEN}" \
     --header "Content-Type: application/json" \
-    --data "{\"label\":\"Personal devices\",\"max_connections\":5,\"valid_for_minutes\":43200}" \
-    "http://127.0.0.1:${KET_CONTROL_PORT}/v1/admin/access-grants" |
-    jq -r "\"Grant ID: \\(.id)\\nAccess code: \\(.access_code)\\nValid for: \\(.valid_for_minutes) minutes\\nExpires at: \\(.expires_at_epoch_seconds)\""
+    --data "{\"label\":\"Personal devices\",\"max_connections\":${max_connections},\"valid_for_minutes\":43200}" \
+    --output "$response_file" \
+    --write-out "%{http_code}" \
+    "http://127.0.0.1:${KET_CONTROL_PORT}/v1/admin/access-grants")
+  if [[ $http_status != 201 ]]; then
+    jq -r "\"Ket error (\\(.code // \\\"unknown\\\")): \\(.message // \\\"request failed\\\")\"" "$response_file" >&2
+    exit 1
+  fi
+  jq -r "\"Grant ID: \\(.id)\\nAccess code: \\(.access_code)\\nConcurrent connections: \\(.max_connections)\\nValid for: \\(.valid_for_minutes) minutes\\nExpires at: \\(.expires_at_epoch_seconds)\"" "$response_file"
 '
 ```
 
@@ -180,20 +189,28 @@ Create ten separate one-device codes:
 
 ```bash
 sudo bash -c '
-  set -e
+  set -euo pipefail
   cd /opt/ket
   set -a; . ./.env; set +a
-  curl --fail-with-body --silent --show-error \
+  response_file=$(mktemp)
+  trap "rm -f \"$response_file\"" EXIT
+  http_status=$(curl --silent --show-error \
     --request POST \
     --header "Authorization: Bearer ${KET_ADMIN_TOKEN}" \
     --header "Content-Type: application/json" \
     --data "{\"label_prefix\":\"Client\",\"count\":10,\"max_connections\":1,\"valid_for_minutes\":43200}" \
-    "http://127.0.0.1:${KET_CONTROL_PORT}/v1/admin/access-grants/batch" |
-    jq -r ".[] | [.label, .access_code, .valid_for_minutes, .expires_at_epoch_seconds, .id] | @tsv"
+    --output "$response_file" \
+    --write-out "%{http_code}" \
+    "http://127.0.0.1:${KET_CONTROL_PORT}/v1/admin/access-grants/batch")
+  if [[ $http_status != 201 ]]; then
+    jq -r "\"Ket error (\\(.code // \\\"unknown\\\")): \\(.message // \\\"request failed\\\")\"" "$response_file" >&2
+    exit 1
+  fi
+  jq -r ".[] | [.label, .access_code, .valid_for_minutes, .expires_at_epoch_seconds, .id] | @tsv" "$response_file"
 '
 ```
 
-`valid_for_minutes` is required and accepts `1` through `525600` minutes. Ket returns each plaintext code only once and stores only its Argon2 hash. Existing codes cannot be recovered; create a replacement when a code is lost. Use the server URL such as `https://ket.nsa.tools` plus the returned 32-character code in any Ket client. Clients retain the profile and show its remaining access time until this server-enforced lifetime ends.
+`max_connections` is the number of concurrent sessions allowed by that code and must not exceed the server's `KET_MAX_SESSIONS`. `valid_for_minutes` is required and accepts `1` through `525600` minutes. Ket returns each plaintext code only once and stores only its Argon2 hash. Existing codes cannot be recovered; create a replacement when a code is lost. Use the server URL such as `https://ket.nsa.tools` plus the returned 32-character code in any Ket client. Clients retain the profile and show its remaining access time until this server-enforced lifetime ends.
 
 ## Develop
 
