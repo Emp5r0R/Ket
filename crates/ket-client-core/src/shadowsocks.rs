@@ -19,7 +19,9 @@ use zeroize::Zeroizing;
 
 use crate::{
     ClientError, ProbeReport, StartedTunnel, TransportAdapter,
-    full_route::{FullRouteBridge, reserve_proxy_port, stop_child, supervise, wait_until_stable},
+    full_route::{
+        FullRouteBridge, reserve_proxy_port, stop_bridge, stop_child, supervise, wait_until_stable,
+    },
     runtime::EphemeralConfig,
 };
 
@@ -42,10 +44,11 @@ impl Shadowsocks2022Adapter {
         binary_path: impl Into<PathBuf>,
         bridge_binary_path: impl Into<PathBuf>,
         runtime_dir: impl Into<PathBuf>,
+        dns_state_path: impl Into<PathBuf>,
     ) -> Self {
         Self {
             binary_path: binary_path.into(),
-            bridge: FullRouteBridge::new(bridge_binary_path),
+            bridge: FullRouteBridge::new(bridge_binary_path, dns_state_path),
             runtime_dir: runtime_dir.into(),
             startup_timeout: Duration::from_secs(20),
             stop_timeout: Duration::from_secs(8),
@@ -154,7 +157,7 @@ impl TransportAdapter for Shadowsocks2022Adapter {
         )
         .await
         {
-            stop_child(&mut bridge).await;
+            stop_bridge(&mut bridge).await;
             stop_child(&mut engine).await;
             return Err(error);
         }
@@ -473,8 +476,13 @@ mod tests {
     #[test]
     fn adapter_support_is_protocol_specific() {
         assert!(
-            Shadowsocks2022Adapter::new("sslocal", "tun2proxy", "/tmp/ket")
-                .supports(&test_transport())
+            Shadowsocks2022Adapter::new(
+                "sslocal",
+                "tun2proxy",
+                "/tmp/ket",
+                "/tmp/ket/resolv.conf.state",
+            )
+            .supports(&test_transport())
         );
     }
 

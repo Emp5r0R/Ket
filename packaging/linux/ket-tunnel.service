@@ -16,12 +16,15 @@ ExecStartPre=/usr/libexec/ket/xray version
 ExecStartPre=/usr/libexec/ket/wstunnel --version
 ExecStartPre=/usr/libexec/ket/tun2proxy --version
 ExecStart=/usr/libexec/ket/ket-tunnel-service
+ExecStopPost=/usr/libexec/ket/ket-tunnel-service --restore-dns
 Restart=on-failure
 RestartSec=3s
 TimeoutStartSec=20s
 TimeoutStopSec=20s
 RuntimeDirectory=ket
 RuntimeDirectoryMode=0700
+StateDirectory=ket
+StateDirectoryMode=0700
 UMask=0077
 
 AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN

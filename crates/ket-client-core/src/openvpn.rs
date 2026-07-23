@@ -22,6 +22,7 @@ use crate::{
     ClientError, ProbeReport, StartedTunnel, TransportAdapter,
     full_route::{reserve_proxy_port, stop_child, supervise_pair, wait_until_pair_stable},
     runtime::EphemeralConfig,
+    system_dns::SystemDnsManager,
 };
 
 const OPTIONS: &[&str] = &[
@@ -45,6 +46,7 @@ const MAX_OPENVPN_MATERIAL_BYTES: usize = 8 * 1024;
 pub struct OpenVpnStunnelAdapter {
     openvpn_binary_path: PathBuf,
     stunnel_binary_path: PathBuf,
+    dns: SystemDnsManager,
     runtime_dir: PathBuf,
     startup_timeout: Duration,
     stop_timeout: Duration,
@@ -55,10 +57,12 @@ impl OpenVpnStunnelAdapter {
         openvpn_binary_path: impl Into<PathBuf>,
         stunnel_binary_path: impl Into<PathBuf>,
         runtime_dir: impl Into<PathBuf>,
+        dns_state_path: impl Into<PathBuf>,
     ) -> Self {
         Self {
             openvpn_binary_path: openvpn_binary_path.into(),
             stunnel_binary_path: stunnel_binary_path.into(),
+            dns: SystemDnsManager::openvpn(dns_state_path),
             runtime_dir: runtime_dir.into(),
             startup_timeout: Duration::from_secs(30),
             stop_timeout: Duration::from_secs(10),
@@ -214,6 +218,17 @@ impl TransportAdapter for OpenVpnStunnelAdapter {
             EphemeralConfig::create(&self.runtime_dir, "openvpn-client", openvpn_document)
                 .await
                 .map_err(|message| ClientError::transport(&transport.profile.id, message, false))?;
+        let dns_lease = match self.dns.acquire() {
+            Ok(lease) => lease,
+            Err(_) => {
+                stop_child(&mut carrier).await;
+                return Err(ClientError::transport(
+                    &transport.profile.id,
+                    "failed to route system DNS through OpenVPN",
+                    false,
+                ));
+            }
+        };
         let mut engine_command = Command::new(&self.openvpn_binary_path);
         engine_command
             .arg("--config")
@@ -225,13 +240,17 @@ impl TransportAdapter for OpenVpnStunnelAdapter {
         if let Some(parent) = self.openvpn_binary_path.parent() {
             engine_command.env("OPENSSL_MODULES", parent);
         }
-        let mut engine = engine_command.spawn().map_err(|_| {
-            ClientError::transport(
-                &transport.profile.id,
-                "failed to launch the OpenVPN engine",
-                false,
-            )
-        })?;
+        let mut engine = match engine_command.spawn() {
+            Ok(engine) => engine,
+            Err(_) => {
+                stop_child(&mut carrier).await;
+                return Err(ClientError::transport(
+                    &transport.profile.id,
+                    "failed to launch the OpenVPN engine",
+                    false,
+                ));
+            }
+        };
         if let Err(error) = wait_for_openvpn(
             &mut engine,
             management_port,
@@ -272,6 +291,7 @@ impl TransportAdapter for OpenVpnStunnelAdapter {
                 engine,
                 "stunnel",
                 carrier,
+                dns_lease,
                 self.stop_timeout,
             ),
             handshake_latency: started.elapsed(),

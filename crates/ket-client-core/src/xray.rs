@@ -16,7 +16,9 @@ use tokio::{
 
 use crate::{
     ClientError, ProbeReport, StartedTunnel, TransportAdapter,
-    full_route::{FullRouteBridge, reserve_proxy_port, stop_child, supervise, wait_until_stable},
+    full_route::{
+        FullRouteBridge, reserve_proxy_port, stop_bridge, stop_child, supervise, wait_until_stable,
+    },
     runtime::EphemeralConfig,
 };
 
@@ -48,10 +50,11 @@ impl XrayAdapter {
         xray_binary_path: impl Into<PathBuf>,
         bridge_binary_path: impl Into<PathBuf>,
         runtime_dir: impl Into<PathBuf>,
+        dns_state_path: impl Into<PathBuf>,
     ) -> Self {
         Self {
             xray_binary_path: xray_binary_path.into(),
-            bridge: FullRouteBridge::new(bridge_binary_path),
+            bridge: FullRouteBridge::new(bridge_binary_path, dns_state_path),
             runtime_dir: runtime_dir.into(),
             startup_timeout: Duration::from_secs(20),
             stop_timeout: Duration::from_secs(8),
@@ -198,7 +201,7 @@ impl TransportAdapter for XrayAdapter {
         )
         .await
         {
-            stop_child(&mut bridge).await;
+            stop_bridge(&mut bridge).await;
             stop_child(&mut xray).await;
             return Err(error);
         }
@@ -739,7 +742,12 @@ mod tests {
     #[test]
     fn adapter_support_is_protocol_specific() {
         let transport = test_transport();
-        let adapter = XrayAdapter::new("xray", "tun2proxy", "/tmp/ket");
+        let adapter = XrayAdapter::new(
+            "xray",
+            "tun2proxy",
+            "/tmp/ket",
+            "/tmp/ket/resolv.conf.state",
+        );
         assert!(adapter.supports(&transport));
         assert!(adapter.supports(&test_xhttp_transport()));
     }

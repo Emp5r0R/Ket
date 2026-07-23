@@ -7,6 +7,7 @@ fi
 
 install -d -o root -g root -m 0755 /usr/libexec/ket
 install -d -o root -g ket -m 0750 /etc/ket
+install -d -o root -g root -m 0700 /var/lib/ket
 chmod 0755 \
   /usr/bin/ket-desktop \
   /usr/bin/ket-desktop-bin \

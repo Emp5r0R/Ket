@@ -15,17 +15,22 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-use crate::{ActiveTunnel, ClientError, TunnelStatus};
+use crate::{
+    ActiveTunnel, ClientError, TunnelStatus,
+    system_dns::{SystemDnsLease, SystemDnsManager},
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct FullRouteBridge {
     binary_path: PathBuf,
+    dns: SystemDnsManager,
 }
 
 impl FullRouteBridge {
-    pub(crate) fn new(binary_path: impl Into<PathBuf>) -> Self {
+    pub(crate) fn new(binary_path: impl Into<PathBuf>, dns_state_path: impl Into<PathBuf>) -> Self {
         Self {
             binary_path: binary_path.into(),
+            dns: SystemDnsManager::virtual_dns(dns_state_path),
         }
     }
 
@@ -61,8 +66,15 @@ impl FullRouteBridge {
         socks_port: u16,
         server_addresses: &[SocketAddr],
         transport_id: &str,
-    ) -> Result<Child, ClientError> {
-        Command::new(&self.binary_path)
+    ) -> Result<FullRouteProcess, ClientError> {
+        let dns_lease = self.dns.acquire().map_err(|_| {
+            ClientError::transport(
+                transport_id,
+                "failed to route system DNS through the protected tunnel",
+                false,
+            )
+        })?;
+        let child = Command::new(&self.binary_path)
             .args(arguments(socks_port, server_addresses))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -75,8 +87,17 @@ impl FullRouteBridge {
                     "failed to launch the full-route bridge",
                     false,
                 )
-            })
+            })?;
+        Ok(FullRouteProcess {
+            child,
+            _dns_lease: dns_lease,
+        })
     }
+}
+
+pub(crate) struct FullRouteProcess {
+    child: Child,
+    _dns_lease: SystemDnsLease,
 }
 
 fn arguments(socks_port: u16, server_addresses: &[SocketAddr]) -> Vec<String> {
@@ -115,7 +136,7 @@ pub(crate) async fn reserve_proxy_port(transport_id: &str) -> Result<u16, Client
 pub(crate) async fn wait_until_stable(
     engine: &mut Child,
     engine_name: &str,
-    bridge: &mut Child,
+    bridge: &mut FullRouteProcess,
     settle_time: Duration,
     transport_id: &str,
 ) -> Result<(), ClientError> {
@@ -139,6 +160,7 @@ pub(crate) async fn wait_until_stable(
             ));
         }
         if bridge
+            .child
             .try_wait()
             .map_err(|_| {
                 ClientError::transport(transport_id, "failed to inspect the route bridge", false)
@@ -163,7 +185,7 @@ pub(crate) async fn wait_until_three_stable(
     engine_name: &str,
     carrier: &mut Child,
     carrier_name: &str,
-    bridge: &mut Child,
+    bridge: &mut FullRouteProcess,
     settle_time: Duration,
     transport_id: &str,
 ) -> Result<(), ClientError> {
@@ -189,6 +211,7 @@ pub(crate) async fn wait_until_three_stable(
             }
         }
         if bridge
+            .child
             .try_wait()
             .map_err(|_| {
                 ClientError::transport(transport_id, "failed to inspect the route bridge", false)
@@ -245,11 +268,15 @@ pub(crate) async fn stop_child(child: &mut Child) {
     let _ = child.wait().await;
 }
 
+pub(crate) async fn stop_bridge(bridge: &mut FullRouteProcess) {
+    stop_child(&mut bridge.child).await;
+}
+
 pub(crate) fn supervise(
     transport_id: String,
     engine_name: &'static str,
     engine: Child,
-    bridge: Child,
+    bridge: FullRouteProcess,
     stop_timeout: Duration,
 ) -> Arc<dyn ActiveTunnel> {
     let (command_tx, command_rx) = mpsc::channel(1);
@@ -275,7 +302,7 @@ pub(crate) fn supervise_with_carrier(
     engine: Child,
     carrier_name: &'static str,
     carrier: Child,
-    bridge: Child,
+    bridge: FullRouteProcess,
     stop_timeout: Duration,
 ) -> Arc<dyn ActiveTunnel> {
     let (command_tx, command_rx) = mpsc::channel(1);
@@ -303,6 +330,7 @@ pub(crate) fn supervise_pair(
     engine: Child,
     carrier_name: &'static str,
     carrier: Child,
+    dns_lease: SystemDnsLease,
     stop_timeout: Duration,
 ) -> Arc<dyn ActiveTunnel> {
     let (command_tx, command_rx) = mpsc::channel(1);
@@ -312,6 +340,7 @@ pub(crate) fn supervise_pair(
         engine,
         carrier_name,
         carrier,
+        dns_lease,
         command_rx,
         status_tx,
     ));
@@ -330,20 +359,20 @@ enum ProcessCommand {
 async fn supervise_processes(
     engine_name: &'static str,
     mut engine: Child,
-    mut bridge: Child,
+    mut bridge: FullRouteProcess,
     mut commands: mpsc::Receiver<ProcessCommand>,
     status: watch::Sender<TunnelStatus>,
 ) {
     tokio::select! {
         result = engine.wait() => {
-            stop_child(&mut bridge).await;
+            stop_bridge(&mut bridge).await;
             let message = result.map_or_else(
                 |_| format!("failed to wait for {engine_name}"),
                 |exit| format!("{engine_name} exited unexpectedly ({exit})"),
             );
             status.send_replace(TunnelStatus::Failed(message));
         }
-        result = bridge.wait() => {
+        result = bridge.child.wait() => {
             stop_child(&mut engine).await;
             let message = result.map_or_else(
                 |_| "failed to wait for the full-route bridge".to_owned(),
@@ -352,7 +381,7 @@ async fn supervise_processes(
             status.send_replace(TunnelStatus::Failed(message));
         }
         _ = commands.recv() => {
-            stop_child(&mut bridge).await;
+            stop_bridge(&mut bridge).await;
             stop_child(&mut engine).await;
             status.send_replace(TunnelStatus::Stopped);
         }
@@ -364,13 +393,13 @@ async fn supervise_three_processes(
     mut engine: Child,
     carrier_name: &'static str,
     mut carrier: Child,
-    mut bridge: Child,
+    mut bridge: FullRouteProcess,
     mut commands: mpsc::Receiver<ProcessCommand>,
     status: watch::Sender<TunnelStatus>,
 ) {
     tokio::select! {
         result = engine.wait() => {
-            stop_child(&mut bridge).await;
+            stop_bridge(&mut bridge).await;
             stop_child(&mut carrier).await;
             let message = result.map_or_else(
                 |_| format!("failed to wait for {engine_name}"),
@@ -379,7 +408,7 @@ async fn supervise_three_processes(
             status.send_replace(TunnelStatus::Failed(message));
         }
         result = carrier.wait() => {
-            stop_child(&mut bridge).await;
+            stop_bridge(&mut bridge).await;
             stop_child(&mut engine).await;
             let message = result.map_or_else(
                 |_| format!("failed to wait for {carrier_name}"),
@@ -387,7 +416,7 @@ async fn supervise_three_processes(
             );
             status.send_replace(TunnelStatus::Failed(message));
         }
-        result = bridge.wait() => {
+        result = bridge.child.wait() => {
             stop_child(&mut carrier).await;
             stop_child(&mut engine).await;
             let message = result.map_or_else(
@@ -397,7 +426,7 @@ async fn supervise_three_processes(
             status.send_replace(TunnelStatus::Failed(message));
         }
         _ = commands.recv() => {
-            stop_child(&mut bridge).await;
+            stop_bridge(&mut bridge).await;
             stop_child(&mut carrier).await;
             stop_child(&mut engine).await;
             status.send_replace(TunnelStatus::Stopped);
@@ -410,6 +439,7 @@ async fn supervise_two_processes(
     mut engine: Child,
     carrier_name: &'static str,
     mut carrier: Child,
+    _dns_lease: SystemDnsLease,
     mut commands: mpsc::Receiver<ProcessCommand>,
     status: watch::Sender<TunnelStatus>,
 ) {

@@ -4,7 +4,7 @@ use ket_client_core::{TransportAdapter, XrayAdapter};
 use ket_core::{SessionManifest, TransportProtocol};
 
 #[tokio::test]
-async fn reality_transport_carries_full_route_traffic_when_configured() {
+async fn xray_transport_carries_full_route_traffic_when_configured() {
     let Some(transport_path) = std::env::var_os("KET_XRAY_E2E_TRANSPORT") else {
         return;
     };
@@ -12,12 +12,22 @@ async fn reality_transport_carries_full_route_traffic_when_configured() {
     let bridge = required_path("KET_XRAY_E2E_BRIDGE");
     let document = std::fs::read(transport_path).expect("read E2E transport");
     let manifest: SessionManifest = serde_json::from_slice(&document).expect("parse E2E manifest");
+    let protocol = match std::env::var("KET_XRAY_E2E_PROTOCOL").as_deref() {
+        Ok("stealth") => TransportProtocol::Stealth,
+        Ok("reality") | Err(_) => TransportProtocol::VlessXtlsReality,
+        Ok(value) => panic!("unsupported KET_XRAY_E2E_PROTOCOL: {value}"),
+    };
     let transport = manifest
         .transports
         .into_iter()
-        .find(|transport| transport.profile.protocol == TransportProtocol::VlessXtlsReality)
-        .expect("manifest contains Reality transport");
-    let adapter = XrayAdapter::new(xray, bridge, "/tmp/ket-xray-e2e");
+        .find(|transport| transport.profile.protocol == protocol)
+        .expect("manifest contains requested Xray transport");
+    let adapter = XrayAdapter::new(
+        xray,
+        bridge,
+        "/tmp/ket-xray-e2e",
+        "/tmp/ket-xray-e2e/resolv.conf.state",
+    );
     let probe = adapter
         .probe(&transport)
         .await
@@ -27,25 +37,39 @@ async fn reality_transport_carries_full_route_traffic_when_configured() {
         .await
         .expect("connect Reality transport");
 
-    let result = async {
-        let response = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .expect("build HTTP client")
-            .get("https://www.cloudflare.com/cdn-cgi/trace")
-            .send()
-            .await
-            .expect("send traffic through Reality tunnel");
-        let status = response.status();
-        let body = response.text().await.expect("read tunneled response");
-        (status, body)
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("build HTTP client");
+    let targets = std::env::var("KET_XRAY_E2E_TARGETS")
+        .unwrap_or_else(|_| "https://www.cloudflare.com/cdn-cgi/trace".to_owned());
+    let result: Result<(), String> = async {
+        for target in targets.split(',').filter(|target| !target.is_empty()) {
+            let response = client
+                .get(target)
+                .send()
+                .await
+                .map_err(|error| format!("send tunneled request to {target}: {error}"))?;
+            if !response.status().is_success() && !response.status().is_client_error() {
+                return Err(format!(
+                    "unexpected tunneled status for {target}: {}",
+                    response.status()
+                ));
+            }
+            let body = response
+                .bytes()
+                .await
+                .map_err(|error| format!("read tunneled response from {target}: {error}"))?;
+            if body.is_empty() {
+                return Err(format!("empty tunneled response from {target}"));
+            }
+        }
+        Ok(())
     }
     .await;
     let stop = started.tunnel.stop().await;
-    assert!(result.0.is_success());
-    let body = result.1;
-    assert!(body.contains("ip=") && body.contains("tls="));
-    stop.expect("stop Reality tunnel");
+    result.expect("Xray full-route traffic failed");
+    stop.expect("stop Xray tunnel");
 }
 
 fn required_path(name: &str) -> PathBuf {

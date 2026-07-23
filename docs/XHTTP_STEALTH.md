@@ -59,6 +59,8 @@ ingress:
   - service: http_status:404
 ```
 
+Xray packet-up permits up to 1 MiB in each upload POST by default. Ket's Nginx edge therefore overrides `client_max_body_size` to `2m` only for `/ket-xhttp-` while leaving the smaller control-plane limit in place. A custom intermediary must accept at least 1 MiB request bodies and must not buffer either direction.
+
 A dedicated hostname such as `stealth.example.com` is also valid; keep the path rule anyway so unrelated requests do not reach Xray. For a remotely managed tunnel, create the equivalent path-specific public-hostname route in the Cloudflare dashboard and ensure it takes precedence over the hostname-wide control route.
 
 Validate and test locally managed ingress before restarting `cloudflared`:
