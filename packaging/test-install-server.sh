@@ -15,7 +15,17 @@ direct=$(
 grep -Fq 'Mode: direct' <<<"$direct"
 grep -Fq 'TCP 80,443,9443,20000-20031' <<<"$direct"
 grep -Fq 'Location: automatic public-IP detection' <<<"$direct"
+grep -Fq 'First access-code concurrent-connection limit: 5' <<<"$direct"
 grep -Fq 'First access-code lifetime: 1440 minutes' <<<"$direct"
+
+small=$(
+  "$installer" \
+    --domain ket.example.com \
+    --email operator@example.com \
+    --max-sessions 1 \
+    --plan
+)
+grep -Fq 'First access-code concurrent-connection limit: 1' <<<"$small"
 
 cloudflare=$(
   "$installer" \

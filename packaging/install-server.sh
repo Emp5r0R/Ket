@@ -182,6 +182,7 @@ fi
 
 shadowsocks_start=20000
 shadowsocks_end=$((shadowsocks_start + max_sessions - 1))
+first_code_max_connections=$((max_sessions < 5 ? max_sessions : 5))
 
 if $plan; then
   printf 'Mode: %s\nControl hostname: %s\nRaw transport hostname: %s\n' "$mode" "$domain" "$direct_host"
@@ -193,6 +194,7 @@ if $plan; then
     printf 'Location: %s, %s (%s; %s,%s)\n' "$city" "$country_name" "$country_code" "$latitude" "$longitude"
   fi
   printf 'Install directory: %s\nGit ref: %s\n' "$install_dir" "$git_ref"
+  printf 'First access-code concurrent-connection limit: %s\n' "$first_code_max_connections"
   printf 'First access-code lifetime: %s minutes\n' "$first_code_valid_minutes"
   exit 0
 fi
@@ -406,8 +408,10 @@ $ready || { ./packaging/server/compose.sh ps; fail 'Ket did not become ready wit
 
 grant_file=$(mktemp /run/ket-first-grant.XXXXXX)
 trap 'rm -f "$grant_file"' EXIT
-jq -n --argjson valid_for_minutes "$first_code_valid_minutes" \
-  '{label:"First devices",max_connections:5,valid_for_minutes:$valid_for_minutes}' \
+jq -n \
+  --argjson max_connections "$first_code_max_connections" \
+  --argjson valid_for_minutes "$first_code_valid_minutes" \
+  '{label:"First devices",max_connections:$max_connections,valid_for_minutes:$valid_for_minutes}' \
   | curl --fail --silent --show-error \
       --request POST \
       --header "Authorization: Bearer $KET_ADMIN_TOKEN" \
@@ -422,6 +426,7 @@ trap - EXIT
 
 printf '\nKet is ready at https://%s\n' "$domain"
 printf 'First 32-character access code: %s\n' "$first_code"
+printf 'First access code concurrent-connection limit: %s\n' "$first_code_max_connections"
 printf 'First access code expires at Unix time: %s (%s minutes after creation)\n' \
   "$first_code_expires_at" "$first_code_valid_minutes"
 printf 'Store that code now; the server never stores its plaintext value.\n'
