@@ -10,7 +10,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use ket_client_core::{
     ActiveTunnel, Hysteria2Adapter, OpenVpnStunnelAdapter, Shadowsocks2022Adapter,
-    TransportAdapter, WireGuardTlsAdapter, XrayAdapter,
+    TransportAdapter, WireGuardTlsAdapter, XrayAdapter, recover_system_dns,
 };
 use ket_tunnel_protocol::{
     BrokerFault, BrokerRequest, BrokerResponse, BrokerToken, BrokerTunnelStatus, HandshakeProof,
@@ -39,6 +39,7 @@ pub struct ServiceConfig {
     pub wstunnel_path: PathBuf,
     pub bridge_path: PathBuf,
     pub runtime_dir: PathBuf,
+    pub dns_state_path: PathBuf,
     pub lease_ttl: Duration,
 }
 
@@ -78,6 +79,9 @@ impl ServiceConfig {
         let runtime_dir = std::env::var_os("KET_BROKER_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(default_runtime_dir);
+        let dns_state_path = std::env::var_os("KET_BROKER_DNS_STATE_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_dns_state_path);
         Ok(Self {
             address,
             token_file,
@@ -89,6 +93,7 @@ impl ServiceConfig {
             wstunnel_path,
             bridge_path,
             runtime_dir,
+            dns_state_path,
             lease_ttl: Duration::from_secs(12),
         })
     }
@@ -268,6 +273,7 @@ pub async fn serve_until(
     config: ServiceConfig,
     shutdown: impl Future<Output = ()> + Send,
 ) -> Result<()> {
+    restore_system_dns(&config)?;
     let token = Arc::new(
         BrokerToken::load(&config.token_file)
             .context("failed to load the tunnel broker installation token")?,
@@ -278,6 +284,7 @@ pub async fn serve_until(
             &config.hysteria_path,
             &config.bridge_path,
             &config.runtime_dir,
+            &config.dns_state_path,
         )));
     }
     if config.xray_path.is_file() && config.bridge_path.is_file() {
@@ -285,6 +292,7 @@ pub async fn serve_until(
             &config.xray_path,
             &config.bridge_path,
             &config.runtime_dir,
+            &config.dns_state_path,
         )));
     }
     if config.shadowsocks_path.is_file() && config.bridge_path.is_file() {
@@ -292,6 +300,7 @@ pub async fn serve_until(
             &config.shadowsocks_path,
             &config.bridge_path,
             &config.runtime_dir,
+            &config.dns_state_path,
         )));
     }
     if config.openvpn_path.is_file() && config.stunnel_path.is_file() {
@@ -299,6 +308,7 @@ pub async fn serve_until(
             &config.openvpn_path,
             &config.stunnel_path,
             &config.runtime_dir,
+            &config.dns_state_path,
         )));
     }
     if config.xray_path.is_file() && config.wstunnel_path.is_file() && config.bridge_path.is_file()
@@ -308,6 +318,7 @@ pub async fn serve_until(
             &config.wstunnel_path,
             &config.bridge_path,
             &config.runtime_dir,
+            &config.dns_state_path,
         )));
     }
     let engine_available = !adapters.is_empty();
@@ -538,6 +549,24 @@ fn default_runtime_dir() -> PathBuf {
 #[cfg(not(target_os = "windows"))]
 fn default_runtime_dir() -> PathBuf {
     PathBuf::from("/run/ket")
+}
+
+#[cfg(target_os = "windows")]
+fn default_dns_state_path() -> PathBuf {
+    std::env::var_os("PROGRAMDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+        .join("Ket")
+        .join("resolv.conf.state")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_dns_state_path() -> PathBuf {
+    PathBuf::from("/var/lib/ket/resolv.conf.state")
+}
+
+pub fn restore_system_dns(config: &ServiceConfig) -> Result<()> {
+    recover_system_dns(&config.dns_state_path).context("failed to restore system DNS")
 }
 
 pub fn initialize_token(path: &std::path::Path) -> Result<()> {

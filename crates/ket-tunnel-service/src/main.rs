@@ -1,6 +1,8 @@
 use anyhow::Result;
 #[cfg(unix)]
 use anyhow::bail;
+#[cfg(not(windows))]
+use ket_tunnel_service::restore_system_dns;
 use ket_tunnel_service::{ServiceConfig, initialize_token, serve_until};
 use tracing_subscriber::EnvFilter;
 
@@ -9,6 +11,12 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> Result<()> {
     initialize_logging();
     let config = ServiceConfig::from_env()?;
+    if restore_dns_requested() {
+        ensure_privileged()?;
+        restore_system_dns(&config)?;
+        println!("restored system DNS");
+        return Ok(());
+    }
     if init_token_requested() {
         ensure_privileged()?;
         initialize_token(&config.token_file)?;
@@ -39,6 +47,11 @@ fn main() -> Result<()> {
 
 fn init_token_requested() -> bool {
     std::env::args().any(|argument| argument == "--init-token")
+}
+
+#[cfg(not(windows))]
+fn restore_dns_requested() -> bool {
+    std::env::args().any(|argument| argument == "--restore-dns")
 }
 
 fn initialize_logging() {

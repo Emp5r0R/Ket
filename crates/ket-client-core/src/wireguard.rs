@@ -18,7 +18,7 @@ use tokio::{
 use crate::{
     ClientError, ProbeReport, StartedTunnel, TransportAdapter,
     full_route::{
-        FullRouteBridge, reserve_proxy_port, stop_child, supervise_with_carrier,
+        FullRouteBridge, reserve_proxy_port, stop_bridge, stop_child, supervise_with_carrier,
         wait_until_three_stable,
     },
     runtime::EphemeralConfig,
@@ -53,11 +53,12 @@ impl WireGuardTlsAdapter {
         wstunnel_binary_path: impl Into<PathBuf>,
         bridge_binary_path: impl Into<PathBuf>,
         runtime_dir: impl Into<PathBuf>,
+        dns_state_path: impl Into<PathBuf>,
     ) -> Self {
         Self {
             xray_binary_path: xray_binary_path.into(),
             wstunnel_binary_path: wstunnel_binary_path.into(),
-            bridge: FullRouteBridge::new(bridge_binary_path),
+            bridge: FullRouteBridge::new(bridge_binary_path, dns_state_path),
             runtime_dir: runtime_dir.into(),
             startup_timeout: Duration::from_secs(25),
             stop_timeout: Duration::from_secs(8),
@@ -235,7 +236,7 @@ impl TransportAdapter for WireGuardTlsAdapter {
         )
         .await
         {
-            stop_child(&mut bridge).await;
+            stop_bridge(&mut bridge).await;
             stop_child(&mut xray).await;
             stop_child(&mut carrier).await;
             return Err(error);

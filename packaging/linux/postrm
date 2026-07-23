@@ -8,6 +8,8 @@ fi
 if [ "${1:-}" = purge ]; then
   rm -f /etc/ket/tunnel.token
   rmdir /etc/ket 2>/dev/null || true
+  rm -f /var/lib/ket/resolv.conf.state
+  rmdir /var/lib/ket 2>/dev/null || true
 fi
 
 exit 0

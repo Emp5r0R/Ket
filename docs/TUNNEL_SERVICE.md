@@ -11,6 +11,7 @@ Ket keeps the desktop UI and control-plane client unprivileged. A small system s
 - Tunnel IDs, HMAC proofs, access codes, and transport credentials use redacted debug implementations. The broker token is never sent over the socket.
 - The selected engine receives an ephemeral `0600` configuration under the service runtime directory. Ket removes that file after engine and bridge readiness and disables Hysteria update checks.
 - SOCKS-backed transports expose only an unauthenticated loopback endpoint to the same supervised bridge. OpenVPN instead owns its native TUN behind a loopback-only stunnel carrier and a password-protected management endpoint. Both paths bypass every pre-resolved data-plane or CDN IP.
+- Before a Linux route is enabled, the broker durably snapshots the host resolver, points SOCKS-backed transports at `tun2proxy` virtual DNS or OpenVPN at its tunnel-routed public resolvers, and restores the snapshot after disconnect or process failure. Startup and `ExecStopPost` recover stale state after broker crashes; restoration does not overwrite resolver state that a network manager replaced while the tunnel was active.
 
 The token authenticates a local desktop installation; it does not elevate arbitrary requests. The service exposes a fixed command set and validates the server transport description before it starts Hysteria, Xray, `sslocal`, wstunnel, OpenVPN, or stunnel. Administrators and root remain trusted by the operating-system security model.
 
@@ -33,7 +34,7 @@ sudo packaging/linux/install-tunnel-service.sh \
 
 The installer creates the `ket` system group, preserves an existing valid token, grants the desktop user read-only token access, and installs a hardened `systemd` unit. The user must sign in again after the first installation so the new group membership applies.
 
-The service runs as root with a capability bounding set containing `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` for full-route setup. Its filesystem is read-only apart from `/run/ket` and the private `/etc/resolv.conf` mount used by `tun2proxy`; `/dev/net/tun` is the only allowed device.
+The service runs as root with a capability bounding set containing `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` for full-route setup. Its filesystem is read-only apart from `/run/ket`, the root-only `/var/lib/ket` resolver recovery state, and `/etc/resolv.conf`; `/dev/net/tun` is the only allowed device. Explicit host resolver ownership is required because the service's private mount namespace prevents `tun2proxy`'s own bind mount from reaching desktop applications.
 
 ## Windows installation
 
@@ -73,5 +74,6 @@ Development builds accept these process environment variables on both sides of t
 | `KET_XRAY_BINARY` | `/usr/libexec/ket/xray` or `%ProgramFiles%\Ket\xray.exe` | Managed Xray engine |
 | `KET_TUN2PROXY_BINARY` | `/usr/libexec/ket/tun2proxy` or `%ProgramFiles%\Ket\tun2proxy.exe` | Managed full-route bridge |
 | `KET_BROKER_RUNTIME_DIR` | `/run/ket` or `%ProgramData%\Ket\runtime` | Ephemeral engine configuration |
+| `KET_BROKER_DNS_STATE_PATH` | `/var/lib/ket/resolv.conf.state` or `%ProgramData%\Ket\resolv.conf.state` | Crash-recovery snapshot for Linux host DNS |
 
 `KET_BROKER_ADDRESS` is rejected unless it resolves to an explicit loopback IP literal.

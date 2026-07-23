@@ -77,6 +77,12 @@ done
 [[ -s ${scratch}/root/usr/share/doc/ket/THIRD_PARTY_NOTICES.md ]] || {
   fail "third-party notice is missing"
 }
+service_unit=${scratch}/root/usr/lib/systemd/system/ket-tunnel.service
+[[ -f ${service_unit} ]] || fail "systemd service unit is missing"
+grep -qx 'StateDirectory=ket' "${service_unit}" || fail "service lacks persistent DNS recovery state"
+grep -qx 'StateDirectoryMode=0700' "${service_unit}" || fail "DNS recovery state is not private"
+grep -qx 'ExecStopPost=/usr/libexec/ket/ket-tunnel-service --restore-dns' "${service_unit}" \
+  || fail "service lacks crash-safe DNS restoration"
 
 desktop_entry=${scratch}/root/usr/share/applications/Ket.desktop
 [[ -f ${desktop_entry} ]] || fail "desktop entry is missing"
@@ -103,6 +109,7 @@ verify_installation() {
   [[ $(stat -c '%U:%G:%a' /etc/ket) == root:ket:750 ]] || fail "invalid broker directory ownership or mode"
   [[ $(stat -c '%U:%G:%a' /etc/ket/tunnel.token) == root:ket:640 ]] || fail "invalid broker token ownership or mode"
   [[ $(stat -c '%s' /etc/ket/tunnel.token) -eq 32 ]] || fail "broker token must contain 32 bytes"
+  [[ $(stat -c '%U:%G:%a' /var/lib/ket) == root:root:700 ]] || fail "invalid DNS state directory ownership or mode"
   for payload in "${required_payloads[@]}"; do
     [[ $(stat -c '%U:%G:%a' "/${payload}") == root:root:755 ]] || fail "invalid payload ownership or mode: /${payload}"
   done
@@ -141,10 +148,12 @@ dpkg --remove "${package_name}"
 [[ ! -e /usr/bin/ket-desktop ]] || fail "desktop executable remains after removal"
 [[ ! -e /usr/libexec/ket/ket-tunnel-service ]] || fail "tunnel service remains after removal"
 [[ -f /etc/ket/tunnel.token ]] || fail "removal deleted persistent broker state"
+[[ -d /var/lib/ket ]] || fail "removal deleted persistent DNS recovery state"
 
 dpkg --purge "${package_name}"
 package_present=false
 [[ ! -e /etc/ket/tunnel.token ]] || fail "purge retained the broker token"
 [[ ! -d /etc/ket ]] || fail "purge retained the empty broker directory"
+[[ ! -d /var/lib/ket ]] || fail "purge retained the empty DNS state directory"
 
 printf 'Ket DEB %s lifecycle verification passed for %s.\n' "${package_version}" "${package_architecture}"
