@@ -26,7 +26,7 @@
   --neutral-soft: #e8ece9;
   --map: #f8faf8;
   --land: #dde3df;
-  --map-active: #74cdb7;
+  --map-active: #aeb8b2;
   --on-accent: #ffffff;
   --input-border: #ccd4cf;
   --input: #fbfcfb;
@@ -123,7 +123,7 @@ input:disabled {
   --neutral-soft: #262d29;
   --map: #141916;
   --land: #303934;
-  --map-active: #327c68;
+  --map-active: #58635d;
   --on-accent: #ffffff;
   --input-border: #3a443e;
   --input: #1d231f;
@@ -293,11 +293,28 @@ input:disabled {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  max-width: 190px;
+  max-width: 250px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 650;
   text-align: right;
+}
+
+.status-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.status-copy strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.status-copy small {
+  color: var(--subtle);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.25;
 }
 
 .header-status.is-restricted {
@@ -350,7 +367,6 @@ input:disabled {
 .connection-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
-  min-height: calc(100vh - 138px);
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -366,8 +382,8 @@ input:disabled {
 
 .world-map {
   display: grid;
+  aspect-ratio: 900 / 432;
   min-height: 310px;
-  flex: 1;
   place-items: center;
   overflow: hidden;
   padding: 4px 20px 0;
@@ -378,7 +394,6 @@ input:disabled {
   display: block;
   width: 100%;
   height: auto;
-  max-height: 460px;
 }
 
 .map-country {
@@ -392,23 +407,39 @@ input:disabled {
   fill: var(--map-active);
 }
 
+.map-viewport,
+.map-marker-detail {
+  transition: transform 720ms cubic-bezier(0.2, 0.78, 0.2, 1);
+}
+
 .world-map.is-connected .map-country.is-active {
   fill: var(--green);
 }
 
 .map-marker-ring {
-  fill: rgb(var(--accent-rgb) / 10%);
-  stroke: var(--green);
+  fill: var(--neutral-soft);
+  stroke: var(--subtle);
   stroke-width: 1.5;
   transform-box: fill-box;
   transform-origin: center;
+  opacity: 0.56;
+}
+
+.world-map.is-connected .map-marker-ring {
+  fill: rgb(var(--accent-rgb) / 10%);
+  stroke: var(--green);
+  opacity: 1;
   animation: marker-pulse 2.4s ease-out infinite;
 }
 
 .map-marker-dot {
-  fill: var(--green-dark);
+  fill: var(--subtle);
   stroke: var(--on-accent);
   stroke-width: 3;
+}
+
+.world-map.is-connected .map-marker-dot {
+  fill: var(--green-dark);
 }
 
 .map-marker text {
@@ -642,6 +673,26 @@ input:disabled {
   background: var(--coral-soft);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.inline-issue {
+  display: grid;
+  gap: 8px;
+}
+
+.inline-issue button {
+  width: max-content;
+  padding: 0;
+  border: 0;
+  color: var(--danger-strong);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.inline-issue button:hover {
+  text-decoration: underline;
 }
 
 .engine-warning {
@@ -1299,6 +1350,85 @@ input:disabled {
   height: 64px;
 }
 
+.diagnostics-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgb(7 12 10 / 58%);
+  animation: diagnostics-backdrop-in 160ms ease-out;
+}
+
+.diagnostics-dialog {
+  display: grid;
+  width: min(680px, 100%);
+  max-height: min(720px, calc(100vh - 44px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 28%);
+  animation: diagnostics-dialog-in 220ms cubic-bezier(0.2, 0.78, 0.2, 1);
+}
+
+.diagnostics-dialog header,
+.diagnostics-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.diagnostics-dialog header {
+  border-bottom: 1px solid var(--line);
+}
+
+.diagnostics-dialog h2 {
+  margin: 4px 0 0;
+  font-size: 18px;
+}
+
+.diagnostics-dialog > p {
+  margin: 0;
+  padding: 15px 20px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.diagnostics-dialog pre {
+  min-height: 180px;
+  margin: 0 20px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--secondary-ink);
+  background: var(--canvas);
+  font: 11px/1.55 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.diagnostics-dialog footer {
+  justify-content: flex-end;
+}
+
+@keyframes diagnostics-backdrop-in {
+  from { opacity: 0; }
+}
+
+@keyframes diagnostics-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
 @keyframes marker-pulse {
   from {
     opacity: 0.7;
@@ -1474,6 +1604,7 @@ input:disabled {
   }
 
   .world-map {
+    aspect-ratio: auto;
     min-height: 220px;
     padding: 0 6px;
   }

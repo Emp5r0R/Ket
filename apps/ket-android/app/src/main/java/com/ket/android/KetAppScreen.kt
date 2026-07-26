@@ -2,6 +2,7 @@ package com.ket.android
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -23,16 +24,19 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -49,12 +53,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
@@ -67,6 +74,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -187,6 +197,7 @@ internal fun KetApp(
     themeMode: KetThemeMode = KetThemeMode.System,
     onThemeModeChange: (KetThemeMode) -> Unit = {},
     onForgetProfile: () -> Unit = {},
+    diagnosticReport: String = "Ket Android connection diagnostics\nevents:\nnone\n",
     onConnect: (String, String, KetProtocol?) -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -206,6 +217,10 @@ internal fun KetApp(
                 initialAccessExpiresAtEpochSeconds != null,
         )
     }
+    var disconnectedVariant by rememberSaveable { mutableStateOf(0) }
+    var diagnosticsVisible by rememberSaveable { mutableStateOf(false) }
+    var diagnosticsCopied by rememberSaveable { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
     LaunchedEffect(snapshot.accessExpiresAtEpochSeconds) {
         snapshot.accessExpiresAtEpochSeconds?.let {
             accessExpiresAtEpochSeconds = it
@@ -247,6 +262,21 @@ internal fun KetApp(
         TunnelPhase.Reconnecting,
         TunnelPhase.Stopping,
     )
+    LaunchedEffect(connected, busy) {
+        disconnectedVariant = 0
+        if (!connected && !busy) {
+            while (true) {
+                delay(5_200)
+                disconnectedVariant = (disconnectedVariant + 1) % 2
+            }
+        }
+    }
+    LaunchedEffect(snapshot.phase, snapshot.message) {
+        if (snapshot.phase == TunnelPhase.Failed) {
+            diagnosticsCopied = false
+            diagnosticsVisible = true
+        }
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -268,22 +298,35 @@ internal fun KetApp(
                         .padding(horizontal = 20.dp, vertical = 12.dp)
                         .height(52.dp),
                 ) {
-                    if (busy && snapshot.phase != TunnelPhase.Stopping) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.width(10.dp))
+                    AnimatedContent(
+                        targetState = snapshot.phase,
+                        transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(100)) },
+                        label = "connection action",
+                    ) { phase ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                            if (busy && phase != TunnelPhase.Stopping) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Filled.PowerSettingsNew,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            Text(
+                                when {
+                                    phase == TunnelPhase.Stopping -> "Disconnecting"
+                                    phase == TunnelPhase.Connected -> "Disconnect"
+                                    phase in setOf(TunnelPhase.Enrolling, TunnelPhase.Connecting, TunnelPhase.Reconnecting) -> "Cancel"
+                                    else -> "Connect"
+                                },
+                            )
+                        }
                     }
-                    Text(
-                        when {
-                            snapshot.phase == TunnelPhase.Stopping -> "Disconnecting"
-                            connected -> "Disconnect"
-                            busy -> "Cancel"
-                            else -> "Connect"
-                        },
-                    )
                 }
             }
         },
@@ -302,7 +345,19 @@ internal fun KetApp(
                 PhaseStatus(snapshot.phase)
             }
             ThemeModeSelector(themeMode, onThemeModeChange)
-            Text(phaseHeadline(snapshot.phase), style = MaterialTheme.typography.headlineMedium)
+            AnimatedContent(
+                targetState = snapshot.phase,
+                transitionSpec = {
+                    (fadeIn(tween(220)) + scaleIn(tween(220), initialScale = 0.98f)) togetherWith
+                        fadeOut(tween(120))
+                },
+                label = "route headline",
+            ) { phase ->
+                Text(phaseHeadline(phase), style = MaterialTheme.typography.headlineMedium)
+            }
+            AnimatedVisibility(visible = !connected && !busy) {
+                SurveillanceNotice(disconnectedVariant)
+            }
             if (!connected && !busy) {
                 if (profileSaved) {
                     SavedProfile(
@@ -355,11 +410,118 @@ internal fun KetApp(
                 Telemetry(snapshot, node)
             }
             if (snapshot.message.isNotBlank()) {
+                if (snapshot.phase == TunnelPhase.Failed) {
+                    FailureNotice(
+                        message = snapshot.message,
+                        onOpenDiagnostics = { diagnosticsVisible = true },
+                    )
+                } else {
+                    Text(
+                        snapshot.message,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+    }
+    if (diagnosticsVisible) {
+        AlertDialog(
+            onDismissRequest = { diagnosticsVisible = false },
+            icon = { Icon(Icons.Filled.BugReport, contentDescription = null) },
+            title = { Text("Connection diagnostics") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Connection stages and cleanup results are included. Access codes and session credentials are excluded.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    SelectionContainer {
+                        Text(
+                            diagnosticReport,
+                            modifier = Modifier.heightIn(max = 340.dp).verticalScroll(rememberScrollState()),
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    clipboard.setText(AnnotatedString(diagnosticReport))
+                    diagnosticsCopied = true
+                }) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (diagnosticsCopied) "Copied" else "Copy logs")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { diagnosticsVisible = false }) { Text("Close") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SurveillanceNotice(variant: Int) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(6.dp),
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(11.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Visibility,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                AnimatedContent(
+                    targetState = variant,
+                    transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
+                    label = "surveillance notice",
+                ) { current ->
+                    Text(
+                        if (current == 0) "You are being watched" else "You are under surveillance",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
                 Text(
-                    snapshot.message,
-                    color = if (snapshot.phase == TunnelPhase.Failed) KetSaturated else MaterialTheme.colorScheme.onSurfaceVariant,
+                    "Connect to get liberated",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FailureNotice(message: String, onOpenDiagnostics: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                Text(message, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = onOpenDiagnostics) {
+                Icon(Icons.Filled.BugReport, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Troubleshoot")
             }
         }
     }
@@ -607,7 +769,7 @@ private fun PhaseStatus(phase: TunnelPhase) {
         Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             when (currentPhase) {
                 TunnelPhase.Connected -> Icon(
-                    Icons.Filled.CheckCircle,
+                    Icons.Filled.Shield,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
                     tint = tone,
@@ -655,7 +817,7 @@ internal fun phaseHeadline(phase: TunnelPhase): String = when (phase) {
     TunnelPhase.Reconnecting -> "Restoring route"
     TunnelPhase.Stopping -> "Closing route"
     TunnelPhase.Failed -> "Route needs attention"
-    TunnelPhase.Disconnected -> "Choose your node"
+    TunnelPhase.Disconnected -> "Connect to get liberated"
 }
 
 @Composable

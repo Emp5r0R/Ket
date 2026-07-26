@@ -14,7 +14,7 @@
 
 The desktop shell retains the server URL, device name, protocol preference, access code, and server-issued access expiry after enrollment. On launch it transparently enrolls a fresh short-lived session from that saved profile instead of asking for the same code again. A normal application exit gets a bounded shutdown window to stop the local tunnel and release that short-lived session. Temporary control, capacity, or network failures retain the profile and retry in the background; only authoritative expiry, revocation, or the explicit **Forget server** action clears it. The shell displays the remaining server-enforced access time and never extends it locally.
 
-Desktop appearance follows the operating-system color scheme by default and also supports persistent Light and Dark overrides. Connected state continues to use Ket's red liberated accent in either theme.
+Desktop appearance follows the operating-system color scheme by default and also supports persistent Light and Dark overrides. Connected state uses Ket's red liberated accent and focuses the map on the active server region; disconnected state returns to a neutral, non-pulsing world view. A failed connect or cleanup opens a troubleshooting dialog. Its bounded report includes version, platform, engine readiness, protocol preference, phase, active transport identifier, issue code, retryability, elapsed time, and cleanup outcome. It excludes server URLs, access codes, session tokens, transport credentials, rendered configurations, and raw engine output, and applies a second defensive redaction pass before copying.
 
 ## Desktop service adapters
 

@@ -43,6 +43,11 @@ export function WorldMap({ location, connected }: WorldMapProps) {
       marker: location ? projection([location.longitude, location.latitude]) : null,
     };
   }, [location]);
+  const zoom = connected && marker ? 2.05 : 1;
+  const viewportTransform = marker
+    ? `translate(${450 - marker[0] * zoom} ${216 - marker[1] * zoom}) scale(${zoom})`
+    : "translate(0 0) scale(1)";
+  const markerScale = 1 / zoom;
 
   return (
     <div className={`world-map ${connected ? "is-connected" : ""}`}>
@@ -55,24 +60,28 @@ export function WorldMap({ location, connected }: WorldMapProps) {
             : "Available server regions"
         }
       >
-        <g className="map-countries">
-          {paths.map((country) => (
-            <path
-              key={country.id}
-              d={country.path}
-              className={country.active ? "map-country is-active" : "map-country"}
-            />
-          ))}
-        </g>
-        {marker && location ? (
-          <g className="map-marker" transform={`translate(${marker[0]} ${marker[1]})`}>
-            <circle className="map-marker-ring" r="18" />
-            <circle className="map-marker-dot" r="5" />
-            <text x="14" y="-13">
-              {location.city ?? location.country_name}
-            </text>
+        <g className="map-viewport" transform={viewportTransform}>
+          <g className="map-countries">
+            {paths.map((country) => (
+              <path
+                key={country.id}
+                d={country.path}
+                className={country.active ? "map-country is-active" : "map-country"}
+              />
+            ))}
           </g>
-        ) : null}
+          {marker && location ? (
+            <g className="map-marker" transform={`translate(${marker[0]} ${marker[1]})`}>
+              <g className="map-marker-detail" transform={`scale(${markerScale})`}>
+                <circle className="map-marker-ring" r="18" />
+                <circle className="map-marker-dot" r="5" />
+                <text x="14" y="-13">
+                  {location.city ?? location.country_name}
+                </text>
+              </g>
+            </g>
+          ) : null}
+        </g>
       </svg>
     </div>
   );

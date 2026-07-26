@@ -47,6 +47,13 @@ class MainActivity : ComponentActivity() {
                 request.preferredProtocol,
             )
         } else if (request != null) {
+            AndroidConnectionDiagnostics.record(
+                stage = "vpn_permission",
+                outcome = DiagnosticOutcome.Failed,
+                phase = TunnelPhase.Failed,
+                protocol = request.preferredProtocol,
+                code = "vpn_permission_denied",
+            )
             KetTunnelRuntime.publish(
                 TunnelSnapshot(phase = TunnelPhase.Failed, message = "Android VPN permission was not granted"),
             )
@@ -97,6 +104,10 @@ class MainActivity : ComponentActivity() {
                     onForgetProfile = {
                         runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
                     },
+                    diagnosticReport = AndroidConnectionDiagnostics.report(
+                        BuildConfig.VERSION_NAME,
+                        tunnelState.value,
+                    ),
                     onConnect = ::requestConnection,
                     onDisconnect = { KetTunnelController.disconnect(this) },
                 )

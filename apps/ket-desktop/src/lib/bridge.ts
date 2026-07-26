@@ -103,8 +103,15 @@ function demoSnapshot(
 function mockBridge(): DesktopBridge {
   const query = new URLSearchParams(window.location.search);
   const demoPhase = query.get("demo");
+  const initialPhase: ClientSnapshot["phase"] = demoPhase === "connected"
+    ? "connected"
+    : demoPhase === "reconnecting"
+      ? "reconnecting"
+      : demoPhase === "enrolled"
+        ? "enrolled"
+        : "disconnected";
   let snapshot = demoSnapshot(
-    demoPhase === "connected" ? "connected" : demoPhase === "reconnecting" ? "reconnecting" : "disconnected",
+    initialPhase,
   );
   let configured = snapshot.node !== null;
   const listeners = new Set<SnapshotListener>();
@@ -124,7 +131,7 @@ function mockBridge(): DesktopBridge {
         status: "ready",
       },
       platform: "linux",
-      version: "0.1.0",
+      version: "0.2.0",
     }),
     enroll: async ({ serverUrl, accessCode }) => {
       if (!serverUrl.startsWith("https://") || !/^[A-Za-z0-9]{32}$/.test(accessCode)) {

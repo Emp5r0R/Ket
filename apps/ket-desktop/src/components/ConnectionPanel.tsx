@@ -28,6 +28,7 @@ interface ConnectionPanelProps {
   onLearnMore: (protocol: ProtocolId) => void;
   onConnect: () => Promise<void>;
   onStop: () => Promise<void>;
+  onOpenDiagnostics: () => void;
 }
 
 const workingPhases = new Set(["probing", "connecting", "reconnecting", "disconnecting"]);
@@ -42,6 +43,7 @@ export function ConnectionPanel({
   onLearnMore,
   onConnect,
   onStop,
+  onOpenDiagnostics,
 }: ConnectionPanelProps) {
   const node = snapshot.node;
   if (!node) return null;
@@ -127,7 +129,8 @@ export function ConnectionPanel({
       ) : null}
       {snapshot.issue ? (
         <div className="inline-issue" role="alert">
-          {snapshot.issue.message}
+          <span>{snapshot.issue.message}</span>
+          <button type="button" onClick={onOpenDiagnostics}>Troubleshoot</button>
         </div>
       ) : null}
 
@@ -143,7 +146,7 @@ export function ConnectionPanel({
           {cancellable ? <CircleStop size={30} /> : working ? <LoaderCircle className="spin" size={30} /> : <Power size={30} />}
         </button>
         <strong>{phaseLabel(snapshot.phase)}</strong>
-        <span>{connected ? "Restricted-network bypass active" : cancellable ? "Testing available routes" : disconnecting ? "Stopping tunnel" : "Tunnel is inactive"}</span>
+        <span>{connected ? "Protected route active" : cancellable ? "Testing available routes" : disconnecting ? "Stopping tunnel and restoring network" : snapshot.phase === "error" ? "Open diagnostics, then try again" : "You are under surveillance"}</span>
       </div>
     </aside>
   );
@@ -164,13 +167,13 @@ function phaseLabel(phase: ClientSnapshot["phase"]): string {
   const labels: Record<ClientSnapshot["phase"], string> = {
     disconnected: "You are being watched",
     enrolling: "Adding server",
-    enrolled: "Ready",
+    enrolled: "Connect to get liberated",
     probing: "Testing route",
     connecting: "Connecting",
     connected: "Liberated",
     reconnecting: "Reconnecting",
     disconnecting: "Disconnecting",
-    error: "Needs attention",
+    error: "Connection failed",
   };
   return labels[phase];
 }

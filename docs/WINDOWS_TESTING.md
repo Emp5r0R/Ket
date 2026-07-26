@@ -9,7 +9,7 @@ machine that can be restored or cleaned afterward. Never publish an access code,
 
 Download these files from the same GitHub prerelease into an empty directory:
 
-- `Ket_0.1.0_x64-setup.exe`
+- `Ket_0.2.0_x64-setup.exe`
 - `SHA256SUMS`
 
 An unsigned-publisher warning is expected for the current prerelease. A checksum
@@ -20,8 +20,8 @@ $Work = Join-Path $HOME "Downloads\Ket-test"
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 Set-Location $Work
 
-$Installer = Resolve-Path ".\Ket_0.1.0_x64-setup.exe"
-$Expected = (Select-String -Path ".\SHA256SUMS" -Pattern "Ket_0.1.0_x64-setup.exe").Line.Split()[0].ToLowerInvariant()
+$Installer = Resolve-Path ".\Ket_0.2.0_x64-setup.exe"
+$Expected = (Select-String -Path ".\SHA256SUMS" -Pattern "Ket_0.2.0_x64-setup.exe").Line.Split()[0].ToLowerInvariant()
 $Actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Installer).Hash.ToLowerInvariant()
 if ($Actual -ne $Expected) { throw "Ket installer checksum mismatch" }
 ```
@@ -85,15 +85,21 @@ $TokenHash = (Get-FileHash -Algorithm SHA256 "$DataDir\tunnel.token").Hash
 1. Launch Ket and add a current server access code.
 2. Confirm the profile survives an app restart and shows the server-provided
    remaining access time.
-3. While disconnected, confirm the header says **You are being watched** and the
-   viewing icon animates subtly.
+3. While disconnected, confirm the header alternates subtly between **You are
+   being watched** and **You are under surveillance**, always shows **Connect to
+   get liberated**, and keeps the full-world map marker neutral and non-pulsing.
 4. Connect with **Automatic**. The state must change to **Liberated**, the client
-   accent must change to Ket red, and traffic counters must increase.
+   accent must change to Ket red, the shield symbol must appear, the map must
+   focus on the server region, and traffic counters must increase.
 5. Open multiple HTTPS sites, resolve a new hostname, and download a file large
    enough to observe bidirectional counters.
 6. Confirm the public IP changed from `$BeforeIp` to the Ket server egress IP.
 7. Disconnect. The original public IP, DNS resolution, and normal routes must
-   return without restarting Windows.
+   return without restarting Windows, and the map must return to its world view.
+8. Force one connection failure, open **Troubleshoot**, copy the report, and
+   confirm it names the chosen protocol, failure stage/code, elapsed time, and
+   cleanup result without containing the access code, session token, or raw
+   engine configuration.
 
 Run these checks while connected and again immediately after disconnecting:
 
@@ -181,7 +187,7 @@ installer lifecycle can be run from an elevated PowerShell session:
 
 ```powershell
 $env:KET_PACKAGE_TEST_ALLOW_HOST_MUTATION = "1"
-$Installer = (Resolve-Path ".\Ket_0.1.0_x64-setup.exe").Path
+$Installer = (Resolve-Path ".\Ket_0.2.0_x64-setup.exe").Path
 .\packaging\verify-windows-nsis.ps1 -Installer $Installer
 ```
 

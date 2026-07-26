@@ -70,6 +70,7 @@ it("offers an enabled cancel action while reconnecting", () => {
       onLearnMore={vi.fn()}
       onConnect={vi.fn(async () => undefined)}
       onStop={onStop}
+      onOpenDiagnostics={vi.fn()}
     />,
   );
 

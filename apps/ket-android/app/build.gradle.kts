@@ -22,10 +22,10 @@ if (releaseSigningConfigured && !releaseSigningComplete) {
 val configuredVersionCode = System.getenv("KET_ANDROID_VERSION_CODE")?.let { value ->
     value.toIntOrNull()?.takeIf { it > 0 }
         ?: throw GradleException("KET_ANDROID_VERSION_CODE must be a positive integer")
-} ?: 1
+} ?: 2
 val configuredVersionName = System.getenv("KET_ANDROID_VERSION_NAME")
     ?.takeIf { it.isNotBlank() }
-    ?: "0.1.0"
+    ?: "0.2.0"
 
 android { namespace = "com.ket.android"; compileSdk = 34
     ndkVersion = "27.3.13750724"
@@ -59,7 +59,10 @@ android { namespace = "com.ket.android"; compileSdk = 34
         named("test") { resources.srcDir("src/main/res/raw") }
     }
     packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libsslocal.so", "**/libxray.so", "**/libwstunnel.so", "**/libopenvpn.so", "**/libovpnexec.so") } }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.11" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }

@@ -3,6 +3,7 @@ package com.ket.android
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -24,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
@@ -49,6 +51,11 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
     )
     val accent = MaterialTheme.colorScheme.primary
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val zoom by animateFloatAsState(
+        targetValue = if (connected && location != null) 2.05f else 1f,
+        animationSpec = tween(720),
+        label = "map region zoom",
+    )
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val mapBackground by animateColorAsState(
         targetValue = when {
@@ -60,13 +67,18 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
         animationSpec = tween(360),
         label = "map background",
     )
-    val mapGrid = if (dark) Color(0xFF1A2A2F) else Color(0xFFDDE5E0)
-    val mapLand = when {
-        dark -> Color(0xFF29474B)
-        connected -> Color(0xFFE5B9BF)
-        else -> Color(0xFFCEDAD3)
+    val mapGrid = when {
+        dark && connected -> Color(0xFF3A242A)
+        dark -> Color(0xFF262E30)
+        else -> Color(0xFFDDE5E0)
     }
-    val mapBorder = if (dark) Color(0xFF3A5D61) else Color(0xFFFFFFFF)
+    val mapLand = when {
+        dark && connected -> Color(0xFF543139)
+        dark -> Color(0xFF343B3D)
+        connected -> Color(0xFFE5B9BF)
+        else -> Color(0xFFD3D8D5)
+    }
+    val mapBorder = if (dark) Color(0xFF4B5355) else Color(0xFFFFFFFF)
     Box(
         Modifier
             .fillMaxWidth()
@@ -104,6 +116,23 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
                             }
                         }
                     }
+                    val marker = location?.let {
+                        WorldMapProjection.project(
+                            it.longitude,
+                            it.latitude,
+                            size.width,
+                            size.height,
+                            horizontalPadding,
+                            verticalPadding,
+                        )
+                    }
+                    val progress = ((zoom - 1f) / 1.05f).coerceIn(0f, 1f)
+                    val markerX = marker?.x ?: size.width / 2f
+                    val markerY = marker?.y ?: size.height / 2f
+                    val focusedX = markerX + (size.width / 2f - markerX) * progress
+                    val focusedY = markerY + (size.height / 2f - markerY) * progress
+                    val translateX = focusedX - markerX * zoom
+                    val translateY = focusedY - markerY * zoom
                     onDrawBehind {
                         for (x in 0..6) {
                             val position = size.width * x / 6f
@@ -124,12 +153,17 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
                             )
                         }
                         if (geometry != null) {
-                            drawPath(landPath, mapLand)
-                            drawPath(
-                                landPath,
-                                mapBorder,
-                                style = Stroke(0.6.dp.toPx()),
-                            )
+                            withTransform({
+                                translate(translateX, translateY)
+                                scale(zoom, zoom, Offset.Zero)
+                            }) {
+                                drawPath(landPath, mapLand)
+                                drawPath(
+                                    landPath,
+                                    mapBorder,
+                                    style = Stroke(0.6.dp.toPx() / zoom),
+                                )
+                            }
                         }
                     }
                 },
@@ -145,22 +179,27 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
                     5.dp.toPx(),
                 )
                 val center = Offset(marker.x, marker.y)
+                val progress = ((zoom - 1f) / 1.05f).coerceIn(0f, 1f)
+                val focusedCenter = Offset(
+                    center.x + (size.width / 2f - center.x) * progress,
+                    center.y + (size.height / 2f - center.y) * progress,
+                )
                 if (connected) {
                     drawCircle(
                         accent.copy(alpha = 0.16f * (1f - pulse.value / 2f)),
                         radius = (10 + pulse.value * 8).dp.toPx(),
-                        center = center,
+                        center = focusedCenter,
                     )
                 }
                 drawCircle(
                     if (connected) accent else muted,
                     radius = 4.5.dp.toPx(),
-                    center = center,
+                    center = focusedCenter,
                 )
                 drawCircle(
                     Color.White.copy(alpha = 0.85f),
                     radius = 1.5.dp.toPx(),
-                    center = center,
+                    center = focusedCenter,
                 )
             }
         }

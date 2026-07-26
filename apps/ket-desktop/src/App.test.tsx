@@ -150,7 +150,7 @@ describe("Ket desktop shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Connection" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect tunnel" }));
-    expect(await screen.findByText("Restricted-network bypass active")).toBeInTheDocument();
+    expect(await screen.findByText("Protected route active")).toBeInTheDocument();
     expect(screen.getAllByText("HTTPS Stealth").length).toBeGreaterThan(0);
   });
 });

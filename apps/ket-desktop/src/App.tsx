@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Binoculars, LockOpen, MapPin } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Binoculars, MapPin, ShieldCheck } from "lucide-react";
 import { bridge } from "./lib/bridge";
 import type {
   ClientIssue,
@@ -16,6 +16,12 @@ import { SettingsView } from "./components/SettingsView";
 import { ProtocolsView } from "./components/ProtocolsView";
 import { StatStrip } from "./components/StatStrip";
 import { WorldMap } from "./components/WorldMap";
+import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
+import {
+  appendDiagnostic,
+  formatDiagnosticReport,
+  type ConnectionDiagnostic,
+} from "./lib/diagnostics";
 import {
   isProtocolId,
   type ProtocolId,
@@ -116,7 +122,7 @@ const initialState: DesktopState = {
     status: "unavailable",
   },
   platform: "desktop",
-  version: "0.1.0",
+  version: "0.2.0",
 };
 
 export default function App() {
@@ -142,6 +148,15 @@ export default function App() {
   const [systemDark, setSystemDark] = useState(
     () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
+  const [diagnostics, setDiagnostics] = useState<ConnectionDiagnostic[]>([]);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [surveillanceVariant, setSurveillanceVariant] = useState(0);
+  const lastObservedIssue = useRef("");
+  const protocolPreferenceRef = useRef(protocolPreference);
+
+  const recordDiagnostic = (diagnostic: ConnectionDiagnostic) => {
+    setDiagnostics((current) => appendDiagnostic(current, diagnostic));
+  };
 
   const applySnapshot = (snapshot: ClientSnapshot) => {
     setState((current) => ({ ...current, snapshot, configured: snapshot.node !== null || current.configured }));
@@ -161,6 +176,29 @@ export default function App() {
         if (current.at(-1)?.at === point.at) return current;
         return [...current, point].slice(-24);
       });
+    }
+    if (snapshot.issue !== null) {
+      const issueKey = [
+        snapshot.updated_at_epoch_seconds,
+        snapshot.phase,
+        snapshot.active_transport?.id ?? "none",
+        snapshot.issue.code,
+        snapshot.issue.message,
+      ].join(":");
+      if (issueKey !== lastObservedIssue.current) {
+        lastObservedIssue.current = issueKey;
+        recordDiagnostic({
+          recordedAtEpochMilliseconds: Date.now(),
+          operation: snapshot.phase === "reconnecting" ? "reconnect" : "connection_state",
+          outcome: "observed",
+          phase: snapshot.phase,
+          protocolPreference: protocolPreferenceRef.current,
+          activeTransportId: snapshot.active_transport?.id ?? null,
+          elapsedMilliseconds: null,
+          issue: snapshot.issue,
+        });
+        if (snapshot.phase === "error") setDiagnosticsOpen(true);
+      }
     }
   };
 
@@ -286,6 +324,21 @@ export default function App() {
   }, [accessExpiresAt, deviceName, loading, savedAccessCode, serverUrl, state.configured]);
 
   useEffect(() => {
+    protocolPreferenceRef.current = protocolPreference;
+  }, [protocolPreference]);
+
+  useEffect(() => {
+    if (state.snapshot.phase === "connected") {
+      setSurveillanceVariant(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setSurveillanceVariant((current) => (current + 1) % 2);
+    }, 5_200);
+    return () => window.clearInterval(timer);
+  }, [state.snapshot.phase]);
+
+  useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const update = (event: MediaQueryListEvent) => setSystemDark(event.matches);
@@ -359,13 +412,51 @@ export default function App() {
     }
   }, [protocolPreference, state.snapshot.available_transports]);
 
-  const run = async (operation: () => Promise<ClientSnapshot>) => {
+  const run = async (
+    operationName: "enroll" | "connect" | "stop" | "forget",
+    operation: () => Promise<ClientSnapshot>,
+    preferredProtocol: ProtocolPreference = protocolPreferenceRef.current,
+  ) => {
+    const startedAt = performance.now();
     setBusy(true);
     setLocalIssue(null);
+    recordDiagnostic({
+      recordedAtEpochMilliseconds: Date.now(),
+      operation: operationName,
+      outcome: "started",
+      phase: state.snapshot.phase,
+      protocolPreference: preferredProtocol,
+      activeTransportId: state.snapshot.active_transport?.id ?? null,
+      elapsedMilliseconds: null,
+      issue: null,
+    });
     try {
-      applySnapshot(await operation());
+      const snapshot = await operation();
+      applySnapshot(snapshot);
+      recordDiagnostic({
+        recordedAtEpochMilliseconds: Date.now(),
+        operation: operationName,
+        outcome: "succeeded",
+        phase: snapshot.phase,
+        protocolPreference: preferredProtocol,
+        activeTransportId: snapshot.active_transport?.id ?? null,
+        elapsedMilliseconds: performance.now() - startedAt,
+        issue: null,
+      });
     } catch (error) {
-      setLocalIssue(normalizeIssue(error));
+      const issue = normalizeIssue(error);
+      setLocalIssue(issue);
+      recordDiagnostic({
+        recordedAtEpochMilliseconds: Date.now(),
+        operation: operationName,
+        outcome: "failed",
+        phase: state.snapshot.phase,
+        protocolPreference: preferredProtocol,
+        activeTransportId: state.snapshot.active_transport?.id ?? null,
+        elapsedMilliseconds: performance.now() - startedAt,
+        issue,
+      });
+      if (operationName !== "enroll") setDiagnosticsOpen(true);
     } finally {
       setBusy(false);
     }
@@ -374,7 +465,7 @@ export default function App() {
   const enroll = async (input: EnrollmentInput) => {
     setServerUrl(input.serverUrl.trim());
     setDeviceName(input.deviceName.trim());
-    await run(async () => {
+    await run("enroll", async () => {
       const snapshot = await bridge.enroll(input);
       localStorage.setItem(SERVER_KEY, input.serverUrl.trim());
       localStorage.setItem(DEVICE_KEY, input.deviceName.trim());
@@ -398,7 +489,7 @@ export default function App() {
   };
 
   const forget = async () => {
-    await run(async () => {
+    await run("forget", async () => {
       const snapshot = await bridge.forget();
       setState((current) => ({ ...current, configured: false }));
       clearSavedEnrollment();
@@ -445,6 +536,18 @@ export default function App() {
     if (!location) return "Choose your node";
     return location.city ? `${location.city}, ${location.country_name}` : location.country_name;
   }, [state.snapshot.node]);
+  const disconnectedStatus = surveillanceVariant === 0
+    ? "You are being watched"
+    : "You are under surveillance";
+  const diagnosticReport = useMemo(() => formatDiagnosticReport({
+    platform: state.platform,
+    version: state.version,
+    engineStatus: state.engine.status,
+    currentPhase: state.snapshot.phase,
+    nodeId: state.snapshot.node?.node_id ?? null,
+    protocolPreference,
+    activeTransportId: state.snapshot.active_transport?.id ?? null,
+  }, diagnostics), [diagnostics, protocolPreference, state]);
 
   if (loading) {
     return (
@@ -472,9 +575,12 @@ export default function App() {
                 aria-live="polite"
               >
                 <span className="status-symbol" aria-hidden="true">
-                  {connected ? <LockOpen size={18} /> : <Binoculars size={18} />}
+                  {connected ? <ShieldCheck size={18} /> : <Binoculars size={18} />}
                 </span>
-                <span>{connected ? "Liberated" : "You are being watched"}</span>
+                <span className="status-copy">
+                  <strong>{connected ? "Liberated" : disconnectedStatus}</strong>
+                  {!connected ? <small>Connect to get liberated</small> : null}
+                </span>
               </div>
             </header>
             <div className="connection-layout">
@@ -498,10 +604,13 @@ export default function App() {
                   preference={protocolPreference}
                   onPreferenceChange={chooseProtocol}
                   onLearnMore={openProtocolGuide}
-                  onConnect={() => run(() => bridge.connect(
-                    protocolPreference === "auto" ? null : protocolPreference,
-                  ))}
-                  onStop={() => run(() => bridge.stop())}
+                  onConnect={() => run(
+                    "connect",
+                    () => bridge.connect(protocolPreference === "auto" ? null : protocolPreference),
+                    protocolPreference,
+                  )}
+                  onStop={() => run("stop", () => bridge.stop(), protocolPreference)}
+                  onOpenDiagnostics={() => setDiagnosticsOpen(true)}
                 />
               ) : (
                 <EnrollmentPanel
@@ -537,6 +646,11 @@ export default function App() {
           />
         ) : null}
       </main>
+      <DiagnosticsDialog
+        open={diagnosticsOpen}
+        report={diagnosticReport}
+        onClose={() => setDiagnosticsOpen(false)}
+      />
     </div>
   );
 }

@@ -8,7 +8,7 @@ class KetAppStatusTest {
     fun `connection copy names the watched and liberated states`() {
         assertEquals("You are being watched", phaseStatusLabel(TunnelPhase.Disconnected))
         assertEquals("Liberated", phaseStatusLabel(TunnelPhase.Connected))
-        assertEquals("Choose your node", phaseHeadline(TunnelPhase.Disconnected))
+        assertEquals("Connect to get liberated", phaseHeadline(TunnelPhase.Disconnected))
         assertEquals("Liberated route", phaseHeadline(TunnelPhase.Connected))
     }
 
