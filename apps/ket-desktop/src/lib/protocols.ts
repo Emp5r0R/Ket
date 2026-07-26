@@ -22,7 +22,7 @@ export const protocolCatalog: ProtocolInfo[] = [
   {
     id: "stealth",
     label: "HTTPS Stealth",
-    shortInstruction: "Use on strict networks that still allow normal HTTPS. Ket falls back if this path is unavailable.",
+    shortInstruction: "Use on strict networks that still allow normal HTTPS. Manual selection stays locked to this protocol.",
     bestFor: "HTTP-only networks, filtered Wi-Fi, and Cloudflare-carried deployments.",
     operation: "Carries VLESS through XHTTP packet-up inside certificate-verified browser-shaped TLS.",
     steps: ["Select HTTPS Stealth.", "Connect normally.", "Use Auto if the network blocks the server's CDN path."],
@@ -31,7 +31,7 @@ export const protocolCatalog: ProtocolInfo[] = [
   {
     id: "wire_guard",
     label: "WireGuard TLS",
-    shortInstruction: "Use for a fast tunnel that resembles WebSocket HTTPS traffic. Ket keeps automatic fallback enabled.",
+    shortInstruction: "Use for a fast tunnel that resembles WebSocket HTTPS traffic. Manual selection stays locked to this protocol.",
     bestFor: "Networks that allow WebSockets but identify or block native VPN handshakes.",
     operation: "Carries WireGuard packets through a certificate-verified WebSocket/TLS transport.",
     steps: ["Select WireGuard TLS.", "Connect and allow the initial route test.", "Switch to HTTPS Stealth if WebSockets are blocked."],

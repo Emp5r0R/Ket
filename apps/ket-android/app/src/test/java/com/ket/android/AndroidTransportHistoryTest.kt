@@ -35,21 +35,30 @@ class AndroidTransportHistoryTest {
     }
 
     @Test
-    fun `preferred protocol leads while cooldown still permits healthy fallback`() {
+    fun `explicit protocol selection excludes every other protocol`() {
         val history = AndroidTransportHistory(baseCooldownMillis = 1_000, maximumCooldownMillis = 8_000)
         val primary = TestTransport("reality", priority = 1, protocol = KetProtocol.Reality)
-        val preferred = TestTransport("hysteria", priority = 10, protocol = KetProtocol.Hysteria2)
+        val preferred = TestTransport("hysteria-primary", priority = 10, protocol = KetProtocol.Hysteria2)
+        val preferredBackup = TestTransport("hysteria-secondary", priority = 20, protocol = KetProtocol.Hysteria2)
 
         assertEquals(
-            listOf("hysteria", "reality"),
-            history.rank(listOf(primary, preferred), 0, KetProtocol.Hysteria2).map { it.id },
+            listOf("hysteria-primary", "hysteria-secondary"),
+            history.rank(listOf(primary, preferredBackup, preferred), 0, KetProtocol.Hysteria2).map { it.id },
         )
 
         history.recordFailure(preferred.id, nowMillis = 0)
         assertEquals(
-            listOf("reality", "hysteria"),
-            history.rank(listOf(primary, preferred), 500, KetProtocol.Hysteria2).map { it.id },
+            listOf("hysteria-secondary", "hysteria-primary"),
+            history.rank(listOf(primary, preferred, preferredBackup), 500, KetProtocol.Hysteria2).map { it.id },
         )
+    }
+
+    @Test
+    fun `explicit unavailable protocol returns no candidates`() {
+        val history = AndroidTransportHistory()
+        val reality = TestTransport("reality", priority = 1, protocol = KetProtocol.Reality)
+
+        assertEquals(emptyList<AndroidTransport>(), history.rank(listOf(reality), 0, KetProtocol.Stealth))
     }
 
     @Test

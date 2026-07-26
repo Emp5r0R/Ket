@@ -746,11 +746,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_protocol_preference_is_visible_and_keeps_fallback_available() {
+    async fn explicit_protocol_selection_never_falls_back_to_another_protocol() {
         let mut manifest = test_manifest();
         manifest.transports = vec![
             test_reality_transport("reality-primary", 1),
-            test_transport("hy2-preferred", 2),
+            test_transport("hy2-primary", 2),
+            test_transport("hy2-secondary", 3),
         ];
         let api = Arc::new(MockApi::new(manifest));
         let adapter = Arc::new(RecoveryAdapter::new());
@@ -767,8 +768,9 @@ mod tests {
             .enroll("A2345678901234567890123456789012")
             .await
             .unwrap();
-        assert_eq!(enrolled.available_transports.len(), 2);
+        assert_eq!(enrolled.available_transports.len(), 3);
 
+        adapter.set_blocked(["hy2-primary"]);
         let connected = client
             .connect_with_protocol(Some(TransportProtocol::Hysteria2))
             .await
@@ -782,22 +784,23 @@ mod tests {
                 .active_transport
                 .as_ref()
                 .map(|item| item.id.as_str()),
-            Some("hy2-preferred")
+            Some("hy2-secondary")
         );
 
-        client.stop_tunnel().await.unwrap();
-        adapter.set_blocked(["hy2-preferred"]);
-        let fallback = client
-            .connect_with_protocol(Some(TransportProtocol::Hysteria2))
-            .await
-            .unwrap();
+        adapter.set_blocked(["hy2-primary", "hy2-secondary"]);
+        adapter.fail("hy2-secondary");
+        let error = client.maintain_once().await.unwrap_err();
+        assert!(matches!(error, ClientError::Transport { .. }));
+        let failed = client.snapshot();
         assert_eq!(
-            fallback
-                .active_transport
-                .as_ref()
-                .map(|item| item.id.as_str()),
-            Some("reality-primary")
+            failed.preferred_protocol,
+            Some(TransportProtocol::Hysteria2)
         );
+        assert_eq!(
+            failed.active_transport.as_ref().map(|item| &item.protocol),
+            Some(&TransportProtocol::Hysteria2)
+        );
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

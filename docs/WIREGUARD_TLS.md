@@ -117,7 +117,7 @@ Image and configuration validation do not prove the public path. After deploymen
 2. The client selects `WireGuard TLS`, completes its HTTPS path proof, and carries TCP plus UDP traffic.
 3. `/v1/sessions/current` reports nonzero WireGuard sent and received bytes and a recent online handshake.
 4. Releasing the session removes the peer; reconnecting with the old profile fails.
-5. A wrong hostname, untrusted certificate, wrong WebSocket path, or blocked origin fails closed and falls back without disabling TLS verification.
+5. A wrong hostname, untrusted certificate, wrong WebSocket path, or blocked origin fails closed without disabling TLS verification. Automatic mode may try another protocol; explicit WireGuard TLS never does.
 6. The same flow succeeds from the restricted Wi-Fi and cellular networks that matter for the deployment.
 
 Ket's local checks cover strict profile parsing, deterministic/redacted credentials, Xray configuration validation, wstunnel UDP forwarding, Android packaging, Docker image construction, and manager API parsing. A kernel WireGuard peer lifecycle test and restricted-network packet-flow test remain deployment gates when the build host cannot create WireGuard interfaces.

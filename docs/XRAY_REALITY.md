@@ -16,7 +16,7 @@ TCP `443` can coexist with Hysteria2 UDP `443` on the same server and hostname b
 
 Linux and Windows packages bundle checksum-pinned Xray and `tun2proxy` executables. The privileged Ket service renders a strict loopback SOCKS configuration, proves a REALITY handshake through that endpoint, then starts the full-route bridge while excluding every resolved server IP.
 
-Android bundles official Xray payloads for `arm64-v8a` and `x86_64`. Its `VpnService` proves the SOCKS/REALITY path before establishing routes, excludes the selected server address, and falls back to a valid Hysteria2 profile when Xray is unavailable or startup fails. The two 32-bit Android ABIs remain Hysteria-only because upstream does not publish corresponding Xray Android archives.
+Android bundles official Xray payloads for `arm64-v8a` and `x86_64`. Its `VpnService` proves the SOCKS/REALITY path before establishing routes and excludes the selected server address. Automatic mode can fall back to another supported profile when Xray is unavailable or startup fails; explicit VLESS + REALITY remains locked to REALITY profiles. The two 32-bit Android ABIs remain Hysteria-only because upstream does not publish corresponding Xray Android archives.
 
 ## Generate secrets
 

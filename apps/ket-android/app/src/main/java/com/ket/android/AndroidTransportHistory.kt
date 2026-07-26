@@ -24,16 +24,17 @@ internal class AndroidTransportHistory(
         nowMillis: Long,
         preferredProtocol: KetProtocol? = null,
     ): List<AndroidTransport> =
-        transports.sortedWith(
-            compareBy<AndroidTransport>(
-                { if (records[it.id]?.cooldownUntilMillis?.let { until -> until > nowMillis } == true) 1 else 0 },
-                { if (preferredProtocol == null || it.protocol == preferredProtocol) 0 else 1 },
-                { records[it.id]?.consecutiveFailures ?: 0 },
-                AndroidTransport::priority,
-                { records[it.id]?.lastLatencyMillis ?: DEFAULT_LATENCY_MILLIS },
-                AndroidTransport::id,
-            ),
-        )
+        transports
+            .filter { preferredProtocol == null || it.protocol == preferredProtocol }
+            .sortedWith(
+                compareBy<AndroidTransport>(
+                    { if (records[it.id]?.cooldownUntilMillis?.let { until -> until > nowMillis } == true) 1 else 0 },
+                    { records[it.id]?.consecutiveFailures ?: 0 },
+                    AndroidTransport::priority,
+                    { records[it.id]?.lastLatencyMillis ?: DEFAULT_LATENCY_MILLIS },
+                    AndroidTransport::id,
+                ),
+            )
 
     fun recordSuccess(id: String, latencyMillis: Long) {
         records[id] = Record(

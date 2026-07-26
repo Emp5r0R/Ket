@@ -86,10 +86,14 @@ impl TransportSelector {
         now: u64,
         preferred_protocol: Option<&TransportProtocol>,
     ) -> Vec<&'a SessionTransport> {
-        let preferred_protocol = preferred_protocol.or(self.policy.preferred_protocol.as_ref());
+        let explicit_protocol = preferred_protocol;
+        let ranking_preference = explicit_protocol.or(self.policy.preferred_protocol.as_ref());
         let mut candidates: Vec<_> = transports
             .iter()
             .filter(|transport| adapters.iter().any(|adapter| adapter.supports(transport)))
+            .filter(|transport| {
+                explicit_protocol.is_none_or(|protocol| protocol == &transport.profile.protocol)
+            })
             .collect();
         candidates.sort_by_key(|transport| {
             let record = history.records.get(&transport.profile.id);
@@ -100,7 +104,7 @@ impl TransportSelector {
                 .and_then(|record| record.last_latency_ms)
                 .unwrap_or(500);
             let preferred =
-                preferred_protocol.is_some_and(|protocol| protocol == &transport.profile.protocol);
+                ranking_preference.is_some_and(|protocol| protocol == &transport.profile.protocol);
             (
                 cooling_down,
                 !preferred,

@@ -12,7 +12,7 @@ enum class KetProtocol(
     Stealth(
         "stealth",
         "HTTPS Stealth",
-        "Use on strict networks that still allow normal HTTPS. Ket falls back if this path is unavailable.",
+        "Use on strict networks that still allow normal HTTPS. Manual selection stays locked to this protocol.",
         "HTTP-only networks, filtered Wi-Fi, and Cloudflare-carried servers.",
         "Carries VLESS through XHTTP packet-up inside certificate-verified browser-shaped TLS.",
         listOf("Select HTTPS Stealth.", "Connect normally.", "Use Auto if the server CDN path is blocked."),
@@ -21,7 +21,7 @@ enum class KetProtocol(
     WireGuardTls(
         "wire_guard",
         "WireGuard TLS",
-        "Use for a fast tunnel that resembles WebSocket HTTPS traffic. Automatic fallback remains active.",
+        "Use for a fast tunnel that resembles WebSocket HTTPS traffic. Manual selection stays locked to this protocol.",
         "Networks that allow WebSockets but identify native VPN handshakes.",
         "Carries WireGuard packets through a certificate-verified WebSocket/TLS transport.",
         listOf("Select WireGuard TLS.", "Connect and allow the initial route test.", "Use HTTPS Stealth if WebSockets are blocked."),

@@ -80,7 +80,7 @@ Do not put Cloudflare Access browser authentication in front of the XHTTP path b
 - The origin has no TLS because it is reachable only through host loopback from the authenticated `cloudflared` process. Exposing port `8445` would violate this boundary.
 - Each lease receives a deterministic scoped UUID. Session release, expiry, and grant revocation remove it from every configured Xray inbound.
 - Multi-inbound provisioning rolls back already-added users if any later inbound fails. Startup reconciliation fails readiness until all configured inbound APIs are healthy.
-- XHTTP does not guarantee censorship bypass. Ket ranks it first when configured, then falls back through REALITY and Hysteria2 according to observed failures and cooldown.
+- XHTTP does not guarantee censorship bypass. Automatic mode ranks it with the other server routes and may fall back according to observed failures and cooldown. Explicit HTTPS Stealth retries only Stealth profiles and reports failure rather than changing protocol.
 
 The disposable local traffic harness uses the pinned Xray server and client, a one-run CA, and stunnel as the HTTPS intermediary. It validates the Ket-issued profile, rejects a wrong UUID, carries certificate-verified HTTPS through XHTTP `packet-up`, observes Xray traffic counters, and proves both session release and grant revocation stop new connections:
 
