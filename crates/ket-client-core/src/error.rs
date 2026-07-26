@@ -33,6 +33,11 @@ pub enum ClientError {
     #[error("no compatible transport is available")]
     NoCompatibleTransport,
     #[error("transport {transport_id} failed: {message}")]
+    DnsResolution {
+        transport_id: String,
+        message: &'static str,
+    },
+    #[error("transport {transport_id} failed: {message}")]
     Transport {
         transport_id: String,
         message: String,
@@ -66,6 +71,7 @@ impl ClientError {
             Self::ResponseTooLarge => issue("response_too_large", self, false),
             Self::InvalidResponse(_) => issue("invalid_server_response", self, false),
             Self::NoCompatibleTransport => issue("no_compatible_transport", self, false),
+            Self::DnsResolution { .. } => issue("transport_dns_failed", self, true),
             Self::Transport { retryable, .. } => ClientIssue {
                 code: "transport_failed".to_owned(),
                 message: self.to_string(),
@@ -98,6 +104,17 @@ impl ClientError {
             message: message.into(),
             retryable,
         }
+    }
+
+    pub(crate) fn dns_resolution(transport_id: impl Into<String>, message: &'static str) -> Self {
+        Self::DnsResolution {
+            transport_id: transport_id.into(),
+            message,
+        }
+    }
+
+    pub(crate) fn is_dns_resolution_failure(&self) -> bool {
+        matches!(self, Self::DnsResolution { .. })
     }
 }
 

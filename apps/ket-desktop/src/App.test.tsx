@@ -140,8 +140,9 @@ describe("Ket desktop shell", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Add server" }));
 
-    const selector = await screen.findByLabelText("Preferred protocol");
-    fireEvent.change(selector, { target: { value: "stealth" } });
+    const selector = await screen.findByRole("combobox", { name: "Preferred protocol" });
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole("option", { name: "HTTPS Stealth" }));
     expect(localStorage.getItem("ket.protocol-preference")).toBe("stealth");
 
     fireEvent.click(screen.getByRole("button", { name: "Learn more" }));

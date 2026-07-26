@@ -18,6 +18,7 @@ import {
   type ProtocolPreference,
 } from "../lib/protocols";
 import type { ClientSnapshot, EngineReadiness } from "../types";
+import { ProtocolMenu } from "./ProtocolMenu";
 
 interface ConnectionPanelProps {
   snapshot: ClientSnapshot;
@@ -65,6 +66,13 @@ export function ConnectionPanel({
   );
   const selectedInfo = preference === "auto" ? autoProtocol : protocolInfo(preference);
   const guideProtocol = preference === "auto" ? (offeredProtocols[0] ?? "stealth") : preference;
+  const protocolOptions = [
+    { value: "auto" as const, label: "Automatic" },
+    ...offeredProtocols.map((protocol) => ({
+      value: protocol,
+      label: protocolInfo(protocol).label,
+    })),
+  ];
 
   return (
     <aside className="connection-panel" aria-label="Connection controls">
@@ -102,17 +110,13 @@ export function ConnectionPanel({
             Learn more
           </button>
         </div>
-        <select
+        <ProtocolMenu
           id="protocol-preference"
           value={preference}
           disabled={working || connected}
-          onChange={(event) => onPreferenceChange(event.target.value as ProtocolPreference)}
-        >
-          <option value="auto">Automatic</option>
-          {offeredProtocols.map((protocol) => (
-            <option key={protocol} value={protocol}>{protocolInfo(protocol).label}</option>
-          ))}
-        </select>
+          options={protocolOptions}
+          onChange={onPreferenceChange}
+        />
         <p>{selectedInfo.shortInstruction}</p>
       </div>
 

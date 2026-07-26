@@ -386,7 +386,7 @@ input:disabled {
   min-height: 310px;
   place-items: center;
   overflow: hidden;
-  padding: 4px 20px 0;
+  padding: 0 10px;
   background: var(--map);
 }
 
@@ -422,7 +422,7 @@ input:disabled {
   stroke-width: 1.5;
   transform-box: fill-box;
   transform-origin: center;
-  opacity: 0.56;
+  opacity: 0.38;
 }
 
 .world-map.is-connected .map-marker-ring {
@@ -447,7 +447,7 @@ input:disabled {
   paint-order: stroke;
   stroke: var(--map);
   stroke-width: 4px;
-  font-size: 15px;
+  font-size: 10.5px;
   font-weight: 750;
 }
 
@@ -773,6 +773,8 @@ input:disabled {
 }
 
 .protocol-choice {
+  position: relative;
+  z-index: 10;
   display: grid;
   gap: 8px;
   margin-top: 20px;
@@ -805,19 +807,114 @@ input:disabled {
   cursor: pointer;
 }
 
-.protocol-choice select {
+.protocol-menu-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.protocol-menu-trigger {
+  display: flex;
   width: 100%;
   min-height: 42px;
-  padding: 0 34px 0 11px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 11px;
   border: 1px solid var(--input-border);
   border-radius: 6px;
   color: var(--ink);
   background: var(--input);
   font-size: 12px;
+  text-align: left;
+  cursor: pointer;
 }
 
-.protocol-choice select:disabled {
+.protocol-menu-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.protocol-menu-trigger svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 160ms ease;
+}
+
+.protocol-menu-shell.is-open .protocol-menu-trigger {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgb(40 103 214 / 10%);
+}
+
+.protocol-menu-shell.is-open .protocol-menu-trigger svg {
+  transform: rotate(180deg);
+}
+
+.protocol-menu-trigger:disabled {
   opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.protocol-menu-options {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: min(260px, 42vh);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 14px 34px rgb(8 14 11 / 18%);
+  animation: protocol-menu-in 140ms ease-out;
+  scrollbar-color: var(--subtle) transparent;
+  scrollbar-width: thin;
+}
+
+.protocol-menu-options::-webkit-scrollbar {
+  width: 6px;
+}
+
+.protocol-menu-options::-webkit-scrollbar-thumb {
+  border-radius: 6px;
+  background: var(--subtle);
+}
+
+.protocol-menu-options button {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--ink);
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.protocol-menu-options button:hover,
+.protocol-menu-options button:focus-visible {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.protocol-menu-options button.is-selected {
+  color: var(--green-dark);
+  background: var(--green-soft);
+  font-weight: 700;
+}
+
+.protocol-menu-options button svg {
+  flex: 0 0 auto;
 }
 
 .protocol-choice p {
@@ -829,6 +926,8 @@ input:disabled {
 }
 
 .power-control {
+  position: relative;
+  z-index: 1;
   display: grid;
   justify-items: center;
   gap: 7px;
@@ -1420,6 +1519,12 @@ input:disabled {
 
 @keyframes diagnostics-backdrop-in {
   from { opacity: 0; }
+}
+
+@keyframes protocol-menu-in {
+  from {
+    transform: translateY(-4px);
+  }
 }
 
 @keyframes diagnostics-dialog-in {

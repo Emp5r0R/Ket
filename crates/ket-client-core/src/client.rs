@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use ket_core::{
     ACCESS_CODE_LENGTH, SecretString, SessionManifest, SessionStatus, TransportProtocol,
@@ -12,9 +12,34 @@ use tokio::{
 use crate::validation::{validate_manifest, validate_status};
 use crate::{
     ActiveTunnel, ClientError, ClientPhase, ClientSnapshot, ControlEndpoint, ControlPlane,
-    SelectionPolicy, TransportAdapter, TransportHistory, TransportSelector, TransportSummary,
-    TunnelStatus,
+    ProbeReport, SelectionPolicy, TransportAdapter, TransportHistory, TransportSelector,
+    TransportSummary, TunnelStatus,
 };
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProbeIdentity {
+    endpoint: String,
+    port: u16,
+    protocol: TransportProtocol,
+    tls_server_name: Option<String>,
+}
+
+impl From<&ket_core::SessionTransport> for ProbeIdentity {
+    fn from(transport: &ket_core::SessionTransport) -> Self {
+        Self {
+            endpoint: transport.profile.endpoint.clone(),
+            port: transport.profile.port,
+            protocol: transport.profile.protocol.clone(),
+            tls_server_name: transport.profile.tls_server_name.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedProbe {
+    identity: ProbeIdentity,
+    report: ProbeReport,
+}
 
 struct RuntimeState {
     session: Option<SessionManifest>,
@@ -24,6 +49,7 @@ struct RuntimeState {
     connection_requested: bool,
     preferred_protocol: Option<TransportProtocol>,
     history: TransportHistory,
+    probes: BTreeMap<String, CachedProbe>,
 }
 
 pub struct KetClient {
@@ -72,6 +98,7 @@ impl KetClient {
                 connection_requested: false,
                 preferred_protocol: None,
                 history: TransportHistory::default(),
+                probes: BTreeMap::new(),
             }),
             connect_cancellation,
             snapshot,
@@ -172,7 +199,11 @@ impl KetClient {
             runtime.preferred_protocol = preferred_protocol.clone();
         }
         self.update_snapshot(|snapshot| snapshot.preferred_protocol = preferred_protocol);
-        self.connect_locked(false).await
+        let result = self.connect_locked(false).await;
+        if result.is_err() {
+            self.runtime.lock().await.connection_requested = false;
+        }
+        result
     }
 
     pub async fn refresh(&self) -> Result<ClientSnapshot, ClientError> {
@@ -294,6 +325,7 @@ impl KetClient {
             runtime.session = None;
             runtime.renew_at_epoch_seconds = None;
             runtime.control_failures = 0;
+            runtime.probes.clear();
         }
         let error = stop_error.or(release_error);
         self.update_snapshot(|snapshot| {
@@ -452,9 +484,13 @@ impl KetClient {
                 None => return Ok(self.finish_cancelled_connection().await),
                 Some(Ok(probe)) => probe,
                 Some(Err(error)) => {
-                    self.record_failure(&transport.profile.id).await;
-                    last_error = Some(error);
-                    continue;
+                    if let Some(probe) = self.cached_probe(&transport, &error).await {
+                        probe
+                    } else {
+                        self.record_failure(&transport.profile.id).await;
+                        last_error = Some(error);
+                        continue;
+                    }
                 }
             };
             self.update_snapshot(|snapshot| {
@@ -480,6 +516,7 @@ impl KetClient {
                     }
                     let latency =
                         started.handshake_latency.as_millis().min(u64::MAX as u128) as u64;
+                    self.cache_probe(&transport, &probe).await;
                     {
                         let mut runtime = self.runtime.lock().await;
                         runtime
@@ -589,6 +626,7 @@ impl KetClient {
                     runtime.session = None;
                     runtime.renew_at_epoch_seconds = None;
                     runtime.control_failures = 0;
+                    runtime.probes.clear();
                 }
                 self.update_snapshot(|snapshot| {
                     snapshot.phase = ClientPhase::Error;
@@ -642,6 +680,34 @@ impl KetClient {
             unix_time(),
             self.selector.policy().failure_cooldown_seconds,
         );
+    }
+
+    async fn cache_probe(&self, transport: &ket_core::SessionTransport, report: &ProbeReport) {
+        self.runtime.lock().await.probes.insert(
+            transport.profile.id.clone(),
+            CachedProbe {
+                identity: ProbeIdentity::from(transport),
+                report: report.clone(),
+            },
+        );
+    }
+
+    async fn cached_probe(
+        &self,
+        transport: &ket_core::SessionTransport,
+        error: &ClientError,
+    ) -> Option<ProbeReport> {
+        if !error.is_dns_resolution_failure() {
+            return None;
+        }
+        let identity = ProbeIdentity::from(transport);
+        self.runtime
+            .lock()
+            .await
+            .probes
+            .get(&transport.profile.id)
+            .filter(|cached| cached.identity == identity)
+            .map(|cached| cached.report.clone())
     }
 
     fn fail(&self, error: &ClientError) {
@@ -775,6 +841,64 @@ mod tests {
         let disconnected = client.disconnect().await.unwrap();
         assert_eq!(disconnected.phase, ClientPhase::Disconnected);
         assert_eq!(api.releases.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn reconnect_uses_the_last_verified_address_when_dns_is_unavailable() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("hy2-primary", 1)];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+
+        client.connect().await.unwrap();
+        client.stop_tunnel().await.unwrap();
+        adapter.set_dns_unavailable(true);
+        let reconnected = client.connect().await.unwrap();
+
+        assert_eq!(reconnected.phase, ClientPhase::Connected);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(adapter.probe_attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_manual_connection_does_not_enter_background_recovery() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("hy2-primary", 1)];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        adapter.set_blocked(["hy2-primary"]);
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+
+        assert!(client.connect().await.is_err());
+        assert!(!client.runtime.lock().await.connection_requested);
+        adapter.set_blocked([]);
+        client.maintain_once().await.unwrap();
+
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 0);
+        assert_eq!(api.statuses.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -1150,7 +1274,9 @@ mod tests {
 
     struct RecoveryAdapter {
         blocked: StdMutex<BTreeSet<String>>,
+        dns_unavailable: AtomicBool,
         tunnels: StdMutex<BTreeMap<String, watch::Sender<TunnelStatus>>>,
+        probe_attempts: AtomicUsize,
         connection_attempts: AtomicUsize,
         stops: Arc<AtomicUsize>,
     }
@@ -1183,7 +1309,9 @@ mod tests {
         fn new() -> Self {
             Self {
                 blocked: StdMutex::new(BTreeSet::new()),
+                dns_unavailable: AtomicBool::new(false),
                 tunnels: StdMutex::new(BTreeMap::new()),
+                probe_attempts: AtomicUsize::new(0),
                 connection_attempts: AtomicUsize::new(0),
                 stops: Arc::new(AtomicUsize::new(0)),
             }
@@ -1192,6 +1320,10 @@ mod tests {
         fn set_blocked<const N: usize>(&self, transport_ids: [&str; N]) {
             *self.blocked.lock().expect("blocked transport lock") =
                 transport_ids.into_iter().map(str::to_owned).collect();
+        }
+
+        fn set_dns_unavailable(&self, unavailable: bool) {
+            self.dns_unavailable.store(unavailable, Ordering::SeqCst);
         }
 
         fn fail(&self, transport_id: &str) {
@@ -1214,6 +1346,13 @@ mod tests {
         }
 
         async fn probe(&self, transport: &SessionTransport) -> Result<ProbeReport, ClientError> {
+            self.probe_attempts.fetch_add(1, Ordering::SeqCst);
+            if self.dns_unavailable.load(Ordering::SeqCst) {
+                return Err(ClientError::dns_resolution(
+                    &transport.profile.id,
+                    "DNS timed out",
+                ));
+            }
             if self
                 .blocked
                 .lock()

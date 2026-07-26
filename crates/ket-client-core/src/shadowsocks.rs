@@ -72,18 +72,17 @@ impl TransportAdapter for Shadowsocks2022Adapter {
             lookup_host((transport.profile.endpoint.as_str(), transport.profile.port)),
         )
         .await
-        .map_err(|_| ClientError::transport(&transport.profile.id, "DNS timed out", true))?
+        .map_err(|_| ClientError::dns_resolution(&transport.profile.id, "DNS timed out"))?
         .map_err(|_| {
-            ClientError::transport(&transport.profile.id, "server DNS lookup failed", true)
+            ClientError::dns_resolution(&transport.profile.id, "server DNS lookup failed")
         })?;
         let mut addresses: Vec<_> = resolved.collect();
         addresses.sort_by_key(|address| (!address.is_ipv4(), *address));
         addresses.dedup();
         if addresses.is_empty() {
-            return Err(ClientError::transport(
+            return Err(ClientError::dns_resolution(
                 &transport.profile.id,
                 "server DNS returned no addresses",
-                true,
             ));
         }
         Ok(ProbeReport {

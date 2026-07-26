@@ -24,8 +24,8 @@ export function WorldMap({ location, connected }: WorldMapProps) {
   const { paths, marker } = useMemo(() => {
     const projection = geoNaturalEarth1().fitExtent(
       [
-        [24, 20],
-        [876, 412],
+        [10, 8],
+        [890, 424],
       ],
       countryCollection,
     );
@@ -43,8 +43,8 @@ export function WorldMap({ location, connected }: WorldMapProps) {
       marker: location ? projection([location.longitude, location.latitude]) : null,
     };
   }, [location]);
-  const zoom = connected && marker ? 2.05 : 1;
-  const viewportTransform = marker
+  const zoom = connected && marker ? 2.45 : 1;
+  const viewportTransform = connected && marker
     ? `translate(${450 - marker[0] * zoom} ${216 - marker[1] * zoom}) scale(${zoom})`
     : "translate(0 0) scale(1)";
   const markerScale = 1 / zoom;
@@ -73,9 +73,9 @@ export function WorldMap({ location, connected }: WorldMapProps) {
           {marker && location ? (
             <g className="map-marker" transform={`translate(${marker[0]} ${marker[1]})`}>
               <g className="map-marker-detail" transform={`scale(${markerScale})`}>
-                <circle className="map-marker-ring" r="18" />
-                <circle className="map-marker-dot" r="5" />
-                <text x="14" y="-13">
+                <circle className="map-marker-ring" r={connected ? 18 : 10} />
+                <circle className="map-marker-dot" r={connected ? 5 : 4} />
+                <text x="12" y="-11">
                   {location.city ?? location.country_name}
                 </text>
               </g>

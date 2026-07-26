@@ -78,6 +78,6 @@ it("offers an enabled cancel action while reconnecting", () => {
   expect(cancel).toBeEnabled();
   fireEvent.click(cancel);
   expect(onStop).toHaveBeenCalledOnce();
-  expect(screen.getByLabelText("Preferred protocol")).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Preferred protocol" })).toBeDisabled();
   expect(screen.getByText("Testing available routes")).toBeInTheDocument();
 });
