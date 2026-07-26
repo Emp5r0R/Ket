@@ -6,7 +6,7 @@ use ket_client_core::{
 };
 use ket_core::TransportProtocol;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 const SNAPSHOT_EVENT: &str = "ket://snapshot";
@@ -250,6 +250,29 @@ async fn forget(controller: State<'_, DesktopController>) -> Result<ClientSnapsh
     session.client.disconnect().await.map_err(issue)
 }
 
+async fn shutdown_controller(controller: &DesktopController) {
+    let session = controller.session.lock().await.take();
+    let Some(mut session) = session else {
+        return;
+    };
+    if let Some(maintenance) = session.maintenance.take() {
+        maintenance.shutdown().await;
+    }
+    let _ = session.client.disconnect().await;
+}
+
+fn release_session_before_exit(app: &AppHandle) {
+    let app = app.clone();
+    let (finished, receiver) = std::sync::mpsc::sync_channel(1);
+    tauri::async_runtime::spawn(async move {
+        let controller = app.state::<DesktopController>();
+        let _ =
+            tokio::time::timeout(Duration::from_secs(5), shutdown_controller(&controller)).await;
+        let _ = finished.send(());
+    });
+    let _ = receiver.recv_timeout(Duration::from_secs(6));
+}
+
 fn issue(error: ket_client_core::ClientError) -> ClientIssue {
     error.issue()
 }
@@ -264,7 +287,7 @@ fn not_enrolled() -> ClientIssue {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             app.manage(DesktopController::new(BrokerConfig::from_env()?));
             Ok(())
@@ -277,8 +300,13 @@ pub fn run() {
             refresh,
             forget,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Ket desktop");
+        .build(tauri::generate_context!())
+        .expect("failed to build Ket desktop");
+    app.run(|app, event| {
+        if matches!(event, RunEvent::ExitRequested { .. }) {
+            release_session_before_exit(app);
+        }
+    });
 }
 
 #[cfg(all(test, target_os = "linux"))]

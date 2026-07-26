@@ -28,6 +28,7 @@ const DEVICE_KEY = "ket.device-name";
 const PROTOCOL_KEY = "ket.protocol-preference";
 const ACCESS_EXPIRY_KEY = "ket.access-expires-at";
 const THEME_KEY = "ket.theme";
+const RESTORE_RETRY_DELAY_MS = 60_000;
 
 export type ThemePreference = "system" | "light" | "dark";
 
@@ -67,6 +68,14 @@ function loadSavedEnrollment(): SavedEnrollment {
     accessCode: validExpiry === null ? "" : (localStorage.getItem(ACCESS_CODE_KEY) ?? ""),
     accessExpiresAt: validExpiry,
   };
+}
+
+export function shouldRetrySavedEnrollment(issue: ClientIssue): boolean {
+  return issue.retryable || issue.code === "grant_capacity_reached";
+}
+
+export function savedEnrollmentIsTerminal(issue: ClientIssue): boolean {
+  return issue.code === "grant_expired" || issue.code === "unauthorized";
 }
 
 const emptySnapshot: ClientSnapshot = {
@@ -143,6 +152,31 @@ export default function App() {
     }
   };
 
+  const applyRestoredEnrollment = (snapshot: ClientSnapshot) => {
+    applySnapshot(snapshot);
+    setState((current) => ({ ...current, configured: true }));
+    setLocalIssue(null);
+    if (snapshot.access_expires_at_epoch_seconds !== null) {
+      localStorage.setItem(
+        ACCESS_EXPIRY_KEY,
+        snapshot.access_expires_at_epoch_seconds.toString(),
+      );
+      setAccessExpiresAt(snapshot.access_expires_at_epoch_seconds);
+    }
+  };
+
+  const handleRestoreFailure = (error: unknown) => {
+    const issue = normalizeIssue(error);
+    setLocalIssue(issue);
+    if (savedEnrollmentIsTerminal(issue)) {
+      clearSavedEnrollment();
+      setServerUrl("");
+      setSavedAccessCode("");
+      setAccessExpiresAt(null);
+    }
+    return issue;
+  };
+
   useEffect(() => {
     let active = true;
     let unsubscribe: (() => void) | undefined;
@@ -175,11 +209,10 @@ export default function App() {
               deviceName,
             });
             if (active) {
-              applySnapshot(restored);
-              setState((current) => ({ ...current, configured: true }));
+              applyRestoredEnrollment(restored);
             }
           } catch (error) {
-            if (active) setLocalIssue(normalizeIssue(error));
+            if (active) handleRestoreFailure(error);
           }
         }
       })
@@ -199,6 +232,46 @@ export default function App() {
       unsubscribe?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      loading ||
+      state.configured ||
+      serverUrl === "" ||
+      savedAccessCode.length !== 32 ||
+      accessExpiresAt === null
+    ) {
+      return;
+    }
+    let active = true;
+    let attempting = false;
+    let timer = 0;
+    const restore = async () => {
+      if (!active || attempting) return;
+      attempting = true;
+      try {
+        const snapshot = await bridge.enroll({
+          serverUrl,
+          accessCode: savedAccessCode,
+          deviceName,
+        });
+        if (active) applyRestoredEnrollment(snapshot);
+      } catch (error) {
+        if (!active) return;
+        const issue = handleRestoreFailure(error);
+        if (shouldRetrySavedEnrollment(issue)) {
+          timer = window.setTimeout(() => void restore(), RESTORE_RETRY_DELAY_MS);
+        }
+      } finally {
+        attempting = false;
+      }
+    };
+    timer = window.setTimeout(() => void restore(), RESTORE_RETRY_DELAY_MS);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [accessExpiresAt, deviceName, loading, savedAccessCode, serverUrl, state.configured]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;

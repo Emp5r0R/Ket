@@ -9,6 +9,31 @@ afterEach(() => {
 });
 
 describe("Ket desktop shell", () => {
+  it("retries only temporary saved-profile failures", async () => {
+    const { savedEnrollmentIsTerminal, shouldRetrySavedEnrollment } = await import("./App");
+
+    expect(shouldRetrySavedEnrollment({
+      code: "grant_capacity_reached",
+      message: "capacity reached",
+      retryable: false,
+    })).toBe(true);
+    expect(shouldRetrySavedEnrollment({
+      code: "network_unavailable",
+      message: "offline",
+      retryable: true,
+    })).toBe(true);
+    expect(savedEnrollmentIsTerminal({
+      code: "grant_expired",
+      message: "expired",
+      retryable: false,
+    })).toBe(true);
+    expect(savedEnrollmentIsTerminal({
+      code: "unauthorized",
+      message: "revoked",
+      retryable: false,
+    })).toBe(true);
+  });
+
   it("retains a successful profile and access expiry", async () => {
     window.history.replaceState({}, "", "/");
     const { default: App } = await import("./App");
