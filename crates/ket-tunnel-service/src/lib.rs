@@ -24,7 +24,7 @@ use tokio::{
 };
 
 const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(40);
 const MAX_CONNECTIONS: usize = 8;
 
 #[derive(Clone, Debug)]

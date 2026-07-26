@@ -16,6 +16,8 @@ use crate::{
     ActiveTunnel, ClientError, ProbeReport, StartedTunnel, TransportAdapter, TunnelStatus,
 };
 
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(50);
+
 #[derive(Clone, Debug)]
 pub struct BrokerConfig {
     address: SocketAddr,
@@ -34,7 +36,7 @@ impl BrokerConfig {
         Ok(Self {
             address,
             token_file: token_file.into(),
-            request_timeout: Duration::from_secs(30),
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
             heartbeat_interval: Duration::from_secs(3),
         })
     }

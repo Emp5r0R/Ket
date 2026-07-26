@@ -490,7 +490,7 @@ fn render_openvpn_config(
     let management_password_path =
         quote_openvpn_path(management_password_path, &transport.profile.id)?;
     let mut document = format!(
-        "client\ndev tun\nproto tcp-client\nremote 127.0.0.1 {carrier_port}\nnobind\nconnect-retry 2 5\nconnect-retry-max 3\nconnect-timeout 10\nresolv-retry 0\nremote-cert-tls server\nverify-x509-name {sni} name\ntls-version-min 1.2\ntls-cert-profile preferred\ndata-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\ndata-ciphers-fallback AES-256-GCM\nauth SHA256\nallow-compression no\nauth-retry none\nredirect-gateway def1 bypass-dhcp\nblock-ipv6\npersist-key\npersist-tun\nmanagement 127.0.0.1 {management_port} {management_password_path}\nmanagement-log-cache 50\nverb 3\nmute 10\n"
+        "client\ndev tun\nproto tcp-client\nremote 127.0.0.1 {carrier_port}\nnobind\nconnect-retry 2 5\nconnect-retry-max 3\nconnect-timeout 10\nresolv-retry 0\nremote-cert-tls server\nverify-x509-name {sni} name\ntls-version-min 1.2\ntls-cert-profile preferred\ndata-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\ndata-ciphers-fallback AES-256-GCM\nauth SHA256\nallow-compression no\nauth-retry none\nauth-nocache\npull-filter ignore \"redirect-gateway\"\nredirect-gateway local def1 bypass-dhcp\nblock-ipv6\npersist-key\npersist-tun\nmanagement 127.0.0.1 {management_port} {management_password_path}\nmanagement-log-cache 50\nverb 3\nmute 10\n"
     );
     #[cfg(windows)]
     document.push_str("windows-driver wintun\nblock-outside-dns\n");
@@ -554,7 +554,8 @@ async fn wait_for_openvpn(
     wait: Duration,
     transport_id: &str,
 ) -> Result<(), ClientError> {
-    timeout(wait, async {
+    let mut last_state = None;
+    let result = timeout(wait, async {
         loop {
             if let Some(status) = child.try_wait().map_err(|_| {
                 ClientError::transport(transport_id, "failed to inspect OpenVPN", false)
@@ -565,24 +566,96 @@ async fn wait_for_openvpn(
                     true,
                 ));
             }
-            if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", management_port)).await {
-                match openvpn_state(&mut stream, management_password).await {
-                    Ok(state)
-                        if state.lines().any(|line| {
-                            let fields = line.split(',').collect::<Vec<_>>();
-                            fields.get(1) == Some(&"CONNECTED") && fields.get(2) == Some(&"SUCCESS")
-                        }) =>
-                    {
-                        return Ok(());
+            if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", management_port)).await
+                && let Ok(response) = openvpn_state(&mut stream, management_password).await
+                && let Some(state) = parse_openvpn_startup_state(&response)
+            {
+                last_state = Some(state);
+                match state {
+                    OpenVpnStartupState::Connected => return Ok(()),
+                    OpenVpnStartupState::AuthenticationFailed => {
+                        return Err(ClientError::transport(transport_id, state.message(), false));
                     }
-                    Ok(_) | Err(_) => {}
+                    _ => {}
                 }
             }
             sleep(Duration::from_millis(200)).await;
         }
     })
-    .await
-    .map_err(|_| ClientError::transport(transport_id, "OpenVPN startup timed out", true))?
+    .await;
+    match result {
+        Ok(result) => result,
+        Err(_) => Err(ClientError::transport(
+            transport_id,
+            last_state.map_or("OpenVPN startup timed out", OpenVpnStartupState::message),
+            true,
+        )),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OpenVpnStartupState {
+    Resolving,
+    Connecting,
+    Authenticating,
+    AuthenticationFailed,
+    TlsHandshakeFailed,
+    GettingConfiguration,
+    AssigningAddress,
+    AddingRoutes,
+    Connected,
+    Reconnecting,
+    Exiting,
+}
+
+impl OpenVpnStartupState {
+    fn message(self) -> &'static str {
+        match self {
+            Self::Resolving => "OpenVPN startup timed out during DNS resolution",
+            Self::Connecting => "OpenVPN startup timed out while reaching the server",
+            Self::Authenticating => "OpenVPN startup timed out during server authentication",
+            Self::AuthenticationFailed => "OpenVPN authentication was rejected",
+            Self::TlsHandshakeFailed => "OpenVPN TLS handshake did not complete",
+            Self::GettingConfiguration => {
+                "OpenVPN startup timed out while downloading server configuration"
+            }
+            Self::AssigningAddress => {
+                "OpenVPN startup timed out while assigning the tunnel address"
+            }
+            Self::AddingRoutes => "OpenVPN startup timed out while installing tunnel routes",
+            Self::Connected => "OpenVPN connected",
+            Self::Reconnecting => "OpenVPN kept restarting before tunnel readiness",
+            Self::Exiting => "OpenVPN stopped before tunnel readiness",
+        }
+    }
+}
+
+fn parse_openvpn_startup_state(response: &str) -> Option<OpenVpnStartupState> {
+    response.lines().find_map(|line| {
+        let line = line.strip_prefix(">STATE:").unwrap_or(line);
+        let mut fields = line.split(',');
+        fields.next()?.parse::<u64>().ok()?;
+        let state = fields.next()?;
+        let detail = fields.next().unwrap_or_default();
+        if detail.eq_ignore_ascii_case("auth-failure") {
+            return Some(OpenVpnStartupState::AuthenticationFailed);
+        }
+        if detail.eq_ignore_ascii_case("tls-error") {
+            return Some(OpenVpnStartupState::TlsHandshakeFailed);
+        }
+        match state {
+            "RESOLVE" => Some(OpenVpnStartupState::Resolving),
+            "CONNECTING" | "TCP_CONNECT" | "WAIT" => Some(OpenVpnStartupState::Connecting),
+            "AUTH" | "AUTH_PENDING" => Some(OpenVpnStartupState::Authenticating),
+            "GET_CONFIG" => Some(OpenVpnStartupState::GettingConfiguration),
+            "ASSIGN_IP" => Some(OpenVpnStartupState::AssigningAddress),
+            "ADD_ROUTES" => Some(OpenVpnStartupState::AddingRoutes),
+            "CONNECTED" if detail == "SUCCESS" => Some(OpenVpnStartupState::Connected),
+            "RECONNECTING" => Some(OpenVpnStartupState::Reconnecting),
+            "EXITING" => Some(OpenVpnStartupState::Exiting),
+            _ => None,
+        }
+    })
 }
 
 async fn openvpn_state(stream: &mut TcpStream, password: &str) -> Result<String, std::io::Error> {
@@ -796,7 +869,9 @@ mod tests {
             "tls-version-min 1.2",
             "allow-compression no",
             "auth-retry none",
-            "redirect-gateway def1 bypass-dhcp",
+            "auth-nocache",
+            "pull-filter ignore \"redirect-gateway\"",
+            "redirect-gateway local def1 bypass-dhcp",
             "block-ipv6",
             "route 203.0.113.9 255.255.255.255 net_gateway",
             "<tls-crypt>",
@@ -847,6 +922,42 @@ mod tests {
             SecretString::from(encoded_certificate(128)),
         );
         assert!(validate_transport(&transport).is_err());
+    }
+
+    #[test]
+    fn management_state_diagnostics_are_structured_and_never_echo_raw_output() {
+        let cases = [
+            (
+                "SUCCESS: password is correct\n1785050000,AUTH,,,,,,,\nEND\n",
+                OpenVpnStartupState::Authenticating,
+            ),
+            (
+                ">STATE:1785050001,RECONNECTING,auth-failure,,,,,,\n",
+                OpenVpnStartupState::AuthenticationFailed,
+            ),
+            (
+                ">STATE:1785050001,RECONNECTING,tls-error,,,,,,\n",
+                OpenVpnStartupState::TlsHandshakeFailed,
+            ),
+            (
+                "1785050002,ADD_ROUTES,,10.67.0.2,,,,,\nEND\n",
+                OpenVpnStartupState::AddingRoutes,
+            ),
+            (
+                "1785050003,CONNECTED,SUCCESS,10.67.0.2,127.0.0.1,11940,127.0.0.1,45000,\nEND\n",
+                OpenVpnStartupState::Connected,
+            ),
+        ];
+        for (response, expected) in cases {
+            let state = parse_openvpn_startup_state(response).unwrap();
+            assert_eq!(state, expected);
+            assert!(!state.message().contains("178505"));
+            assert!(!state.message().contains("10.67"));
+        }
+        assert_eq!(
+            parse_openvpn_startup_state("vless://user:secret@example.test/private\nEND\n"),
+            None,
+        );
     }
 
     fn test_transport() -> SessionTransport {

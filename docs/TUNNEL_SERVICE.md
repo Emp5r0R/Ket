@@ -15,6 +15,8 @@ Ket keeps the desktop UI and control-plane client unprivileged. A small system s
 
 The token authenticates a local desktop installation; it does not elevate arbitrary requests. The service exposes a fixed command set and validates the server transport description before it starts Hysteria, Xray, `sslocal`, wstunnel, OpenVPN, or stunnel. Administrators and root remain trusted by the operating-system security model.
 
+Broker requests use a 50-second client envelope around a 40-second privileged command limit and a separate five-second authentication bound. Individual engines retain shorter protocol-specific readiness bounds, which lets the broker return a sanitized engine failure instead of racing the desktop's generic request timeout.
+
 ## Linux installation
 
 Build `ket-tunnel-service`, obtain the pinned Hysteria, OpenVPN, Shadowsocks, stunnel, Xray, wstunnel, and `tun2proxy` executables for the target architecture, then run:

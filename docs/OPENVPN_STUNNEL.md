@@ -10,6 +10,8 @@ Ket carries OpenVPN TCP inside a certificate-verified stunnel TLS connection. Th
 - The OpenVPN management socket is Unix-only inside the capability-limited agent container. Its bearer-authenticated reconciliation API and the control-plane auth callback exist only on the private `openvpn-control` network.
 - The agent writes a root-only mode-`0600` runtime config under `/run` so OpenVPN can pass the internal auth URL and bearer to its restricted script environment. The bearer is absent from the image and process arguments.
 - Client credentials, both CA documents, `tls-crypt` material, the stunnel configuration, and the password-protected OpenVPN management file are mode `0600` ephemeral files removed after shutdown.
+- Desktop OpenVPN connects to stunnel on loopback, ignores the server's generic redirect-gateway push, installs its own `local def1` redirect, and excludes every resolved public stunnel address through the original gateway. This prevents the new default route from capturing and breaking its own TLS carrier.
+- Desktop readiness reads only OpenVPN's structured management state. Failures expose a fixed authentication, server-configuration, address-assignment, or route-installation category; raw management output and credentials never reach logs or the UI.
 - Android never writes the scoped username/password into the OpenVPN profile. It supplies them only over a mode-`0600` private Unix management socket, validates pushed interface/DNS settings, and keeps the established TUN under the foreground `VpnService` fail-closed guard.
 
 This transport looks like generic TLS on the wire, but it is not HTTP and makes no Proton Stealth compatibility claim. Networks that actively fingerprint or require a real HTTP exchange may block it; Ket should then prefer XHTTP/TLS Stealth or WireGuard WebSocket/TLS.
@@ -93,3 +95,16 @@ docker compose -f compose.yaml -f compose.openvpn.yaml exec openvpn-agent \
 ```
 
 The manager health endpoint is intentionally not host-published. Verify TUN-backed end-to-end Internet traffic, DNS, counters, and revocation from a packaged Linux, Windows, or Android client before production use. Docker builds the OpenVPN/stunnel binaries natively, so the same image definition supports `linux/amd64` and `linux/arm64`.
+
+For an installed Linux package, save a short-lived session manifest to a mode-`0600` file and exercise the privileged broker through the opt-in client-core gate:
+
+```bash
+KET_OPENVPN_E2E_TRANSPORT=/tmp/ket-openvpn-manifest.json \
+KET_OPENVPN_E2E_BROKER=1 \
+KET_OPENVPN_E2E_EGRESS_IP=203.0.113.10 \
+KET_OPENVPN_E2E_TARGETS=https://example.com/,https://www.cloudflare.com/cdn-cgi/trace \
+RUST_TEST_THREADS=1 \
+cargo test --locked -p ket-client-core --test openvpn_e2e -- --nocapture
+```
+
+Replace the example egress address with the VPS public IP. The test proves connection readiness, tunneled public egress, multiple HTTPS responses, and broker shutdown. Release the test session and securely remove the manifest afterward; ordinary test runs skip this gate when `KET_OPENVPN_E2E_TRANSPORT` is absent.
