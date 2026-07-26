@@ -7,6 +7,7 @@ mod error;
 mod full_route;
 mod hysteria;
 mod openvpn;
+mod route_health;
 mod runtime;
 mod shadowsocks;
 mod state;

@@ -1883,7 +1883,7 @@ dependencies = [
 
 [[package]]
 name = "ket-client-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -1903,7 +1903,7 @@ dependencies = [
 
 [[package]]
 name = "ket-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "argon2",
  "blake2",
@@ -1917,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "ket-desktop"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "glib",
  "ket-client-core",
@@ -1931,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "ket-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1959,7 +1959,7 @@ dependencies = [
 
 [[package]]
 name = "ket-tunnel-protocol"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "hmac",
  "ket-core",
@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "ket-tunnel-service"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",

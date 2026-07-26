@@ -9,7 +9,7 @@ machine that can be restored or cleaned afterward. Never publish an access code,
 
 Download these files from the same GitHub prerelease into an empty directory:
 
-- `Ket_0.2.0_x64-setup.exe`
+- `Ket_0.2.1_x64-setup.exe`
 - `SHA256SUMS`
 
 An unsigned-publisher warning is expected for the current prerelease. A checksum
@@ -20,8 +20,8 @@ $Work = Join-Path $HOME "Downloads\Ket-test"
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 Set-Location $Work
 
-$Installer = Resolve-Path ".\Ket_0.2.0_x64-setup.exe"
-$Expected = (Select-String -Path ".\SHA256SUMS" -Pattern "Ket_0.2.0_x64-setup.exe").Line.Split()[0].ToLowerInvariant()
+$Installer = Resolve-Path ".\Ket_0.2.1_x64-setup.exe"
+$Expected = (Select-String -Path ".\SHA256SUMS" -Pattern "Ket_0.2.1_x64-setup.exe").Line.Split()[0].ToLowerInvariant()
 $Actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Installer).Hash.ToLowerInvariant()
 if ($Actual -ne $Expected) { throw "Ket installer checksum mismatch" }
 ```
@@ -187,7 +187,7 @@ installer lifecycle can be run from an elevated PowerShell session:
 
 ```powershell
 $env:KET_PACKAGE_TEST_ALLOW_HOST_MUTATION = "1"
-$Installer = (Resolve-Path ".\Ket_0.2.0_x64-setup.exe").Path
+$Installer = (Resolve-Path ".\Ket_0.2.1_x64-setup.exe").Path
 .\packaging\verify-windows-nsis.ps1 -Installer $Installer
 ```
 

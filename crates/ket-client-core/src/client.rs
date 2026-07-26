@@ -9,6 +9,7 @@ use tokio::{
     task::JoinHandle,
 };
 
+use crate::route_health::{HttpsRouteHealthProbe, RouteHealthProbe};
 use crate::validation::{validate_manifest, validate_status};
 use crate::{
     ActiveTunnel, ClientError, ClientPhase, ClientSnapshot, ControlEndpoint, ControlPlane,
@@ -60,6 +61,7 @@ pub struct KetClient {
     selector: TransportSelector,
     operation: Mutex<()>,
     runtime: Mutex<RuntimeState>,
+    route_health: Arc<dyn RouteHealthProbe>,
     connect_cancellation: watch::Sender<u64>,
     snapshot: watch::Sender<ClientSnapshot>,
 }
@@ -71,6 +73,24 @@ impl KetClient {
         api: Arc<dyn ControlPlane>,
         adapters: Vec<Arc<dyn TransportAdapter>>,
         policy: SelectionPolicy,
+    ) -> Result<Arc<Self>, ClientError> {
+        Self::new_with_route_health(
+            endpoint,
+            client_name,
+            api,
+            adapters,
+            policy,
+            Arc::new(HttpsRouteHealthProbe::new()?),
+        )
+    }
+
+    fn new_with_route_health(
+        endpoint: ControlEndpoint,
+        client_name: impl Into<String>,
+        api: Arc<dyn ControlPlane>,
+        adapters: Vec<Arc<dyn TransportAdapter>>,
+        policy: SelectionPolicy,
+        route_health: Arc<dyn RouteHealthProbe>,
     ) -> Result<Arc<Self>, ClientError> {
         let client_name = client_name.into().trim().to_owned();
         if client_name.is_empty() || client_name.chars().count() > 96 {
@@ -100,6 +120,7 @@ impl KetClient {
                 history: TransportHistory::default(),
                 probes: BTreeMap::new(),
             }),
+            route_health,
             connect_cancellation,
             snapshot,
         }))
@@ -249,10 +270,19 @@ impl KetClient {
         match self.refresh_locked(renew).await {
             Ok(snapshot) => Ok(snapshot),
             Err(error @ ClientError::Network(_)) => {
-                let recovery = {
+                let should_verify_route = {
                     let mut runtime = self.runtime.lock().await;
                     runtime.control_failures = runtime.control_failures.saturating_add(1);
-                    if runtime.control_failures >= 2 && runtime.connection_requested {
+                    runtime.control_failures >= 2
+                        && runtime.connection_requested
+                        && runtime.tunnel.is_some()
+                };
+                if !should_verify_route || self.route_health.is_healthy().await {
+                    return Err(error);
+                }
+                let recovery = {
+                    let mut runtime = self.runtime.lock().await;
+                    if runtime.connection_requested {
                         runtime.control_failures = 0;
                         runtime.tunnel.take().map(|tunnel| {
                             let transport_id = tunnel.transport_id().to_owned();
@@ -1073,15 +1103,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn maintenance_recovers_the_route_after_repeated_control_timeouts() {
+    async fn maintenance_recovers_after_control_timeouts_when_the_route_is_unhealthy() {
         let api = Arc::new(MockApi::new(test_manifest()));
         let adapter = Arc::new(RecoveryAdapter::new());
-        let client = KetClient::new(
+        let route_health = Arc::new(MockRouteHealth::new(false));
+        let client = KetClient::new_with_route_health(
             ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
             "Linux workstation",
             api.clone(),
             vec![adapter.clone()],
             SelectionPolicy::default(),
+            route_health.clone(),
         )
         .unwrap();
         client
@@ -1100,6 +1132,41 @@ mod tests {
         assert_eq!(recovered.phase, ClientPhase::Connected);
         assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 2);
         assert_eq!(adapter.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(route_health.probes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn maintenance_preserves_a_healthy_route_during_control_timeouts() {
+        let api = Arc::new(MockApi::new(test_manifest()));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let route_health = Arc::new(MockRouteHealth::new(true));
+        let client = KetClient::new_with_route_health(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+            route_health.clone(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        client.connect().await.unwrap();
+        api.fail_next_control_requests(3);
+
+        for _ in 0..3 {
+            assert!(matches!(
+                client.maintain_once().await,
+                Err(ClientError::Network(_))
+            ));
+        }
+
+        assert_eq!(client.snapshot().phase, ClientPhase::Connected);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(route_health.probes.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -1283,6 +1350,28 @@ mod tests {
 
     struct BlockingAdapter {
         probe_started: Notify,
+    }
+
+    struct MockRouteHealth {
+        healthy: AtomicBool,
+        probes: AtomicUsize,
+    }
+
+    impl MockRouteHealth {
+        fn new(healthy: bool) -> Self {
+            Self {
+                healthy: AtomicBool::new(healthy),
+                probes: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RouteHealthProbe for MockRouteHealth {
+        async fn is_healthy(&self) -> bool {
+            self.probes.fetch_add(1, Ordering::SeqCst);
+            self.healthy.load(Ordering::SeqCst)
+        }
     }
 
     #[async_trait]

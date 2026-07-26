@@ -92,10 +92,17 @@ internal class AndroidRecoveryPolicy(
     fun leaseFailureAction(
         consecutiveFailures: Int,
         authorizationLost: Boolean = false,
+        routedInternetHealthy: Boolean? = null,
     ): AndroidLeaseFailureAction = when {
         authorizationLost -> AndroidLeaseFailureAction.Stop
+        routedInternetHealthy != false -> AndroidLeaseFailureAction.Wait
         consecutiveFailures >= stopAfterFailures -> AndroidLeaseFailureAction.Stop
         consecutiveFailures == recoverAfterFailures -> AndroidLeaseFailureAction.Recover
         else -> AndroidLeaseFailureAction.Wait
     }
+
+    fun shouldVerifyRoute(
+        consecutiveFailures: Int,
+        authorizationLost: Boolean = false,
+    ): Boolean = !authorizationLost && consecutiveFailures >= recoverAfterFailures
 }

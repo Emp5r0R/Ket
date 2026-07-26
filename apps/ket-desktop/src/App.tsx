@@ -122,7 +122,7 @@ const initialState: DesktopState = {
     status: "unavailable",
   },
   platform: "desktop",
-  version: "0.2.0",
+  version: "0.2.1",
 };
 
 export default function App() {

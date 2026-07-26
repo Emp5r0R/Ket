@@ -78,7 +78,7 @@ class AndroidTransportHistoryTest {
     }
 
     @Test
-    fun `lease failures reserve a recovery window before shutdown`() {
+    fun `lease failures recover only after the routed path also fails`() {
         val policy = AndroidRecoveryPolicy(
             maximumReconnectRounds = 3,
             recoverAfterFailures = 2,
@@ -86,11 +86,42 @@ class AndroidTransportHistoryTest {
         )
 
         assertEquals(AndroidLeaseFailureAction.Wait, policy.leaseFailureAction(1))
-        assertEquals(AndroidLeaseFailureAction.Recover, policy.leaseFailureAction(2))
-        assertEquals(AndroidLeaseFailureAction.Wait, policy.leaseFailureAction(3))
-        assertEquals(AndroidLeaseFailureAction.Wait, policy.leaseFailureAction(4))
-        assertEquals(AndroidLeaseFailureAction.Stop, policy.leaseFailureAction(5))
-        assertEquals(AndroidLeaseFailureAction.Stop, policy.leaseFailureAction(8))
+        assertEquals(
+            AndroidLeaseFailureAction.Recover,
+            policy.leaseFailureAction(2, routedInternetHealthy = false),
+        )
+        assertEquals(
+            AndroidLeaseFailureAction.Wait,
+            policy.leaseFailureAction(3, routedInternetHealthy = false),
+        )
+        assertEquals(
+            AndroidLeaseFailureAction.Stop,
+            policy.leaseFailureAction(5, routedInternetHealthy = false),
+        )
+        assertEquals(
+            AndroidLeaseFailureAction.Stop,
+            policy.leaseFailureAction(8, routedInternetHealthy = false),
+        )
+    }
+
+    @Test
+    fun `healthy or unknown routed Internet preserves the active tunnel`() {
+        val policy = AndroidRecoveryPolicy(recoverAfterFailures = 2, stopAfterFailures = 5)
+
+        assertEquals(
+            AndroidLeaseFailureAction.Wait,
+            policy.leaseFailureAction(2, routedInternetHealthy = true),
+        )
+        assertEquals(
+            AndroidLeaseFailureAction.Wait,
+            policy.leaseFailureAction(5, routedInternetHealthy = true),
+        )
+        assertEquals(
+            AndroidLeaseFailureAction.Wait,
+            policy.leaseFailureAction(8, routedInternetHealthy = null),
+        )
+        assertEquals(false, policy.shouldVerifyRoute(1))
+        assertEquals(true, policy.shouldVerifyRoute(2))
     }
 
     @Test
@@ -99,8 +130,13 @@ class AndroidTransportHistoryTest {
 
         assertEquals(
             AndroidLeaseFailureAction.Stop,
-            policy.leaseFailureAction(consecutiveFailures = 1, authorizationLost = true),
+            policy.leaseFailureAction(
+                consecutiveFailures = 1,
+                authorizationLost = true,
+                routedInternetHealthy = true,
+            ),
         )
+        assertEquals(false, policy.shouldVerifyRoute(5, authorizationLost = true))
     }
 
     private data class TestTransport(

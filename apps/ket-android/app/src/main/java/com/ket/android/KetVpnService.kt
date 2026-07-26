@@ -365,6 +365,7 @@ class KetVpnService : VpnService() {
 
     private fun publishConnected(spec: TunnelLaunchSpec, selected: SelectedTransport) {
         reconnecting.set(false)
+        renewalFailures = 0
         underlyingNetworks.markConnected()
         KetTunnelRuntime.update {
             it.copy(
@@ -534,7 +535,29 @@ class KetVpnService : VpnService() {
                     code = if (authorizationLost) "authorization_lost" else "renewal_failed",
                     message = error.message,
                 )
-                when (recoveryPolicy.leaseFailureAction(renewalFailures, authorizationLost)) {
+                val routedInternetHealthy = if (
+                    recoveryPolicy.shouldVerifyRoute(renewalFailures, authorizationLost)
+                ) {
+                    runCatching { AndroidRoutedInternetProbe.verify(stopping::get) }.isSuccess.also {
+                        AndroidConnectionDiagnostics.record(
+                            stage = "routed_health_after_control_failure",
+                            outcome = if (it) DiagnosticOutcome.Succeeded else DiagnosticOutcome.Failed,
+                            phase = KetTunnelRuntime.snapshot().phase,
+                            protocol = spec.preferredProtocol,
+                            transport = activeTransportId,
+                            code = if (it) "route_healthy" else "route_unavailable",
+                        )
+                    }
+                } else {
+                    null
+                }
+                when (
+                    recoveryPolicy.leaseFailureAction(
+                        renewalFailures,
+                        authorizationLost,
+                        routedInternetHealthy,
+                    )
+                ) {
                     AndroidLeaseFailureAction.Wait -> Unit
                     AndroidLeaseFailureAction.Recover -> requestRecovery(
                         "The protected route stopped reaching the server",

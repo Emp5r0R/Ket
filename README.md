@@ -4,14 +4,14 @@
 
 # Ket
 
-Ket is an anti-censorship connectivity platform in development. Its target is a Rust server, native Linux and Windows clients, and an Android client with a shared map-first experience and adaptive stealth transports.
+Ket is an anti-censorship connectivity platform with a Rust server, native Linux and Windows clients, and an Android client sharing a map-first experience and adaptive stealth transports.
 
-> **Current state:** the Docker server and Linux/Windows/Android clients implement six authenticated data planes with lease revocation: Hysteria2, VLESS + REALITY, CDN-carried VLESS + XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard over WebSocket/TLS, and OpenVPN over stunnel-compatible TLS. An owner-signed physical arm64 Android client has passed the routed HTTPS gate on a restricted network through REALITY, XHTTP/TLS Stealth, and Shadowsocks 2022. Hysteria2 currently reaches the deployed service but has not passed that restricted-network route gate; WireGuard TLS and OpenVPN have deployment, engine, package, or handshake validation rather than Android restricted-network packet-flow proof. Physical lifecycle and wider-network tests remain before this is a complete end-user VPN.
+> **Project status:** the v0.2 implementation scope is complete as of 2026-07-26. The Docker server and Linux/Windows/Android clients implement six authenticated, revocable data planes: Hysteria2, VLESS + REALITY, CDN-carried VLESS + XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard over WebSocket/TLS, and OpenVPN over stunnel-compatible TLS. REALITY, XHTTP/TLS Stealth, and Shadowsocks 2022 have passed the routed HTTPS gate on a restricted network using an owner-signed physical arm64 Android client. Remaining hardware, wider-network, signing, soak, and future-protocol work is tracked separately and is not represented as completed evidence.
 
 ## Implemented now
 
 - Rust workspace with shared, serializable client/server contracts.
-- Shared Rust client controller with hardened HTTPS enrollment, bounded and identity-bound control-response validation, UI-safe last-known-good state snapshots, lease renewal, metrics refresh, bounded fallback, same-profile verified-address recovery across temporary DNS failure, explicit manual-retry semantics, and clean release.
+- Shared Rust client controller with hardened HTTPS enrollment, bounded and identity-bound control-response validation, UI-safe last-known-good state snapshots, lease renewal, metrics refresh, bounded fallback, same-profile verified-address recovery across temporary DNS failure, independent routed-Internet checks before control outages trigger tunnel recovery, explicit manual-retry semantics, and clean release.
 - Map-first Tauri 2 desktop UI with automatically restored time-bounded profiles, explicit Forget and expiry cleanup, remaining-access display, system/light/dark themes, a themed keyboard-accessible explicit or ranked Automatic protocol menu, an in-app guide for every implemented protocol, connected-region map focus, an untransformed neutral disconnected world view, copyable redacted failure diagnostics, node geography, connection control, health/capacity telemetry, traffic history, and responsive Linux/Windows layouts.
 - Authenticated loopback privilege broker with HMAC-SHA-256 installation identity, bounded framing, one-tunnel ownership, heartbeat expiry, and redacted diagnostics.
 - Privileged desktop transport service with strict Hysteria2, VLESS + REALITY, XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard TLS, and OpenVPN/stunnel validation, full-route ownership, every resolved server IP excluded, ephemeral mode-`0600` credentials, readiness detection, fallback, and supervised shutdown.
@@ -43,7 +43,7 @@ Ket is an anti-censorship connectivity platform in development. Its target is a 
 | IKEv2 | Identifier only | Not implemented | Not implemented | Future adapter |
 | XOR scrambling | Obfuscation identifier only | Not standalone security | Not standalone security | May only wrap authenticated encryption |
 
-The component boundaries and remaining platform work are tracked in [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and the real-hardware procedure in the [Windows package test plan](docs/WINDOWS_TESTING.md). Data-plane deployment is covered by the [Hysteria2](docs/HYSTERIA2.md), [VLESS + REALITY](docs/XRAY_REALITY.md), [HTTPS Stealth](docs/XHTTP_STEALTH.md), [Shadowsocks 2022](docs/SHADOWSOCKS2022.md), [WireGuard TLS](docs/WIREGUARD_TLS.md), and [OpenVPN over stunnel](docs/OPENVPN_STUNNEL.md) guides.
+The completed v0.2 boundary and remaining qualification/protocol work are tracked in [future work](docs/FUTURE_WORK.md) and [the architecture](docs/ARCHITECTURE.md). The current endpoints are described in [the control API](docs/CONTROL_API.md), the shared controller in [the client-core guide](docs/CLIENT_CORE.md), the Android data plane in [the Android guide](docs/ANDROID.md), the desktop privilege boundary in [the tunnel-service guide](docs/TUNNEL_SERVICE.md), and the real-hardware procedure in the [Windows package test plan](docs/WINDOWS_TESTING.md). Data-plane deployment is covered by the [Hysteria2](docs/HYSTERIA2.md), [VLESS + REALITY](docs/XRAY_REALITY.md), [HTTPS Stealth](docs/XHTTP_STEALTH.md), [Shadowsocks 2022](docs/SHADOWSOCKS2022.md), [WireGuard TLS](docs/WIREGUARD_TLS.md), and [OpenVPN over stunnel](docs/OPENVPN_STUNNEL.md) guides.
 
 ## One-command server install
 
@@ -235,17 +235,9 @@ For a local Android build, install Android SDK Platform 34 and Build Tools 34, t
 
 Continuous integration is defined in `.github/workflows/ci.yml`: Rust formatting/tests/lints, desktop UI tests/build, native packages, Android debug packaging, and the control-plane container build run when their inputs change. Workflow changes execute the complete matrix, manual runs may select the complete matrix or only the Windows package, and documentation-only changes avoid unnecessary builds.
 
-## Delivery order
+## Future work
 
-1. Sign the implemented Linux/Windows packages and exercise their signed artifacts on target machines; the unsigned Linux and Windows installer, service, reinstall, and removal lifecycles are CI-gated.
-2. Retest fail-closed network handover on the current API 36 device, repeat the Android matrix on physical API 26, then complete Doze, revoke, connected-state DNS-leak, and owner-signed installation tests.
-3. Exercise the implemented Android process/reboot restoration and always-on/lockdown lifecycle on physical API 36 and API 26 devices.
-4. Extend the proven HTTPS Stealth and Shadowsocks 2022 restricted-network coverage to desktop, then exercise WireGuard TLS and OpenVPN/stunnel with startup fallback and live revocation.
-5. Exercise the Android OpenVPN management/TUN bridge against the deployed stunnel listener, including restricted-network fallback, revocation, and network-change recovery.
-6. Add soak, network-failure, upgrade, and censorship-simulation tests across the transport matrix.
-7. Implement the remaining IKEv2 adapter without weakening the existing authenticated fallback contract.
-
-Ket must use maintained protocol implementations and authenticated encryption. Obfuscation such as XOR is never treated as security on its own.
+The v0.2 product boundary is complete. Physical release qualification, signing, soak coverage, and post-v0.2 protocol work are intentionally kept in [the future-work register](docs/FUTURE_WORK.md). Ket will continue to use maintained protocol implementations and authenticated encryption; XOR is never treated as security on its own.
 
 ## License
 
