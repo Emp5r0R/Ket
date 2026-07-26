@@ -84,14 +84,20 @@ impl SystemDnsLease {
             active: true,
         })
     }
+
+    pub(crate) fn restore(&mut self) -> io::Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+        recover_at(&self.resolver_path, &self.state_path)?;
+        self.active = false;
+        Ok(())
+    }
 }
 
 impl Drop for SystemDnsLease {
     fn drop(&mut self) {
-        if self.active {
-            let _ = recover_at(&self.resolver_path, &self.state_path);
-            self.active = false;
-        }
+        let _ = self.restore();
     }
 }
 
@@ -289,6 +295,28 @@ mod tests {
             assert_eq!(fs::read(&resolver).unwrap(), OPENVPN_DNS_CONFIGURATION);
         }
 
+        assert_eq!(fs::read(&resolver).unwrap(), original);
+        assert!(!state.exists());
+    }
+
+    #[test]
+    fn explicit_restore_makes_the_original_resolver_available_before_protocol_switch() {
+        let directory = TestDir::new("protocol-switch");
+        let resolver = directory.path().join("resolv.conf");
+        let state = directory.path().join("resolver.state");
+        let original = b"nameserver 192.0.2.53\n";
+        fs::write(&resolver, original).unwrap();
+
+        let mut first =
+            SystemDnsLease::acquire_at(&resolver, &state, VIRTUAL_DNS_CONFIGURATION).unwrap();
+        first.restore().unwrap();
+        assert_eq!(fs::read(&resolver).unwrap(), original);
+        assert!(!state.exists());
+
+        let mut second =
+            SystemDnsLease::acquire_at(&resolver, &state, OPENVPN_DNS_CONFIGURATION).unwrap();
+        assert_eq!(fs::read(&state).unwrap(), original);
+        second.restore().unwrap();
         assert_eq!(fs::read(&resolver).unwrap(), original);
         assert!(!state.exists());
     }

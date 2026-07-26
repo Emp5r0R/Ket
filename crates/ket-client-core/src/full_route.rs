@@ -101,7 +101,7 @@ impl FullRouteBridge {
         Ok(FullRouteProcess {
             child,
             diagnostic: Some(tokio::spawn(collect_bridge_diagnostic(stderr))),
-            _dns_lease: dns_lease,
+            dns_lease,
         })
     }
 }
@@ -109,7 +109,7 @@ impl FullRouteBridge {
 pub(crate) struct FullRouteProcess {
     child: Child,
     diagnostic: Option<JoinHandle<Option<BridgeDiagnostic>>>,
-    _dns_lease: SystemDnsLease,
+    dns_lease: SystemDnsLease,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -396,6 +396,7 @@ pub(crate) async fn stop_child(child: &mut Child) {
 pub(crate) async fn stop_bridge(bridge: &mut FullRouteProcess) {
     stop_child(&mut bridge.child).await;
     let _ = take_bridge_diagnostic(bridge).await;
+    let _ = bridge.dns_lease.restore();
 }
 
 async fn bridge_exit_if_stopped(
@@ -542,6 +543,7 @@ async fn supervise_processes(
         result = bridge.child.wait() => {
             stop_child(&mut engine).await;
             let diagnostic = take_bridge_diagnostic(&mut bridge).await;
+            let _ = bridge.dns_lease.restore();
             let message = result.map_or_else(
                 |_| "failed to wait for the full-route bridge".to_owned(),
                 |exit| bridge_exit_message(exit, diagnostic),
@@ -588,6 +590,7 @@ async fn supervise_three_processes(
             stop_child(&mut carrier).await;
             stop_child(&mut engine).await;
             let diagnostic = take_bridge_diagnostic(&mut bridge).await;
+            let _ = bridge.dns_lease.restore();
             let message = result.map_or_else(
                 |_| "failed to wait for the full-route bridge".to_owned(),
                 |exit| bridge_exit_message(exit, diagnostic),
@@ -608,13 +611,14 @@ async fn supervise_two_processes(
     mut engine: Child,
     carrier_name: &'static str,
     mut carrier: Child,
-    _dns_lease: SystemDnsLease,
+    mut dns_lease: SystemDnsLease,
     mut commands: mpsc::Receiver<ProcessCommand>,
     status: watch::Sender<TunnelStatus>,
 ) {
     tokio::select! {
         result = engine.wait() => {
             stop_child(&mut carrier).await;
+            let _ = dns_lease.restore();
             let message = result.map_or_else(
                 |_| format!("failed to wait for {engine_name}"),
                 |exit| format!("{engine_name} exited unexpectedly ({exit})"),
@@ -623,6 +627,7 @@ async fn supervise_two_processes(
         }
         result = carrier.wait() => {
             stop_child(&mut engine).await;
+            let _ = dns_lease.restore();
             let message = result.map_or_else(
                 |_| format!("failed to wait for {carrier_name}"),
                 |exit| format!("{carrier_name} exited unexpectedly ({exit})"),
@@ -632,6 +637,7 @@ async fn supervise_two_processes(
         _ = commands.recv() => {
             stop_child(&mut engine).await;
             stop_child(&mut carrier).await;
+            let _ = dns_lease.restore();
             status.send_replace(TunnelStatus::Stopped);
         }
     }
