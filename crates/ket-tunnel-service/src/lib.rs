@@ -206,6 +206,7 @@ impl BrokerService {
         let Some(lease) = tunnels.get(tunnel_id) else {
             return fault("tunnel_not_found", "tunnel is no longer active", false);
         };
+        let transport_id = lease.tunnel.transport_id().to_owned();
         let status = lease.tunnel.status().borrow().clone();
         if matches!(status, ket_client_core::TunnelStatus::Connected) {
             if heartbeat {
@@ -215,6 +216,9 @@ impl BrokerService {
                     .expires_at = Instant::now() + self.lease_ttl;
             }
         } else {
+            if let ket_client_core::TunnelStatus::Failed(message) = &status {
+                tracing::warn!(%transport_id, reason = %message, "tunnel process exited");
+            }
             tunnels.remove(tunnel_id);
         }
         BrokerResponse::Tunnel {

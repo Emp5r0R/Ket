@@ -9,9 +9,11 @@ use std::{
 
 use async_trait::async_trait;
 use tokio::{
+    io::{AsyncRead, AsyncReadExt},
     net::TcpListener,
     process::{Child, Command},
     sync::{mpsc, watch},
+    task::JoinHandle,
     time::{sleep, timeout},
 };
 
@@ -74,11 +76,11 @@ impl FullRouteBridge {
                 false,
             )
         })?;
-        let child = Command::new(&self.binary_path)
+        let mut child = Command::new(&self.binary_path)
             .args(arguments(socks_port, server_addresses))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(|_| {
@@ -88,8 +90,17 @@ impl FullRouteBridge {
                     false,
                 )
             })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            let _ = child.start_kill();
+            ClientError::transport(
+                transport_id,
+                "failed to capture full-route bridge diagnostics",
+                false,
+            )
+        })?;
         Ok(FullRouteProcess {
             child,
+            diagnostic: Some(tokio::spawn(collect_bridge_diagnostic(stderr))),
             _dns_lease: dns_lease,
         })
     }
@@ -97,7 +108,143 @@ impl FullRouteBridge {
 
 pub(crate) struct FullRouteProcess {
     child: Child,
+    diagnostic: Option<JoinHandle<Option<BridgeDiagnostic>>>,
     _dns_lease: SystemDnsLease,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BridgeDiagnostic {
+    Permission,
+    Wintun,
+    TunDevice,
+    DnsSetup,
+    RouteSetup,
+    AddressConflict,
+    ResourceBusy,
+    NetworkUnavailable,
+    MissingComponent,
+}
+
+impl BridgeDiagnostic {
+    fn message(self) -> &'static str {
+        match self {
+            Self::Permission => "permission was denied while configuring protected routes",
+            Self::Wintun => "the Wintun driver could not be initialized",
+            Self::TunDevice => "the TUN interface could not be created or retained",
+            Self::DnsSetup => "protected DNS routing could not be configured",
+            Self::RouteSetup => "system routes could not be configured",
+            Self::AddressConflict => "a required local address or port is already in use",
+            Self::ResourceBusy => "a required networking device is busy",
+            Self::NetworkUnavailable => "the underlying network became unreachable",
+            Self::MissingComponent => "a required operating-system networking component is missing",
+        }
+    }
+
+    fn priority(self) -> u8 {
+        match self {
+            Self::Permission => 9,
+            Self::Wintun => 8,
+            Self::TunDevice => 7,
+            Self::DnsSetup => 6,
+            Self::RouteSetup => 5,
+            Self::AddressConflict => 4,
+            Self::ResourceBusy => 3,
+            Self::NetworkUnavailable => 2,
+            Self::MissingComponent => 1,
+        }
+    }
+}
+
+async fn collect_bridge_diagnostic(mut stderr: impl AsyncRead + Unpin) -> Option<BridgeDiagnostic> {
+    const TAIL_BYTES: usize = 128;
+    let mut chunk = [0_u8; 2_048];
+    let mut tail = Vec::with_capacity(TAIL_BYTES);
+    let mut selected = None;
+    loop {
+        let read = match stderr.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) => read,
+        };
+        let mut scan = Vec::with_capacity(tail.len() + read);
+        scan.extend_from_slice(&tail);
+        scan.extend_from_slice(&chunk[..read]);
+        let output = String::from_utf8_lossy(&scan);
+        if let Some(candidate) = classify_bridge_diagnostic(&output)
+            && selected
+                .is_none_or(|current: BridgeDiagnostic| candidate.priority() > current.priority())
+        {
+            selected = Some(candidate);
+        }
+        let tail_start = scan.len().saturating_sub(TAIL_BYTES);
+        tail.clear();
+        tail.extend_from_slice(&scan[tail_start..]);
+    }
+    selected
+}
+
+fn classify_bridge_diagnostic(output: &str) -> Option<BridgeDiagnostic> {
+    let normalized = output.to_ascii_lowercase();
+    if contains_any(
+        &normalized,
+        &[
+            "permission denied",
+            "operation not permitted",
+            "access is denied",
+            "requires elevation",
+            "administrator privileges",
+        ],
+    ) {
+        Some(BridgeDiagnostic::Permission)
+    } else if contains_any(&normalized, &["wintun", "wireguardnt"]) {
+        Some(BridgeDiagnostic::Wintun)
+    } else if contains_any(
+        &normalized,
+        &[
+            "create tun",
+            "open tun",
+            "tun device",
+            "tun interface",
+            "tap device",
+            "utun",
+        ],
+    ) {
+        Some(BridgeDiagnostic::TunDevice)
+    } else if contains_any(&normalized, &["dns", "resolv.conf", "systemd-resolved"]) {
+        Some(BridgeDiagnostic::DnsSetup)
+    } else if contains_any(
+        &normalized,
+        &["ip route", "ip rule", "netsh", "routing table", "add route"],
+    ) {
+        Some(BridgeDiagnostic::RouteSetup)
+    } else if normalized.contains("address already in use") {
+        Some(BridgeDiagnostic::AddressConflict)
+    } else if contains_any(&normalized, &["device or resource busy", "resource busy"]) {
+        Some(BridgeDiagnostic::ResourceBusy)
+    } else if contains_any(
+        &normalized,
+        &[
+            "network is unreachable",
+            "no route to host",
+            "network is down",
+        ],
+    ) {
+        Some(BridgeDiagnostic::NetworkUnavailable)
+    } else if contains_any(
+        &normalized,
+        &[
+            "no such file or directory",
+            "system cannot find the file specified",
+            "module could not be found",
+        ],
+    ) {
+        Some(BridgeDiagnostic::MissingComponent)
+    } else {
+        None
+    }
+}
+
+fn contains_any(value: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| value.contains(needle))
 }
 
 fn arguments(socks_port: u16, server_addresses: &[SocketAddr]) -> Vec<String> {
@@ -159,19 +306,8 @@ pub(crate) async fn wait_until_stable(
                 true,
             ));
         }
-        if bridge
-            .child
-            .try_wait()
-            .map_err(|_| {
-                ClientError::transport(transport_id, "failed to inspect the route bridge", false)
-            })?
-            .is_some()
-        {
-            return Err(ClientError::transport(
-                transport_id,
-                "the full-route bridge could not configure this system",
-                false,
-            ));
+        if let Some(message) = bridge_exit_if_stopped(bridge, transport_id).await? {
+            return Err(ClientError::transport(transport_id, message, false));
         }
         if tokio::time::Instant::now() >= deadline {
             return Ok(());
@@ -210,19 +346,8 @@ pub(crate) async fn wait_until_three_stable(
                 ));
             }
         }
-        if bridge
-            .child
-            .try_wait()
-            .map_err(|_| {
-                ClientError::transport(transport_id, "failed to inspect the route bridge", false)
-            })?
-            .is_some()
-        {
-            return Err(ClientError::transport(
-                transport_id,
-                "the full-route bridge could not configure this system",
-                false,
-            ));
+        if let Some(message) = bridge_exit_if_stopped(bridge, transport_id).await? {
+            return Err(ClientError::transport(transport_id, message, false));
         }
         if tokio::time::Instant::now() >= deadline {
             return Ok(());
@@ -270,6 +395,48 @@ pub(crate) async fn stop_child(child: &mut Child) {
 
 pub(crate) async fn stop_bridge(bridge: &mut FullRouteProcess) {
     stop_child(&mut bridge.child).await;
+    let _ = take_bridge_diagnostic(bridge).await;
+}
+
+async fn bridge_exit_if_stopped(
+    bridge: &mut FullRouteProcess,
+    transport_id: &str,
+) -> Result<Option<String>, ClientError> {
+    let exit = bridge.child.try_wait().map_err(|_| {
+        ClientError::transport(transport_id, "failed to inspect the route bridge", false)
+    })?;
+    let Some(exit) = exit else {
+        return Ok(None);
+    };
+    let diagnostic = take_bridge_diagnostic(bridge).await;
+    Ok(Some(bridge_exit_message(exit, diagnostic)))
+}
+
+async fn take_bridge_diagnostic(bridge: &mut FullRouteProcess) -> Option<BridgeDiagnostic> {
+    let mut task = bridge.diagnostic.take()?;
+    match timeout(Duration::from_millis(250), &mut task).await {
+        Ok(Ok(diagnostic)) => diagnostic,
+        Ok(Err(_)) => None,
+        Err(_) => {
+            task.abort();
+            None
+        }
+    }
+}
+
+fn bridge_exit_message(
+    exit: std::process::ExitStatus,
+    diagnostic: Option<BridgeDiagnostic>,
+) -> String {
+    diagnostic.map_or_else(
+        || format!("full-route bridge exited unexpectedly ({exit})"),
+        |diagnostic| {
+            format!(
+                "full-route bridge exited unexpectedly ({exit}): {}",
+                diagnostic.message()
+            )
+        },
+    )
 }
 
 pub(crate) fn supervise(
@@ -374,9 +541,10 @@ async fn supervise_processes(
         }
         result = bridge.child.wait() => {
             stop_child(&mut engine).await;
+            let diagnostic = take_bridge_diagnostic(&mut bridge).await;
             let message = result.map_or_else(
                 |_| "failed to wait for the full-route bridge".to_owned(),
-                |exit| format!("full-route bridge exited unexpectedly ({exit})"),
+                |exit| bridge_exit_message(exit, diagnostic),
             );
             status.send_replace(TunnelStatus::Failed(message));
         }
@@ -419,9 +587,10 @@ async fn supervise_three_processes(
         result = bridge.child.wait() => {
             stop_child(&mut carrier).await;
             stop_child(&mut engine).await;
+            let diagnostic = take_bridge_diagnostic(&mut bridge).await;
             let message = result.map_or_else(
                 |_| "failed to wait for the full-route bridge".to_owned(),
-                |exit| format!("full-route bridge exited unexpectedly ({exit})"),
+                |exit| bridge_exit_message(exit, diagnostic),
             );
             status.send_replace(TunnelStatus::Failed(message));
         }
@@ -547,5 +716,56 @@ mod tests {
                 "2001:db8::9",
             ]
         );
+    }
+
+    #[test]
+    fn bridge_diagnostics_are_allowlisted_and_prioritized() {
+        let cases = [
+            (
+                "fatal: operation not permitted",
+                BridgeDiagnostic::Permission,
+            ),
+            (
+                "failed to initialize wintun adapter",
+                BridgeDiagnostic::Wintun,
+            ),
+            (
+                "could not create TUN interface",
+                BridgeDiagnostic::TunDevice,
+            ),
+            ("failed to replace resolv.conf", BridgeDiagnostic::DnsSetup),
+            ("ip route add failed", BridgeDiagnostic::RouteSetup),
+            ("address already in use", BridgeDiagnostic::AddressConflict),
+            ("device or resource busy", BridgeDiagnostic::ResourceBusy),
+            (
+                "network is unreachable",
+                BridgeDiagnostic::NetworkUnavailable,
+            ),
+            (
+                "no such file or directory",
+                BridgeDiagnostic::MissingComponent,
+            ),
+        ];
+        for (stderr, expected) in cases {
+            assert_eq!(classify_bridge_diagnostic(stderr), Some(expected));
+        }
+        assert_eq!(
+            classify_bridge_diagnostic("dns setup failed: operation not permitted"),
+            Some(BridgeDiagnostic::Permission),
+        );
+    }
+
+    #[tokio::test]
+    async fn bridge_diagnostic_collector_never_returns_raw_output() {
+        let secret = "vless://user:credential@example.test/private-path";
+        assert_eq!(collect_bridge_diagnostic(secret.as_bytes()).await, None,);
+
+        let output = format!("{secret}\nfailed to open TUN device\n");
+        let diagnostic = collect_bridge_diagnostic(output.as_bytes())
+            .await
+            .expect("the fixed TUN category should be detected");
+        assert_eq!(diagnostic, BridgeDiagnostic::TunDevice);
+        assert!(!diagnostic.message().contains("credential"));
+        assert!(!diagnostic.message().contains("example.test"));
     }
 }

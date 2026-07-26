@@ -28,7 +28,7 @@ Hysteria2 uses its official UDP-capable [SOCKS5 mode](https://v2.hysteria.networ
 - Only known transport options are accepted. Unknown fields, missing credentials, invalid Gecko bounds, invalid REALITY or SIP022 keys, unsafe XHTTP paths, unsupported flows/modes, extra secrets, and downgrade-shaped fields fail closed.
 - BBR defaults are preserved; the client does not invent unsafe bandwidth values.
 - Configuration files are created in a private directory with mode `0600` on Unix, zeroed in the writer buffer, and removed after the complete process group and route are ready.
-- Raw engine output is discarded after extracting an allowlisted diagnostic category, preventing share URIs or credentials from entering app logs.
+- Raw engine output is discarded after extracting an allowlisted diagnostic category, preventing share URIs or credentials from entering app logs. The full-route bridge continuously drains stderr with bounded memory and reports only fixed permission, TUN, DNS, route, driver, conflict, device, network, or missing-component categories. A post-start bridge failure reaches both the client issue and the privileged service journal without copying raw output.
 - The child process is supervised and killed on explicit disconnect, terminal failure, service shutdown, or desktop heartbeat expiry.
 
 The desktop package bundles verified Hysteria, Xray, `sslocal`, wstunnel, OpenVPN, stunnel, and `tun2proxy` binaries with the service installer. The GUI deliberately does not self-elevate. The SOCKS-backed transports carry TCP and UDP rather than arbitrary IP protocols such as ICMP; OpenVPN owns a native IP TUN instead.
