@@ -520,18 +520,29 @@ mod tests {
             .stderr(Stdio::null())
             .spawn()
             .expect("start pinned sslocal");
-        let ready = (0..50).any(|_| {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                true
-            } else {
-                std::thread::sleep(Duration::from_millis(50));
-                false
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (ready, exit) = loop {
+            let exit = child.try_wait().expect("inspect pinned sslocal");
+            if exit.is_some() {
+                break (false, exit);
             }
-        });
+            if std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok() {
+                break (true, None);
+            }
+            if Instant::now() >= deadline {
+                break (false, None);
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
         let _ = child.kill();
         let _ = child.wait();
         let _ = fs::remove_file(path);
-        assert!(ready, "pinned sslocal rejected the rendered config");
+        assert!(
+            ready,
+            "pinned sslocal did not open its SOCKS listener{}",
+            exit.map_or_else(String::new, |status| format!(" (exited with {status})"))
+        );
     }
 
     fn test_key() -> &'static str {
