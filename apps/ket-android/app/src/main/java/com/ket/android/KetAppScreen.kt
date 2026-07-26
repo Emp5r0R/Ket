@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -46,8 +47,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
@@ -56,6 +63,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -64,44 +72,74 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
-private val KetInk = Color(0xFF071014)
-private val KetLiberatedInk = Color(0xFF14090D)
+private val KetDarkInk = Color(0xFF071014)
+private val KetDarkLiberatedInk = Color(0xFF14090D)
+private val KetLightInk = Color(0xFFF4F6F3)
+private val KetLightLiberatedInk = Color(0xFFFFF7F8)
 internal val KetTeal = Color(0xFF28C7B7)
 internal val KetCoral = Color(0xFFF24F5E)
-internal val KetMuted = Color(0xFF8EA5A7)
-private val KetPanel = Color(0xFF11191D)
-private val KetLiberatedPanel = Color(0xFF1B1115)
+private val KetDarkPanel = Color(0xFF11191D)
+private val KetDarkLiberatedPanel = Color(0xFF1B1115)
+private val KetLightPanel = Color(0xFFFFFFFF)
+private val KetLightText = Color(0xFF18201D)
+private val KetDarkMuted = Color(0xFF9AAEAE)
+private val KetLightMuted = Color(0xFF66716C)
 private val KetHealthy = Color(0xFF4BD29F)
 private val KetDegraded = Color(0xFFF0B44D)
 private val KetSaturated = Color(0xFFFF6B66)
 
+internal enum class KetThemeMode(val storedName: String, val displayName: String) {
+    System("system", "System"),
+    Light("light", "Light"),
+    Dark("dark", "Dark");
+
+    companion object {
+        fun fromStored(value: String?): KetThemeMode = entries.firstOrNull { it.storedName == value } ?: System
+    }
+}
+
 @Composable
 internal fun KetTheme(
     connected: Boolean = false,
+    mode: KetThemeMode = KetThemeMode.System,
     content: @Composable () -> Unit,
 ) {
+    val dark = when (mode) {
+        KetThemeMode.System -> isSystemInDarkTheme()
+        KetThemeMode.Light -> false
+        KetThemeMode.Dark -> true
+    }
     val accent by animateColorAsState(
         targetValue = if (connected) KetCoral else KetTeal,
         animationSpec = tween(360),
         label = "connection accent",
     )
     val background by animateColorAsState(
-        targetValue = if (connected) KetLiberatedInk else KetInk,
+        targetValue = when {
+            dark && connected -> KetDarkLiberatedInk
+            dark -> KetDarkInk
+            connected -> KetLightLiberatedInk
+            else -> KetLightInk
+        },
         animationSpec = tween(360),
         label = "connection background",
     )
     val panel by animateColorAsState(
-        targetValue = if (connected) KetLiberatedPanel else KetPanel,
+        targetValue = when {
+            dark && connected -> KetDarkLiberatedPanel
+            dark -> KetDarkPanel
+            else -> KetLightPanel
+        },
         animationSpec = tween(360),
         label = "connection surface",
     )
     val onAccent by animateColorAsState(
-        targetValue = if (connected) Color.White else KetInk,
+        targetValue = if (dark && !connected) KetDarkInk else Color.White,
         animationSpec = tween(240),
         label = "connection on-accent",
     )
-    MaterialTheme(
-        colorScheme = darkColorScheme(
+    val colorScheme = if (dark) {
+        darkColorScheme(
             primary = accent,
             onPrimary = onAccent,
             background = background,
@@ -110,7 +148,25 @@ internal fun KetTheme(
             error = KetSaturated,
             onBackground = Color.White,
             onSurface = Color.White,
-        ),
+            onSurfaceVariant = KetDarkMuted,
+            outline = Color(0xFF344145),
+        )
+    } else {
+        lightColorScheme(
+            primary = accent,
+            onPrimary = if (connected) Color.White else KetDarkInk,
+            background = background,
+            surface = panel,
+            secondary = accent,
+            error = Color(0xFFB42331),
+            onBackground = KetLightText,
+            onSurface = KetLightText,
+            onSurfaceVariant = KetLightMuted,
+            outline = Color(0xFFCCD4CF),
+        )
+    }
+    MaterialTheme(
+        colorScheme = colorScheme,
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
@@ -128,6 +184,9 @@ internal fun KetApp(
     initialPreferredProtocol: KetProtocol? = null,
     initialAccessExpiresAtEpochSeconds: Long? = null,
     onAccessExpired: () -> Unit = {},
+    themeMode: KetThemeMode = KetThemeMode.System,
+    onThemeModeChange: (KetThemeMode) -> Unit = {},
+    onForgetProfile: () -> Unit = {},
     onConnect: (String, String, KetProtocol?) -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -140,8 +199,18 @@ internal fun KetApp(
         mutableStateOf(initialAccessExpiresAtEpochSeconds)
     }
     var accessRemainingSeconds by rememberSaveable { mutableStateOf<Long?>(null) }
+    var profileSaved by rememberSaveable {
+        mutableStateOf(
+            initialServerUrl.isNotBlank() &&
+                initialAccessCode.length == 32 &&
+                initialAccessExpiresAtEpochSeconds != null,
+        )
+    }
     LaunchedEffect(snapshot.accessExpiresAtEpochSeconds) {
-        snapshot.accessExpiresAtEpochSeconds?.let { accessExpiresAtEpochSeconds = it }
+        snapshot.accessExpiresAtEpochSeconds?.let {
+            accessExpiresAtEpochSeconds = it
+            profileSaved = true
+        }
     }
     LaunchedEffect(accessExpiresAtEpochSeconds) {
         val expiry = accessExpiresAtEpochSeconds ?: run {
@@ -155,6 +224,7 @@ internal fun KetApp(
                 serverUrl = ""
                 accessCode = ""
                 accessExpiresAtEpochSeconds = null
+                profileSaved = false
                 onAccessExpired()
                 break
             }
@@ -231,23 +301,39 @@ internal fun KetApp(
                 Text("KET", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 PhaseStatus(snapshot.phase)
             }
+            ThemeModeSelector(themeMode, onThemeModeChange)
             Text(phaseHeadline(snapshot.phase), style = MaterialTheme.typography.headlineMedium)
             if (!connected && !busy) {
-                OutlinedTextField(
-                    value = serverUrl,
-                    onValueChange = { serverUrl = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Server URL") },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = accessCode,
-                    onValueChange = { accessCode = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("32-character access code") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                )
+                if (profileSaved) {
+                    SavedProfile(
+                        serverUrl = serverUrl,
+                        accessRemainingSeconds = accessRemainingSeconds,
+                        onForget = {
+                            serverUrl = ""
+                            accessCode = ""
+                            accessExpiresAtEpochSeconds = null
+                            accessRemainingSeconds = null
+                            profileSaved = false
+                            onForgetProfile()
+                        },
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = serverUrl,
+                        onValueChange = { serverUrl = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Server URL") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = accessCode,
+                        onValueChange = { accessCode = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("32-character access code") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                    )
+                }
                 ProtocolPreferenceSelector(
                     selected = preferredProtocol,
                     onSelect = { preferredProtocolWireName = it?.wireName },
@@ -255,10 +341,10 @@ internal fun KetApp(
                         guideProtocolWireName = (preferredProtocol ?: KetProtocol.Stealth).wireName
                     },
                 )
-                accessRemainingSeconds?.let {
+                if (!profileSaved) accessRemainingSeconds?.let {
                     Text(
                         "Access left ${formatDuration(it)}",
-                        color = KetMuted,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -271,9 +357,88 @@ internal fun KetApp(
             if (snapshot.message.isNotBlank()) {
                 Text(
                     snapshot.message,
-                    color = if (snapshot.phase == TunnelPhase.Failed) KetSaturated else KetMuted,
+                    color = if (snapshot.phase == TunnelPhase.Failed) KetSaturated else MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemeModeSelector(
+    selected: KetThemeMode,
+    onSelect: (KetThemeMode) -> Unit,
+) {
+    val icons = listOf(Icons.Default.Computer, Icons.Default.LightMode, Icons.Default.DarkMode)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        KetThemeMode.entries.forEachIndexed { index, mode ->
+            OutlinedButton(
+                onClick = { onSelect(mode) },
+                modifier = Modifier.weight(1f).height(40.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (selected == mode) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                    } else {
+                        Color.Transparent
+                    },
+                    contentColor = if (selected == mode) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                ),
+            ) {
+                Icon(icons[index], contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(mode.displayName, maxLines = 1)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedProfile(
+    serverUrl: String,
+    accessRemainingSeconds: Long?,
+    onForget: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(6.dp),
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.Link,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.width(11.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Saved server", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    serverUrl,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                accessRemainingSeconds?.let {
+                    Text(
+                        "${formatDuration(it)} access left",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            TextButton(onClick = onForget) {
+                Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Forget")
             }
         }
     }
@@ -288,7 +453,11 @@ private fun ProtocolPreferenceSelector(
     var expanded by androidx.compose.runtime.remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("PREFERRED PROTOCOL", color = KetMuted, style = MaterialTheme.typography.labelSmall)
+            Text(
+                "PREFERRED PROTOCOL",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+            )
             TextButton(onClick = onLearnMore) { Text("Learn more") }
         }
         Box(Modifier.fillMaxWidth()) {
@@ -322,7 +491,7 @@ private fun ProtocolPreferenceSelector(
         }
         Text(
             selected?.shortInstruction ?: AUTO_PROTOCOL_INSTRUCTION,
-            color = KetMuted,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
         )
     }
@@ -387,19 +556,23 @@ private fun ProtocolLearnMorePage(
 @Composable
 private fun ProtocolGuideSection(title: String, body: String) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        HorizontalDivider(color = Color(0xFF243237))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
         Text(title, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-        Text(body, color = KetMuted, style = MaterialTheme.typography.bodyMedium)
+        Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
 private fun ProtocolGuideList(title: String, items: List<String>) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        HorizontalDivider(color = Color(0xFF243237))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
         Text(title, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         items.forEachIndexed { index, item ->
-            Text("${index + 1}. $item", color = KetMuted, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "${index + 1}. $item",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
     }
 }
@@ -417,7 +590,7 @@ private fun PhaseStatus(phase: TunnelPhase) {
         targetValue = when (phase) {
             TunnelPhase.Connected -> MaterialTheme.colorScheme.primary
             TunnelPhase.Failed -> KetSaturated
-            TunnelPhase.Disconnected -> KetMuted
+            TunnelPhase.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
             else -> KetDegraded
         },
         animationSpec = tween(240),
@@ -497,7 +670,11 @@ private fun ServerMap(node: AndroidNodeStatus?, connected: Boolean) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("SERVER MAP", color = KetMuted, style = MaterialTheme.typography.labelSmall)
+                Text(
+                    "SERVER MAP",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                )
                 Text(
                     node?.location?.countryCode ?: "--",
                     color = MaterialTheme.colorScheme.primary,
@@ -505,7 +682,7 @@ private fun ServerMap(node: AndroidNodeStatus?, connected: Boolean) {
                 )
             }
             KetMap(node?.location, connected)
-            HorizontalDivider(color = Color(0xFF243237))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
             Text(
                 node?.location?.displayName ?: "No server selected",
                 style = MaterialTheme.typography.titleMedium,
@@ -514,7 +691,7 @@ private fun ServerMap(node: AndroidNodeStatus?, connected: Boolean) {
             )
             Text(
                 node?.displayName ?: "Enter a server URL and access code",
-                color = KetMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -538,7 +715,7 @@ private fun NodeCapacity(node: AndroidNodeStatus) {
             Text(node.health.displayName, color = tone, style = MaterialTheme.typography.labelLarge)
             Text(
                 "${node.activeSessions} / ${node.sessionCapacity} sessions",
-                color = KetMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelMedium,
             )
         }
@@ -546,7 +723,7 @@ private fun NodeCapacity(node: AndroidNodeStatus) {
             progress = { (node.capacityPercent / 100.0).toFloat() },
             modifier = Modifier.fillMaxWidth().height(5.dp),
             color = tone,
-            trackColor = Color(0xFF263338),
+            trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
         )
     }
 }
@@ -562,7 +739,7 @@ private fun Telemetry(snapshot: TunnelSnapshot, node: AndroidNodeStatus) {
             "Upload" to formatBytes(snapshot.sentBytes),
             "Handshake" to (snapshot.handshakeLatencyMs?.let { "$it ms" } ?: "--"),
         )
-        HorizontalDivider(color = Color(0xFF1D292D))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
         MetricRow(
             "Transport" to snapshot.transportName,
             "CPU" to (node.cpuLoadPercent?.let { "%.1f%%".format(it) } ?: "--"),
@@ -581,7 +758,11 @@ private fun MetricRow(vararg metrics: Pair<String, String>) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         metrics.forEach { (label, value) ->
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(label, color = KetMuted, style = MaterialTheme.typography.labelSmall)
+                Text(
+                    label,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                )
                 Text(
                     value,
                     style = MaterialTheme.typography.bodyMedium,

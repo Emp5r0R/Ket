@@ -24,13 +24,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-
-private val MapBackground = Color(0xFF0B1519)
-private val MapLand = Color(0xFF29474B)
 
 @Composable
 internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
@@ -50,11 +48,25 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
         label = "map marker pulse",
     )
     val accent = MaterialTheme.colorScheme.primary
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val mapBackground by animateColorAsState(
-        targetValue = if (connected) Color(0xFF190D11) else MapBackground,
+        targetValue = when {
+            dark && connected -> Color(0xFF190D11)
+            dark -> Color(0xFF0B1519)
+            connected -> Color(0xFFFFF2F4)
+            else -> Color(0xFFF2F6F3)
+        },
         animationSpec = tween(360),
         label = "map background",
     )
+    val mapGrid = if (dark) Color(0xFF1A2A2F) else Color(0xFFDDE5E0)
+    val mapLand = when {
+        dark -> Color(0xFF29474B)
+        connected -> Color(0xFFE5B9BF)
+        else -> Color(0xFFCEDAD3)
+    }
+    val mapBorder = if (dark) Color(0xFF3A5D61) else Color(0xFFFFFFFF)
     Box(
         Modifier
             .fillMaxWidth()
@@ -93,11 +105,10 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
                         }
                     }
                     onDrawBehind {
-                        val grid = Color(0xFF1A2A2F)
                         for (x in 0..6) {
                             val position = size.width * x / 6f
                             drawLine(
-                                grid,
+                                mapGrid,
                                 Offset(position, 0f),
                                 Offset(position, size.height),
                                 0.7.dp.toPx(),
@@ -106,17 +117,17 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
                         for (y in 0..3) {
                             val position = size.height * y / 3f
                             drawLine(
-                                grid,
+                                mapGrid,
                                 Offset(0f, position),
                                 Offset(size.width, position),
                                 0.7.dp.toPx(),
                             )
                         }
                         if (geometry != null) {
-                            drawPath(landPath, MapLand)
+                            drawPath(landPath, mapLand)
                             drawPath(
                                 landPath,
-                                Color(0xFF3A5D61),
+                                mapBorder,
                                 style = Stroke(0.6.dp.toPx()),
                             )
                         }
@@ -142,7 +153,7 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
                     )
                 }
                 drawCircle(
-                    if (connected) accent else KetMuted,
+                    if (connected) accent else muted,
                     radius = 4.5.dp.toPx(),
                     center = center,
                 )

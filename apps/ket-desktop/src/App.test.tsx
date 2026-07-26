@@ -47,7 +47,7 @@ describe("Ket desktop shell", () => {
     expect(localStorage.getItem("ket.access-expires-at")).toBeNull();
   });
 
-  it("prefills an unexpired profile and shows its remaining access", async () => {
+  it("restores an unexpired profile without asking for the server again", async () => {
     const expiry = Math.floor(Date.now() / 1_000) + 3_600;
     localStorage.setItem("ket.server-url", "https://saved.example.test");
     localStorage.setItem("ket.access-code", "S".repeat(32));
@@ -56,9 +56,23 @@ describe("Ket desktop shell", () => {
     const { default: App } = await import("./App");
     render(<App />);
 
-    expect(await screen.findByLabelText("Server URL")).toHaveValue("https://saved.example.test");
-    expect(screen.getByLabelText("Access code")).toHaveValue("S".repeat(32));
+    expect(await screen.findByRole("heading", { name: "Frankfurt, Germany" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Access code")).not.toBeInTheDocument();
     expect(screen.getByText(/access left/)).toBeInTheDocument();
+    expect(localStorage.getItem("ket.access-code")).toBe("S".repeat(32));
+  });
+
+  it("persists an explicit dark theme", async () => {
+    const { default: App } = await import("./App");
+    const { container } = render(<App />);
+
+    await screen.findByRole("heading", { name: "Choose your node" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
+
+    expect(localStorage.getItem("ket.theme")).toBe("dark");
+    expect(container.querySelector(".app-shell")).toHaveClass("theme-dark");
   });
 
   it("shows connected telemetry and navigates to metrics", async () => {

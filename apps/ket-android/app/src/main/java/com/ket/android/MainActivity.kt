@@ -35,6 +35,7 @@ private object PendingPermissionRequest {
 
 class MainActivity : ComponentActivity() {
     private val tunnelState = mutableStateOf(KetTunnelRuntime.snapshot())
+    private val themeMode = mutableStateOf(KetThemeMode.System)
     private var subscription: AutoCloseable? = null
     private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val request = PendingPermissionRequest.clear()
@@ -57,6 +58,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val preferences = getSharedPreferences(APPEARANCE_PREFERENCES, MODE_PRIVATE)
+        themeMode.value = KetThemeMode.fromStored(preferences.getString(THEME_MODE_KEY, null))
         val savedCredentials = runCatching {
             AndroidTunnelCredentialStore.get(this).load()?.let { credentials ->
                 if (credentials.accessExpired()) {
@@ -71,7 +74,10 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { tunnelState.value = snapshot }
         }
         setContent {
-            KetTheme(connected = tunnelState.value.phase == TunnelPhase.Connected) {
+            KetTheme(
+                connected = tunnelState.value.phase == TunnelPhase.Connected,
+                mode = themeMode.value,
+            ) {
                 KetApp(
                     snapshot = tunnelState.value,
                     initialServerUrl = savedCredentials?.profile?.serverUrl.orEmpty(),
@@ -79,6 +85,16 @@ class MainActivity : ComponentActivity() {
                     initialPreferredProtocol = savedCredentials?.profile?.preferredProtocol,
                     initialAccessExpiresAtEpochSeconds = savedCredentials?.accessExpiresAtEpochSeconds,
                     onAccessExpired = {
+                        runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
+                    },
+                    themeMode = themeMode.value,
+                    onThemeModeChange = { selected ->
+                        themeMode.value = selected
+                        preferences.edit()
+                            .putString(THEME_MODE_KEY, selected.storedName)
+                            .apply()
+                    },
+                    onForgetProfile = {
                         runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
                     },
                     onConnect = ::requestConnection,
@@ -121,5 +137,10 @@ class MainActivity : ComponentActivity() {
         } else {
             vpnPermission.launch(permission)
         }
+    }
+
+    private companion object {
+        const val APPEARANCE_PREFERENCES = "ket-appearance"
+        const val THEME_MODE_KEY = "theme-mode"
     }
 }

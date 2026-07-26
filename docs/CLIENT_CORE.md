@@ -12,6 +12,10 @@
 6. `refresh`, `renew`, and the optional maintenance task update node health, capacity, traffic, expiry, and reconnect state. A requested connection remains requested after a fully blocked fallback round, so later maintenance ticks retry ranked transports while the failed round still refreshes the server lease. An explicit `stop_tunnel` clears that intent and remains stopped. Every status response must carry the session ID encoded by the active token, the exact enrolled device name, a future lease expiry, valid node telemetry, and internally consistent traffic data before it can replace the last known-good snapshot. Malformed status is reported as `invalid_server_response` without publishing its fields. Authorization loss stops the tunnel, clears reconnect intent, and clears the in-memory session.
 7. `disconnect` stops the local tunnel before releasing the server lease. A failed release is safe because the bounded server lease still expires.
 
+The desktop shell retains the server URL, device name, protocol preference, access code, and server-issued access expiry after enrollment. On launch it transparently enrolls a fresh short-lived session from that saved profile instead of asking for the same code again. Temporary control or network failures do not erase the profile; only its authoritative access expiry or the explicit **Forget server** action does. The shell displays the remaining server-enforced access time and never extends it locally.
+
+Desktop appearance follows the operating-system color scheme by default and also supports persistent Light and Dark overrides. Connected state continues to use Ket's red liberated accent in either theme.
+
 ## Desktop service adapters
 
 The privileged service delegates protocol logic to maintained upstream engines. The desktop process uses `BrokerTransportAdapter`, which authenticates to that service over loopback and never launches engines directly.

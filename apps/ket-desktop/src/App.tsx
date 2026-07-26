@@ -27,6 +27,14 @@ const ACCESS_CODE_KEY = "ket.access-code";
 const DEVICE_KEY = "ket.device-name";
 const PROTOCOL_KEY = "ket.protocol-preference";
 const ACCESS_EXPIRY_KEY = "ket.access-expires-at";
+const THEME_KEY = "ket.theme";
+
+export type ThemePreference = "system" | "light" | "dark";
+
+function loadThemePreference(): ThemePreference {
+  const saved = localStorage.getItem(THEME_KEY);
+  return saved === "light" || saved === "dark" ? saved : "system";
+}
 
 interface SavedEnrollment {
   serverUrl: string;
@@ -109,6 +117,10 @@ export default function App() {
     return saved === "auto" || (saved !== null && isProtocolId(saved)) ? saved : "auto";
   });
   const [guideProtocol, setGuideProtocol] = useState<ProtocolId>("stealth");
+  const [themePreference, setThemePreference] = useState<ThemePreference>(loadThemePreference);
+  const [systemDark, setSystemDark] = useState(
+    () => typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches,
+  );
 
   const applySnapshot = (snapshot: ClientSnapshot) => {
     setState((current) => ({ ...current, snapshot, configured: snapshot.node !== null || current.configured }));
@@ -136,7 +148,7 @@ export default function App() {
     let unsubscribe: (() => void) | undefined;
     void bridge
       .state()
-      .then((next) => {
+      .then(async (next) => {
         if (active) {
           setState(next);
           const traffic = next.snapshot.traffic;
@@ -148,6 +160,26 @@ export default function App() {
                 received: traffic.bytes_received,
               },
             ]);
+          }
+        }
+        if (
+          active &&
+          !next.configured &&
+          initialEnrollment.serverUrl !== "" &&
+          initialEnrollment.accessCode.length === 32
+        ) {
+          try {
+            const restored = await bridge.enroll({
+              serverUrl: initialEnrollment.serverUrl,
+              accessCode: initialEnrollment.accessCode,
+              deviceName,
+            });
+            if (active) {
+              applySnapshot(restored);
+              setState((current) => ({ ...current, configured: true }));
+            }
+          } catch (error) {
+            if (active) setLocalIssue(normalizeIssue(error));
           }
         }
       })
@@ -166,6 +198,15 @@ export default function App() {
       active = false;
       unsubscribe?.();
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    setSystemDark(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
   }, []);
 
   useEffect(() => {
@@ -266,12 +307,22 @@ export default function App() {
     localStorage.setItem(PROTOCOL_KEY, preference);
   };
 
+  const chooseTheme = (preference: ThemePreference) => {
+    setThemePreference(preference);
+    if (preference === "system") {
+      localStorage.removeItem(THEME_KEY);
+    } else {
+      localStorage.setItem(THEME_KEY, preference);
+    }
+  };
+
   const openProtocolGuide = (protocol: ProtocolId) => {
     setGuideProtocol(protocol);
     setView("protocols");
   };
 
   const connected = state.snapshot.phase === "connected";
+  const dark = themePreference === "dark" || (themePreference === "system" && systemDark);
   const availableProtocols = useMemo(
     () => new Set(
       state.snapshot.available_transports
@@ -288,7 +339,7 @@ export default function App() {
 
   if (loading) {
     return (
-      <main className="boot-screen">
+      <main className={`boot-screen ${dark ? "theme-dark" : ""}`}>
         <img src="/ket-mark.svg" alt="Ket" />
         <span>Starting Ket</span>
       </main>
@@ -296,7 +347,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${connected ? "is-liberated" : "is-restricted"}`}>
+    <div className={`app-shell ${dark ? "theme-dark" : "theme-light"} ${connected ? "is-liberated" : "is-restricted"}`}>
       <NavRail active={view} onChange={setView} />
       <main className="app-content">
         {view === "connection" ? (
@@ -371,6 +422,8 @@ export default function App() {
             serverUrl={serverUrl}
             deviceName={deviceName}
             busy={busy}
+            themePreference={themePreference}
+            onThemeChange={chooseTheme}
             onForget={forget}
           />
         ) : null}

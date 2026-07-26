@@ -1,5 +1,6 @@
-import { Binary, KeyRound, Laptop, Server, ShieldCheck, Trash2 } from "lucide-react";
+import { Binary, KeyRound, Laptop, Monitor, Moon, Server, ShieldCheck, Sun, Trash2 } from "lucide-react";
 import { endpointHost } from "../lib/format";
+import type { ThemePreference } from "../App";
 import type { DesktopState } from "../types";
 
 interface SettingsViewProps {
@@ -7,10 +8,26 @@ interface SettingsViewProps {
   serverUrl: string;
   deviceName: string;
   busy: boolean;
+  themePreference: ThemePreference;
+  onThemeChange: (preference: ThemePreference) => void;
   onForget: () => Promise<void>;
 }
 
-export function SettingsView({ state, serverUrl, deviceName, busy, onForget }: SettingsViewProps) {
+const themeOptions = [
+  { id: "system", label: "System", icon: Monitor },
+  { id: "light", label: "Light", icon: Sun },
+  { id: "dark", label: "Dark", icon: Moon },
+] satisfies { id: ThemePreference; label: string; icon: typeof Monitor }[];
+
+export function SettingsView({
+  state,
+  serverUrl,
+  deviceName,
+  busy,
+  themePreference,
+  onThemeChange,
+  onForget,
+}: SettingsViewProps) {
   const tunnelStatus = state.engine.broker_available
     ? "Ready"
     : state.engine.status === "not_installed"
@@ -47,6 +64,30 @@ export function SettingsView({ state, serverUrl, deviceName, busy, onForget }: S
               <span>{label}</span>
               <strong>{value}</strong>
             </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-section" aria-labelledby="appearance-heading">
+        <div className="settings-heading">
+          <div>
+            <h2 id="appearance-heading">Appearance</h2>
+            <span>Theme</span>
+          </div>
+        </div>
+        <div className="theme-segment" role="radiogroup" aria-label="Color theme">
+          {themeOptions.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className={themePreference === id ? "is-active" : ""}
+              role="radio"
+              aria-checked={themePreference === id}
+              onClick={() => onThemeChange(id)}
+            >
+              <Icon size={16} aria-hidden="true" />
+              <span>{label}</span>
+            </button>
           ))}
         </div>
       </section>
