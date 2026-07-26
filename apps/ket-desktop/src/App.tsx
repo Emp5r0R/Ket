@@ -78,6 +78,18 @@ export function savedEnrollmentIsTerminal(issue: ClientIssue): boolean {
   return issue.code === "grant_expired" || issue.code === "unauthorized";
 }
 
+export function savedSessionNeedsReenrollment(
+  issue: ClientIssue | null,
+  accessCode: string,
+  accessExpiresAt: number | null,
+  nowSeconds = Date.now() / 1_000,
+): boolean {
+  return issue?.code === "unauthorized" &&
+    accessCode.length === 32 &&
+    accessExpiresAt !== null &&
+    accessExpiresAt > nowSeconds;
+}
+
 const emptySnapshot: ClientSnapshot = {
   phase: "disconnected",
   node: null,
@@ -289,6 +301,30 @@ export default function App() {
     }, 10_000);
     return () => window.clearInterval(timer);
   }, [state.configured]);
+
+  useEffect(() => {
+    if (
+      !state.configured ||
+      !savedSessionNeedsReenrollment(
+        state.snapshot.issue,
+        savedAccessCode,
+        accessExpiresAt,
+      )
+    ) {
+      return;
+    }
+    let active = true;
+    void bridge.forget()
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) {
+          setState((current) => ({ ...current, configured: false, snapshot: emptySnapshot }));
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [accessExpiresAt, savedAccessCode, state.configured, state.snapshot.issue]);
 
   useEffect(() => {
     if (accessExpiresAt === null) return;

@@ -18,6 +18,8 @@ use crate::{
 
 struct RuntimeState {
     session: Option<SessionManifest>,
+    renew_at_epoch_seconds: Option<u64>,
+    control_failures: u8,
     tunnel: Option<Arc<dyn ActiveTunnel>>,
     connection_requested: bool,
     preferred_protocol: Option<TransportProtocol>,
@@ -64,6 +66,8 @@ impl KetClient {
             operation: Mutex::new(()),
             runtime: Mutex::new(RuntimeState {
                 session: None,
+                renew_at_epoch_seconds: None,
+                control_failures: 0,
                 tunnel: None,
                 connection_requested: false,
                 preferred_protocol: None,
@@ -134,7 +138,11 @@ impl KetClient {
             })
             .map(|transport| TransportSummary::from(&transport.profile))
             .collect();
-        self.runtime.lock().await.session = Some(manifest);
+        let now = unix_time();
+        let mut runtime = self.runtime.lock().await;
+        runtime.renew_at_epoch_seconds = Some(renewal_deadline(now, expires_at));
+        runtime.session = Some(manifest);
+        drop(runtime);
         self.update_snapshot(|snapshot| {
             snapshot.phase = ClientPhase::Enrolled;
             snapshot.node = Some(node);
@@ -201,16 +209,37 @@ impl KetClient {
         if tunnel_status.is_none() && connection_requested {
             return self.reconnect_locked().await;
         }
-        let expires_at = self
+        let renew = self
             .runtime
             .lock()
             .await
-            .session
-            .as_ref()
-            .map(|session| session.session_expires_at_epoch_seconds)
-            .ok_or(ClientError::NotEnrolled)?;
-        self.refresh_locked(unix_time().saturating_add(60) >= expires_at)
-            .await
+            .renew_at_epoch_seconds
+            .is_some_and(|deadline| unix_time() >= deadline);
+        match self.refresh_locked(renew).await {
+            Ok(snapshot) => Ok(snapshot),
+            Err(error @ ClientError::Network(_)) => {
+                let recovery = {
+                    let mut runtime = self.runtime.lock().await;
+                    runtime.control_failures = runtime.control_failures.saturating_add(1);
+                    if runtime.control_failures >= 2 && runtime.connection_requested {
+                        runtime.control_failures = 0;
+                        runtime.tunnel.take().map(|tunnel| {
+                            let transport_id = tunnel.transport_id().to_owned();
+                            (transport_id, tunnel)
+                        })
+                    } else {
+                        None
+                    }
+                };
+                let Some((transport_id, tunnel)) = recovery else {
+                    return Err(error);
+                };
+                tunnel.stop().await?;
+                self.record_failure(&transport_id).await;
+                self.reconnect_locked().await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn disconnect(&self) -> Result<ClientSnapshot, ClientError> {
@@ -260,7 +289,12 @@ impl KetClient {
                 .filter(|error| !error.is_unauthorized()),
             None => None,
         };
-        self.runtime.lock().await.session = None;
+        {
+            let mut runtime = self.runtime.lock().await;
+            runtime.session = None;
+            runtime.renew_at_epoch_seconds = None;
+            runtime.control_failures = 0;
+        }
         let error = stop_error.or(release_error);
         self.update_snapshot(|snapshot| {
             snapshot.phase = ClientPhase::Disconnected;
@@ -293,6 +327,7 @@ impl KetClient {
         let (tunnel, enrolled) = {
             let mut runtime = self.runtime.lock().await;
             runtime.connection_requested = false;
+            runtime.control_failures = 0;
             (runtime.tunnel.take(), runtime.session.is_some())
         };
         let Some(tunnel) = tunnel else {
@@ -495,17 +530,13 @@ impl KetClient {
         match self.connect_locked(true).await {
             Ok(snapshot) => Ok(snapshot),
             Err(connection_error) => {
-                let expires_at = self
+                let renew = self
                     .runtime
                     .lock()
                     .await
-                    .session
-                    .as_ref()
-                    .map(|session| session.session_expires_at_epoch_seconds)
-                    .ok_or(ClientError::NotEnrolled)?;
-                let refresh = self
-                    .refresh_locked(unix_time().saturating_add(60) >= expires_at)
-                    .await;
+                    .renew_at_epoch_seconds
+                    .is_some_and(|deadline| unix_time() >= deadline);
+                let refresh = self.refresh_locked(renew).await;
                 if let Err(error) = refresh
                     && error.is_unauthorized()
                 {
@@ -540,7 +571,7 @@ impl KetClient {
                     });
                     return Err(error);
                 }
-                self.apply_status(status).await;
+                self.apply_status(status, renew).await;
                 Ok(self.snapshot())
             }
             Err(error) if error.is_unauthorized() => {
@@ -553,7 +584,12 @@ impl KetClient {
                 if let Some(tunnel) = tunnel {
                     let _ = tunnel.stop().await;
                 }
-                self.runtime.lock().await.session = None;
+                {
+                    let mut runtime = self.runtime.lock().await;
+                    runtime.session = None;
+                    runtime.renew_at_epoch_seconds = None;
+                    runtime.control_failures = 0;
+                }
                 self.update_snapshot(|snapshot| {
                     snapshot.phase = ClientPhase::Error;
                     snapshot.active_transport = None;
@@ -575,7 +611,7 @@ impl KetClient {
         }
     }
 
-    async fn apply_status(&self, status: SessionStatus) {
+    async fn apply_status(&self, status: SessionStatus, renewed: bool) {
         {
             let mut runtime = self.runtime.lock().await;
             if let Some(session) = &mut runtime.session {
@@ -583,6 +619,13 @@ impl KetClient {
                 session.session_expires_at_epoch_seconds = status.expires_at_epoch_seconds;
                 session.access_expires_at_epoch_seconds = status.access_expires_at_epoch_seconds;
             }
+            if renewed {
+                runtime.renew_at_epoch_seconds = Some(renewal_deadline(
+                    unix_time(),
+                    status.expires_at_epoch_seconds,
+                ));
+            }
+            runtime.control_failures = 0;
         }
         self.update_snapshot(|snapshot| {
             snapshot.node = Some(status.node);
@@ -663,6 +706,10 @@ fn unix_time() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn renewal_deadline(now: u64, expires_at: u64) -> u64 {
+    now.saturating_add(expires_at.saturating_sub(now) / 2)
 }
 
 #[cfg(test)]
@@ -876,6 +923,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maintenance_renews_at_the_lease_midpoint_and_reschedules() {
+        let api = Arc::new(MockApi::new(test_manifest()));
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        client.runtime.lock().await.renew_at_epoch_seconds = Some(unix_time());
+
+        client.maintain_once().await.unwrap();
+        assert_eq!(api.renewals.load(Ordering::SeqCst), 1);
+        assert_eq!(api.statuses.load(Ordering::SeqCst), 0);
+
+        client.maintain_once().await.unwrap();
+        assert_eq!(api.renewals.load(Ordering::SeqCst), 1);
+        assert_eq!(api.statuses.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn maintenance_recovers_the_route_after_repeated_control_timeouts() {
+        let api = Arc::new(MockApi::new(test_manifest()));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        client.connect().await.unwrap();
+        api.fail_next_control_requests(2);
+
+        assert!(matches!(
+            client.maintain_once().await,
+            Err(ClientError::Network(_))
+        ));
+        let recovered = client.maintain_once().await.unwrap();
+
+        assert_eq!(recovered.phase, ClientPhase::Connected);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(adapter.stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn renewal_deadline_uses_half_of_the_available_lease() {
+        assert_eq!(renewal_deadline(100, 400), 250);
+        assert_eq!(renewal_deadline(400, 400), 400);
+        assert_eq!(renewal_deadline(u64::MAX - 2, u64::MAX), u64::MAX - 1);
+    }
+
+    #[tokio::test]
     async fn maintenance_retries_after_a_fully_blocked_recovery_round() {
         let mut manifest = test_manifest();
         manifest.transports = vec![
@@ -952,6 +1062,8 @@ mod tests {
         enrollments: AtomicUsize,
         releases: AtomicUsize,
         statuses: AtomicUsize,
+        renewals: AtomicUsize,
+        control_failures_remaining: AtomicUsize,
     }
 
     impl MockApi {
@@ -966,7 +1078,22 @@ mod tests {
                 enrollments: AtomicUsize::new(0),
                 releases: AtomicUsize::new(0),
                 statuses: AtomicUsize::new(0),
+                renewals: AtomicUsize::new(0),
+                control_failures_remaining: AtomicUsize::new(0),
             }
+        }
+
+        fn fail_next_control_requests(&self, count: usize) {
+            self.control_failures_remaining
+                .store(count, Ordering::SeqCst);
+        }
+
+        fn control_request_fails(&self) -> bool {
+            self.control_failures_remaining
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                    (remaining > 0).then(|| remaining - 1)
+                })
+                .is_ok()
         }
     }
 
@@ -988,6 +1115,9 @@ mod tests {
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
             self.statuses.fetch_add(1, Ordering::SeqCst);
+            if self.control_request_fails() {
+                return Err(ClientError::Network("request timed out"));
+            }
             Ok(self.status.clone())
         }
 
@@ -996,7 +1126,10 @@ mod tests {
             _endpoint: &ControlEndpoint,
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
-            self.statuses.fetch_add(1, Ordering::SeqCst);
+            self.renewals.fetch_add(1, Ordering::SeqCst);
+            if self.control_request_fails() {
+                return Err(ClientError::Network("request timed out"));
+            }
             Ok(self.status.clone())
         }
 

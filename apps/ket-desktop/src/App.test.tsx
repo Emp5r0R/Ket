@@ -10,7 +10,11 @@ afterEach(() => {
 
 describe("Ket desktop shell", () => {
   it("retries only temporary saved-profile failures", async () => {
-    const { savedEnrollmentIsTerminal, shouldRetrySavedEnrollment } = await import("./App");
+    const {
+      savedEnrollmentIsTerminal,
+      savedSessionNeedsReenrollment,
+      shouldRetrySavedEnrollment,
+    } = await import("./App");
 
     expect(shouldRetrySavedEnrollment({
       code: "grant_capacity_reached",
@@ -32,6 +36,16 @@ describe("Ket desktop shell", () => {
       message: "revoked",
       retryable: false,
     })).toBe(true);
+    expect(savedSessionNeedsReenrollment({
+      code: "unauthorized",
+      message: "expired session",
+      retryable: false,
+    }, "A".repeat(32), 2_000, 1_000)).toBe(true);
+    expect(savedSessionNeedsReenrollment({
+      code: "unauthorized",
+      message: "expired session",
+      retryable: false,
+    }, "A".repeat(32), 1_000, 1_000)).toBe(false);
   });
 
   it("retains a successful profile and access expiry", async () => {
