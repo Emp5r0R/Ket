@@ -6,6 +6,7 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$root"
 set -a
+# shellcheck source=/dev/null
 . ./.env
 set +a
 

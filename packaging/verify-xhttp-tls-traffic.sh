@@ -26,7 +26,7 @@ done
 }
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/ket-xhttp-tls-traffic.XXXXXX")
-client_pid= xray_pid= control_pid= carrier_pid=
+client_pid='' xray_pid='' control_pid='' carrier_pid=''
 cleanup() {
   set +e
   for pid in "$client_pid" "$carrier_pid" "$xray_pid" "$control_pid"; do

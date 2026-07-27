@@ -37,7 +37,7 @@ for dependency in curl jq nc openssl shuf socat ss; do
 done
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/ket-shadowsocks-traffic.XXXXXX")
-manager_pid= control_pid= origin_pid= client_pid=
+manager_pid='' control_pid='' origin_pid='' client_pid=''
 cleanup() {
   set +e
   for pid in "$client_pid" "$control_pid" "$origin_pid" "$manager_pid"; do
@@ -235,7 +235,8 @@ reserve_port
 control_port=$reserved_port_result
 reserve_port
 origin_port=$reserved_port_result
-export KET_E2E_ORIGIN_BODY="ket-shadowsocks-e2e-$(openssl rand -hex 16)"
+KET_E2E_ORIGIN_BODY="ket-shadowsocks-e2e-$(openssl rand -hex 16)"
+export KET_E2E_ORIGIN_BODY
 admin_token=admin-token-for-shadowsocks-e2e-with-at-least-32-characters
 credential_key=credential-key-for-shadowsocks-e2e-with-at-least-32-characters
 

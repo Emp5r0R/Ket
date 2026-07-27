@@ -171,10 +171,12 @@ if ((location_fields == 5)); then
   location_mode=manual
   validate_location
 fi
-[[ $max_sessions =~ ^[1-9][0-9]*$ ]] && ((max_sessions <= 512)) \
-  || fail '--max-sessions must be between 1 and 512'
-[[ $first_code_valid_minutes =~ ^[1-9][0-9]*$ ]] && ((first_code_valid_minutes <= 525600)) \
-  || fail '--first-code-valid-minutes must be between 1 and 525600'
+if [[ ! $max_sessions =~ ^[1-9][0-9]*$ ]] || ((max_sessions > 512)); then
+  fail '--max-sessions must be between 1 and 512'
+fi
+if [[ ! $first_code_valid_minutes =~ ^[1-9][0-9]*$ ]] || ((first_code_valid_minutes > 525600)); then
+  fail '--first-code-valid-minutes must be between 1 and 525600'
+fi
 [[ $git_ref =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ && $git_ref != *..* ]] \
   || fail '--ref is invalid'
 [[ $install_dir == /* && $install_dir != / && $install_dir != *$'\n'* ]] \
@@ -205,6 +207,8 @@ fi
 if [[ ! -r /etc/os-release ]]; then
   fail 'cannot detect the Linux distribution'
 fi
+# The distribution file is validated as readable immediately above.
+# shellcheck disable=SC1091
 . /etc/os-release
 case "${ID:-}" in debian|ubuntu) ;; *) fail 'only Debian and Ubuntu are currently supported' ;; esac
 
@@ -371,6 +375,7 @@ docker run --rm --user 0:0 \
 chmod 0644 secrets/openvpn/tls-crypt.key
 
 set -a
+# shellcheck source=/dev/null
 . ./.env
 set +a
 ./packaging/validate-env.sh

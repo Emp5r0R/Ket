@@ -5,7 +5,7 @@ fail() { printf 'Ket configuration error: %s\n' "$1" >&2; exit 1; }
 required() { [[ -n "${!1:-}" ]] || fail "$1 is required"; }
 valid_port() { [[ "${!1:-$2}" =~ ^[1-9][0-9]*$ ]] && (( ${!1:-$2} <= 65535 )); }
 bounded_text() {
-  local name=$1 value=${!1:-$2} maximum=$3
+  local value=${!1:-$2} maximum=$3
   [[ -n "$value" && ${#value} -le $maximum ]] || return 1
   [[ "$value" != [[:space:]]* && "$value" != *[[:space:]] ]] || return 1
   [[ ! "$value" =~ [[:cntrl:]] ]]

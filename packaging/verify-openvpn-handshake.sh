@@ -2,7 +2,7 @@
 set -euo pipefail
 
 mock_manager_connection() {
-  local request_line line content_length=0 authorization= body= method path response
+  local request_line line content_length=0 authorization='' body='' method path response
   IFS= read -r request_line || exit 0
   request_line=${request_line%$'\r'}
   while IFS= read -r line; do
@@ -135,7 +135,7 @@ if [[ -z ${KET_E2E_SERVER_BIN:-} || -z ${KET_E2E_OPENVPN_AUTH_BIN:-} ]]; then
 fi
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/ket-openvpn-handshake.XXXXXX")
-server_pid= outer_pid= manager_pid= control_pid= carrier_pid= client_pid=
+server_pid='' outer_pid='' manager_pid='' control_pid='' carrier_pid='' client_pid=''
 cleanup() {
   set +e
   for pid in "$client_pid" "$carrier_pid" "$control_pid" "$manager_pid" "$outer_pid" "$server_pid"; do

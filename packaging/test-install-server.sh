@@ -65,7 +65,7 @@ reject --domain bad..example.com --email operator@example.com
 reject --domain ket.example.com --email operator@example.com --max-sessions 513
 reject --domain ket.example.com --email operator@example.com --first-code-valid-minutes 0
 reject --domain ket.example.com --email operator@example.com --first-code-valid-minutes 525601
-reject --domain ket.example.com --email operator@example.com --country-name 'bad$name'
+reject --domain ket.example.com --email operator@example.com --country-name "bad\$name"
 reject --domain ket.example.com --email operator@example.com --country-code SG
 
 printf 'Ket installer argument tests passed.\n'
