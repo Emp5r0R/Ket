@@ -1,0 +1,52 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DiagnosticsDialog } from "./DiagnosticsDialog";
+
+afterEach(() => vi.restoreAllMocks());
+
+describe("diagnostics dialog", () => {
+  it("renders nothing while closed and exposes a modal without secrets when open", () => {
+    const { rerender } = render(
+      <DiagnosticsDialog open={false} report="safe report" onClose={vi.fn()} />,
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    rerender(<DiagnosticsDialog open report="safe report" onClose={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "Connection diagnostics" })).toBeInTheDocument();
+    expect(screen.getByText("safe report")).toBeInTheDocument();
+    expect(screen.getByText(/credentials are excluded/i)).toBeInTheDocument();
+  });
+
+  it("copies the exact report and resets copied state after closing", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const report = "line 1\nline 2";
+    const { rerender } = render(
+      <DiagnosticsDialog open report={report} onClose={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy logs" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(report));
+    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+
+    rerender(<DiagnosticsDialog open={false} report={report} onClose={vi.fn()} />);
+    rerender(<DiagnosticsDialog open report={report} onClose={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Copy logs" })).toBeInTheDocument();
+  });
+
+  it("closes from escape, the close button, and backdrop but not dialog content", () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <DiagnosticsDialog open report="report" onClose={onClose} />,
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Close diagnostics" }));
+    fireEvent.mouseDown(screen.getByRole("dialog"));
+    expect(onClose).toHaveBeenCalledTimes(2);
+    fireEvent.mouseDown(container.querySelector(".diagnostics-backdrop") as Element);
+    expect(onClose).toHaveBeenCalledTimes(3);
+  });
+});

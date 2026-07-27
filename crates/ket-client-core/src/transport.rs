@@ -43,3 +43,27 @@ pub trait TransportAdapter: Send + Sync {
         probe: &ProbeReport,
     ) -> Result<StartedTunnel, ClientError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tunnel_status_wire_contract_round_trips_all_states() {
+        for (status, expected) in [
+            (TunnelStatus::Connected, r#"{"state":"connected"}"#),
+            (TunnelStatus::Stopped, r#"{"state":"stopped"}"#),
+            (
+                TunnelStatus::Failed("route lost".to_owned()),
+                r#"{"state":"failed","message":"route lost"}"#,
+            ),
+        ] {
+            let encoded = serde_json::to_string(&status).unwrap();
+            assert_eq!(encoded, expected);
+            assert_eq!(
+                serde_json::from_str::<TunnelStatus>(&encoded).unwrap(),
+                status
+            );
+        }
+    }
+}

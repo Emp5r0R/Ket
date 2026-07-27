@@ -360,12 +360,23 @@ mod tests {
     fn challenge_proofs_verify_without_exposing_the_token() {
         let token = BrokerToken::generate();
         let challenge = challenge();
+        assert_eq!(challenge.version, BROKER_PROTOCOL_VERSION);
         let valid = token.prove(&challenge.nonce);
         assert!(token.verify(&challenge.nonce, &valid));
 
         let other = BrokerToken::generate();
         assert!(!other.verify(&challenge.nonce, &valid));
+        let mut wrong_nonce = challenge.nonce;
+        wrong_nonce[0] ^= 1;
+        assert!(!token.verify(&wrong_nonce, &valid));
+        let mut tampered = valid.clone();
+        tampered.mac[31] ^= 1;
+        assert!(!token.verify(&challenge.nonce, &tampered));
         assert_eq!(format!("{token:?}"), "BrokerToken([REDACTED])");
+        assert_eq!(
+            format!("{valid:?}"),
+            "HandshakeProof { mac: \"[REDACTED]\" }"
+        );
     }
 
     #[tokio::test]
@@ -386,6 +397,66 @@ mod tests {
             read_frame::<_, BrokerRequest>(&mut server).await,
             Err(FrameError::TooLarge)
         ));
+    }
+
+    #[tokio::test]
+    async fn framing_rejects_empty_invalid_truncated_and_oversized_payloads() {
+        for bytes in [
+            0_u32.to_be_bytes().to_vec(),
+            5_u32.to_be_bytes().into_iter().chain(*b"nope!").collect(),
+        ] {
+            let mut reader = bytes.as_slice();
+            let error = read_frame::<_, BrokerRequest>(&mut reader)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, FrameError::TooLarge | FrameError::Invalid));
+        }
+
+        let truncated = 10_u32
+            .to_be_bytes()
+            .into_iter()
+            .chain(*b"{}")
+            .collect::<Vec<_>>();
+        let mut reader = truncated.as_slice();
+        assert!(matches!(
+            read_frame::<_, BrokerRequest>(&mut reader).await,
+            Err(FrameError::Io(_))
+        ));
+
+        let mut sink = tokio::io::sink();
+        let oversized = "x".repeat(MAX_FRAME_BYTES + 1);
+        assert!(matches!(
+            write_frame(&mut sink, &oversized).await,
+            Err(FrameError::TooLarge)
+        ));
+    }
+
+    #[test]
+    fn request_and_response_debug_output_redacts_broker_capabilities() {
+        for request in [
+            BrokerRequest::Status {
+                tunnel_id: "secret-tunnel-id".to_owned(),
+            },
+            BrokerRequest::Heartbeat {
+                tunnel_id: "secret-tunnel-id".to_owned(),
+            },
+            BrokerRequest::Stop {
+                tunnel_id: "secret-tunnel-id".to_owned(),
+            },
+        ] {
+            let debug = format!("{request:?}");
+            assert!(!debug.contains("secret-tunnel-id"));
+            assert!(debug.contains("[REDACTED]"));
+        }
+
+        let response = BrokerResponse::Connected {
+            tunnel_id: "secret-tunnel-id".to_owned(),
+            handshake_latency_ms: 25,
+        };
+        let debug = format!("{response:?}");
+        assert!(!debug.contains("secret-tunnel-id"));
+        assert!(debug.contains("[REDACTED]"));
+        assert!(debug.contains("25"));
     }
 
     #[cfg(unix)]
@@ -410,6 +481,36 @@ mod tests {
         ));
 
         fs::remove_file(link_path).unwrap();
+        fs::remove_file(token_path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn token_file_creation_is_private_atomic_by_exclusivity_and_length_checked() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let token_path = temporary_token_path("token-create");
+        let token = BrokerToken::generate();
+        token.write_new(&token_path).unwrap();
+        assert_eq!(
+            fs::metadata(&token_path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        assert!(matches!(
+            token.write_new(&token_path),
+            Err(TokenError::Io(_))
+        ));
+        assert_eq!(
+            format!("{:?}", BrokerToken::load(&token_path).unwrap()),
+            "BrokerToken([REDACTED])"
+        );
+
+        fs::write(&token_path, [0_u8; TOKEN_BYTES - 1]).unwrap();
+        fs::set_permissions(&token_path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            BrokerToken::load(&token_path),
+            Err(TokenError::InvalidLength)
+        ));
         fs::remove_file(token_path).unwrap();
     }
 }

@@ -118,6 +118,8 @@ fn write_atomic(path: &Path, document: &Value) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
 
     #[test]
@@ -138,6 +140,51 @@ mod tests {
         assert!(acl.contains(&json!("reject(198.18.0.0/15)")));
         assert!(acl.contains(&json!("reject(all, tcp/25)")));
         assert_eq!(acl.last(), Some(&json!("direct(all)")));
+    }
+
+    #[test]
+    fn renderer_covers_disabled_salamander_and_gecko_obfuscation() {
+        let mut config = test_config();
+        config.obfuscation = HysteriaObfuscation::Disabled;
+        assert!(render_runtime_config(&config).get("obfs").is_none());
+
+        config.obfuscation = HysteriaObfuscation::Gecko {
+            password: "gecko-secret-at-least-32-characters".to_owned(),
+        };
+        let gecko = render_runtime_config(&config);
+        assert_eq!(gecko["obfs"]["type"], "gecko");
+        assert_eq!(gecko["obfs"]["gecko"]["minPacketSize"], 512);
+        assert_eq!(gecko["obfs"]["gecko"]["maxPacketSize"], 1_200);
+        assert_eq!(
+            gecko["obfs"]["gecko"]["password"],
+            "gecko-secret-at-least-32-characters"
+        );
+    }
+
+    #[test]
+    fn atomic_writer_creates_private_complete_json_without_leaving_a_temporary_file() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("ket-hysteria-config-{nonce}"));
+        let path = directory.join("nested/runtime.json");
+        let document = render_runtime_config(&test_config());
+
+        write_atomic(&path, &document).expect("atomic config write must succeed");
+        let decoded: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(decoded, document);
+        assert!(!path.with_extension("json.tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     fn test_config() -> HysteriaConfig {

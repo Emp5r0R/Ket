@@ -124,3 +124,186 @@ impl Default for TransportSelector {
         Self::new(SelectionPolicy::default())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, sync::Arc};
+
+    use async_trait::async_trait;
+    use ket_core::{Network, TransportCredential, TransportProfile};
+
+    use crate::{ClientError, ProbeReport, StartedTunnel};
+
+    use super::*;
+
+    struct SupportingAdapter(Vec<TransportProtocol>);
+
+    #[async_trait]
+    impl TransportAdapter for SupportingAdapter {
+        fn supports(&self, transport: &SessionTransport) -> bool {
+            self.0.contains(&transport.profile.protocol)
+        }
+
+        async fn probe(&self, _transport: &SessionTransport) -> Result<ProbeReport, ClientError> {
+            unreachable!("ranking must not probe transports")
+        }
+
+        async fn connect(
+            &self,
+            _transport: &SessionTransport,
+            _probe: &ProbeReport,
+        ) -> Result<StartedTunnel, ClientError> {
+            unreachable!("ranking must not connect transports")
+        }
+    }
+
+    #[test]
+    fn default_policy_is_bounded_and_automatic() {
+        let policy = SelectionPolicy::default();
+        assert_eq!(policy.max_attempts, 3);
+        assert_eq!(policy.preferred_protocol, None);
+        assert_eq!(policy.failure_cooldown_seconds, 15);
+    }
+
+    #[test]
+    fn ranking_filters_unsupported_transports_and_is_deterministic() {
+        let selector = TransportSelector::default();
+        let transports = vec![
+            transport("z-reality", TransportProtocol::VlessXtlsReality, 5),
+            transport("b-hysteria", TransportProtocol::Hysteria2, 1),
+            transport("a-hysteria", TransportProtocol::Hysteria2, 1),
+            transport("unsupported", TransportProtocol::Ikev2, 0),
+        ];
+        let adapters: Vec<Arc<dyn TransportAdapter>> = vec![Arc::new(SupportingAdapter(vec![
+            TransportProtocol::Hysteria2,
+            TransportProtocol::VlessXtlsReality,
+        ]))];
+
+        let ranked = selector.rank(&transports, &adapters, &TransportHistory::default(), 100);
+        assert_eq!(ids(&ranked), ["a-hysteria", "b-hysteria", "z-reality"]);
+    }
+
+    #[test]
+    fn configured_preference_ranks_first_but_explicit_preference_filters_strictly() {
+        let selector = TransportSelector::new(SelectionPolicy {
+            max_attempts: 10,
+            preferred_protocol: Some(TransportProtocol::Stealth),
+            failure_cooldown_seconds: 15,
+        });
+        let transports = vec![
+            transport("reality", TransportProtocol::VlessXtlsReality, 1),
+            transport("stealth", TransportProtocol::Stealth, 99),
+            transport("hysteria", TransportProtocol::Hysteria2, 2),
+        ];
+        let adapters: Vec<Arc<dyn TransportAdapter>> = vec![Arc::new(SupportingAdapter(vec![
+            TransportProtocol::Hysteria2,
+            TransportProtocol::Stealth,
+            TransportProtocol::VlessXtlsReality,
+        ]))];
+
+        assert_eq!(
+            ids(&selector.rank(&transports, &adapters, &TransportHistory::default(), 0)),
+            ["stealth", "reality", "hysteria"]
+        );
+        assert_eq!(
+            ids(&selector.rank_with_preference(
+                &transports,
+                &adapters,
+                &TransportHistory::default(),
+                0,
+                Some(&TransportProtocol::Hysteria2),
+            )),
+            ["hysteria"]
+        );
+    }
+
+    #[test]
+    fn failure_cooldown_backs_off_caps_and_success_resets_history() {
+        let mut history = TransportHistory::default();
+        for expected in [115, 130, 160, 220, 220, 220] {
+            history.record_failure("route", 100, 15);
+            assert_eq!(
+                history.records["route"].cooldown_until_epoch_seconds,
+                expected
+            );
+        }
+        assert_eq!(history.records["route"].consecutive_failures, 6);
+
+        history.record_success("route", 42);
+        let record = &history.records["route"];
+        assert_eq!(record.consecutive_failures, 0);
+        assert_eq!(record.cooldown_until_epoch_seconds, 0);
+        assert_eq!(record.last_latency_ms, Some(42));
+    }
+
+    #[test]
+    fn history_orders_ready_successes_before_failed_or_cooling_routes() {
+        let selector = TransportSelector::new(SelectionPolicy {
+            max_attempts: 5,
+            preferred_protocol: None,
+            failure_cooldown_seconds: 15,
+        });
+        let transports = vec![
+            transport("fresh", TransportProtocol::Hysteria2, 1),
+            transport("fast", TransportProtocol::Hysteria2, 10),
+            transport("failed", TransportProtocol::Hysteria2, 0),
+            transport("cooling", TransportProtocol::Hysteria2, 0),
+        ];
+        let adapters: Vec<Arc<dyn TransportAdapter>> = vec![Arc::new(SupportingAdapter(vec![
+            TransportProtocol::Hysteria2,
+        ]))];
+        let mut history = TransportHistory::default();
+        history.record_success("fast", 5);
+        history.record_failure("failed", 0, 15);
+        history.record_failure("cooling", 100, 15);
+
+        assert_eq!(
+            ids(&selector.rank(&transports, &adapters, &history, 100)),
+            ["fresh", "fast", "failed", "cooling"]
+        );
+    }
+
+    #[test]
+    fn max_attempts_is_enforced_with_a_minimum_of_one() {
+        let transports = vec![
+            transport("a", TransportProtocol::Hysteria2, 1),
+            transport("b", TransportProtocol::Hysteria2, 2),
+        ];
+        let adapters: Vec<Arc<dyn TransportAdapter>> = vec![Arc::new(SupportingAdapter(vec![
+            TransportProtocol::Hysteria2,
+        ]))];
+        let selector = TransportSelector::new(SelectionPolicy {
+            max_attempts: 0,
+            preferred_protocol: None,
+            failure_cooldown_seconds: 15,
+        });
+        assert_eq!(
+            ids(&selector.rank(&transports, &adapters, &TransportHistory::default(), 0)),
+            ["a"]
+        );
+    }
+
+    fn ids<'a>(transports: &[&'a SessionTransport]) -> Vec<&'a str> {
+        transports
+            .iter()
+            .map(|transport| transport.profile.id.as_str())
+            .collect()
+    }
+
+    fn transport(id: &str, protocol: TransportProtocol, priority: u16) -> SessionTransport {
+        SessionTransport {
+            profile: TransportProfile {
+                id: id.to_owned(),
+                display_name: id.to_owned(),
+                protocol,
+                endpoint: "vpn.example.test".to_owned(),
+                port: 443,
+                network: Network::Tcp,
+                priority,
+                tls_server_name: None,
+                options: BTreeMap::new(),
+            },
+            credential: None::<TransportCredential>,
+        }
+    }
+}

@@ -53,3 +53,66 @@ pub struct ClientSnapshot {
     pub issue: Option<ClientIssue>,
     pub updated_at_epoch_seconds: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use ket_core::TransportProfile;
+
+    use super::*;
+
+    #[test]
+    fn phase_wire_names_and_disconnected_default_are_stable() {
+        let phases = [
+            (ClientPhase::Disconnected, "disconnected"),
+            (ClientPhase::Enrolling, "enrolling"),
+            (ClientPhase::Enrolled, "enrolled"),
+            (ClientPhase::Probing, "probing"),
+            (ClientPhase::Connecting, "connecting"),
+            (ClientPhase::Connected, "connected"),
+            (ClientPhase::Reconnecting, "reconnecting"),
+            (ClientPhase::Disconnecting, "disconnecting"),
+            (ClientPhase::Error, "error"),
+        ];
+        for (phase, wire_name) in phases {
+            assert_eq!(
+                serde_json::to_string(&phase).unwrap(),
+                format!("\"{wire_name}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<ClientPhase>(&format!("\"{wire_name}\"")).unwrap(),
+                phase
+            );
+        }
+
+        let snapshot = ClientSnapshot::default();
+        assert_eq!(snapshot.phase, ClientPhase::Disconnected);
+        assert!(snapshot.node.is_none());
+        assert!(snapshot.available_transports.is_empty());
+        assert!(snapshot.issue.is_none());
+    }
+
+    #[test]
+    fn transport_summary_exposes_identity_but_not_adapter_options() {
+        let profile = TransportProfile {
+            id: "stealth-primary".to_owned(),
+            display_name: "HTTPS Stealth".to_owned(),
+            protocol: TransportProtocol::Stealth,
+            endpoint: "secret-origin.example.test".to_owned(),
+            port: 443,
+            network: Network::Tcp,
+            priority: 1,
+            tls_server_name: Some("public.example.test".to_owned()),
+            options: BTreeMap::from([("path".to_owned(), "/private-path".to_owned())]),
+        };
+        let summary = TransportSummary::from(&profile);
+        assert_eq!(summary.id, "stealth-primary");
+        assert_eq!(summary.protocol, TransportProtocol::Stealth);
+        let encoded = serde_json::to_value(summary).unwrap();
+        assert_eq!(encoded["network"], "tcp");
+        assert!(encoded.get("endpoint").is_none());
+        assert!(encoded.get("options").is_none());
+        assert!(!encoded.to_string().contains("private-path"));
+    }
+}

@@ -241,3 +241,192 @@ pub struct ErrorResponse {
     pub code: String,
     pub message: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use serde::{Serialize, de::DeserializeOwned};
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    #[test]
+    fn protocol_network_and_health_wire_names_are_stable() {
+        let protocols = [
+            (TransportProtocol::Hysteria2, "hysteria2"),
+            (TransportProtocol::Ikev2, "ikev2"),
+            (TransportProtocol::OpenVpnStunnel, "open_vpn_stunnel"),
+            (TransportProtocol::Shadowsocks2022, "shadowsocks2022"),
+            (TransportProtocol::Stealth, "stealth"),
+            (TransportProtocol::VlessXtlsReality, "vless_xtls_reality"),
+            (TransportProtocol::WireGuard, "wire_guard"),
+            (TransportProtocol::XorScrambled, "xor_scrambled"),
+        ];
+        for (value, wire_name) in protocols {
+            assert_wire_round_trip(value, json!(wire_name));
+        }
+        for (value, wire_name) in [
+            (Network::Tcp, "tcp"),
+            (Network::Udp, "udp"),
+            (Network::TcpAndUdp, "tcp_and_udp"),
+        ] {
+            assert_wire_round_trip(value, json!(wire_name));
+        }
+        for (value, wire_name) in [
+            (HealthState::Healthy, "healthy"),
+            (HealthState::Degraded, "degraded"),
+            (HealthState::Saturated, "saturated"),
+        ] {
+            assert_wire_round_trip(value, json!(wire_name));
+        }
+    }
+
+    #[test]
+    fn session_manifest_round_trips_without_leaking_secrets_to_debug() {
+        let manifest = test_manifest();
+        let value = serde_json::to_value(&manifest).expect("manifest must serialize");
+        assert_eq!(value["session_token"], "session-secret");
+        assert_eq!(
+            value["transports"][0]["credential"]["auth"],
+            "transport-secret"
+        );
+        assert_eq!(
+            value["transports"][0]["credential"]["secrets"]["private_key"],
+            "private-secret"
+        );
+        assert!(value["transports"][0].get("profile").is_none());
+        assert!(value["transports"][0].get("tls_server_name").is_some());
+
+        let decoded: SessionManifest =
+            serde_json::from_value(value).expect("manifest must deserialize");
+        assert_eq!(decoded, manifest);
+
+        let debug = format!("{manifest:?}");
+        for secret in ["session-secret", "transport-secret", "private-secret"] {
+            assert!(!debug.contains(secret));
+        }
+        assert!(debug.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn optional_and_default_contract_fields_are_backward_compatible() {
+        let profile: TransportProfile = serde_json::from_value(json!({
+            "id": "hy2-primary",
+            "display_name": "Hysteria 2",
+            "protocol": "hysteria2",
+            "endpoint": "vpn.example.test",
+            "port": 443,
+            "network": "udp",
+            "priority": 1
+        }))
+        .expect("optional profile fields must default");
+        assert_eq!(profile.tls_server_name, None);
+        assert!(profile.options.is_empty());
+
+        let encoded = serde_json::to_value(&profile).expect("profile must serialize");
+        assert!(encoded.get("tls_server_name").is_none());
+        assert_eq!(encoded["options"], json!({}));
+
+        let transport: SessionTransport = serde_json::from_value(encoded)
+            .expect("missing credentials must represent a public profile");
+        assert_eq!(transport.credential, None);
+    }
+
+    #[test]
+    fn grant_and_status_contracts_preserve_lifetime_and_telemetry_fields() {
+        let request = CreateAccessGrantRequest {
+            label: "Personal devices".to_owned(),
+            max_connections: 5,
+            valid_for_minutes: MAX_ACCESS_GRANT_VALIDITY_MINUTES,
+        };
+        assert_wire_round_trip(
+            request,
+            json!({
+                "label": "Personal devices",
+                "max_connections": 5,
+                "valid_for_minutes": 525600
+            }),
+        );
+
+        let status = SessionStatus {
+            session_id: "AbCdEf123456".to_owned(),
+            client_name: "Ket Android".to_owned(),
+            expires_at_epoch_seconds: 2_000,
+            access_expires_at_epoch_seconds: Some(3_000),
+            node: test_node(),
+            traffic: SessionTraffic {
+                available: true,
+                bytes_sent: 10,
+                bytes_received: 20,
+                online_connections: 1,
+                observed_at_epoch_seconds: 1_500,
+            },
+        };
+        let value = serde_json::to_value(&status).expect("status must serialize");
+        assert_eq!(value["access_expires_at_epoch_seconds"], 3_000);
+        assert_eq!(value["traffic"]["bytes_received"], 20);
+        assert_wire_round_trip(status, value);
+    }
+
+    fn assert_wire_round_trip<T>(value: T, expected: Value)
+    where
+        T: Clone + std::fmt::Debug + PartialEq + Serialize + DeserializeOwned,
+    {
+        let encoded = serde_json::to_value(&value).expect("value must serialize");
+        assert_eq!(encoded, expected);
+        let decoded: T = serde_json::from_value(encoded).expect("value must deserialize");
+        assert_eq!(decoded, value);
+    }
+
+    fn test_manifest() -> SessionManifest {
+        SessionManifest {
+            session_token: SecretString::from("session-secret"),
+            session_expires_at_epoch_seconds: 2_000,
+            access_expires_at_epoch_seconds: Some(3_000),
+            node: test_node(),
+            transports: vec![SessionTransport {
+                profile: TransportProfile {
+                    id: "reality-primary".to_owned(),
+                    display_name: "VLESS + REALITY".to_owned(),
+                    protocol: TransportProtocol::VlessXtlsReality,
+                    endpoint: "vpn.example.test".to_owned(),
+                    port: 443,
+                    network: Network::Tcp,
+                    priority: 1,
+                    tls_server_name: Some("www.example.com".to_owned()),
+                    options: BTreeMap::from([("flow".to_owned(), "xtls-rprx-vision".to_owned())]),
+                },
+                credential: Some(TransportCredential {
+                    auth: SecretString::from("transport-secret"),
+                    secrets: BTreeMap::from([(
+                        "private_key".to_owned(),
+                        SecretString::from("private-secret"),
+                    )]),
+                }),
+            }],
+        }
+    }
+
+    fn test_node() -> NodeStatus {
+        NodeStatus {
+            node_id: "sg-01".to_owned(),
+            display_name: "Ket Singapore".to_owned(),
+            public_url: "https://ket.example.test".to_owned(),
+            location: NodeLocation {
+                country_code: "SG".to_owned(),
+                country_name: "Singapore".to_owned(),
+                city: Some("Singapore".to_owned()),
+                latitude: 1.29,
+                longitude: 103.85,
+            },
+            health: HealthState::Healthy,
+            active_sessions: 1,
+            session_capacity: 10,
+            capacity_percent: 10.0,
+            cpu_load_percent: Some(5.0),
+            memory_used_bytes: Some(1_024),
+            memory_total_bytes: Some(4_096),
+            uptime_seconds: Some(60),
+            observed_at_epoch_seconds: 1_000,
+        }
+    }
+}

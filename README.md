@@ -217,11 +217,15 @@ sudo bash -c '
 The server, shared contracts, client core, and tunnel service support both `amd64` and `arm64`, including Oracle Ampere hosts. Building the Tauri desktop app additionally requires Tauri's platform webview development packages.
 
 ```bash
-cargo fmt --all -- --check
-cargo test --workspace --exclude ket-desktop
-cargo clippy --workspace --exclude ket-desktop --all-targets --all-features -- -D warnings
-cargo build --release --package ket-server
+./scripts/test-all.sh
 ```
+
+This runs every portable unit and contract suite across the server, shared Rust
+code, privileged tunnel service, desktop clients, Android client, installers,
+and CI routing. Run `./scripts/test-all.sh all` for formatting, strict lints,
+production UI builds, Android lint, and the local real-engine integration
+harnesses as well. The complete feature matrix, prerequisites, focused modes,
+and physical-test boundary are documented in [the testing guide](docs/TESTING.md).
 
 `/media/n_emperor/Aadhish/gradle-home` is a Gradle user-home cache, not a Gradle executable. Use it with the repository wrapper:
 

@@ -282,7 +282,7 @@ internal class AndroidOpenVpnManagement(
         socketFile.delete()
     }
 
-    private class MutableTunConfig {
+    internal class MutableTunConfig {
         private var ipv4Address: InetAddress? = null
         private var ipv4PrefixLength: Int? = null
         private var ipv6Address: InetAddress? = null

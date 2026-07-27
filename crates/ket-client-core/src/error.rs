@@ -125,3 +125,104 @@ fn issue(code: &str, error: &ClientError, retryable: bool) -> ClientIssue {
         retryable,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_error_variant_has_a_stable_public_issue_policy() {
+        let cases = [
+            (
+                ClientError::InvalidEndpoint("bad".to_owned()),
+                "invalid_endpoint",
+                false,
+            ),
+            (
+                ClientError::InvalidInput("bad".to_owned()),
+                "invalid_input",
+                false,
+            ),
+            (ClientError::NotEnrolled, "not_enrolled", false),
+            (ClientError::AlreadyConnected, "already_connected", false),
+            (
+                ClientError::Network("request timed out"),
+                "network_unavailable",
+                true,
+            ),
+            (ClientError::ResponseTooLarge, "response_too_large", false),
+            (
+                ClientError::InvalidResponse("bad JSON".to_owned()),
+                "invalid_server_response",
+                false,
+            ),
+            (
+                ClientError::NoCompatibleTransport,
+                "no_compatible_transport",
+                false,
+            ),
+            (
+                ClientError::dns_resolution("reality", "DNS timed out"),
+                "transport_dns_failed",
+                true,
+            ),
+            (
+                ClientError::transport("reality", "blocked", true),
+                "transport_failed",
+                true,
+            ),
+            (
+                ClientError::transport("reality", "invalid config", false),
+                "transport_failed",
+                false,
+            ),
+            (
+                ClientError::Local("disk failed".to_owned()),
+                "local_failure",
+                false,
+            ),
+        ];
+
+        for (error, code, retryable) in cases {
+            let issue = error.issue();
+            assert_eq!(issue.code, code, "wrong code for {error:?}");
+            assert_eq!(
+                issue.retryable, retryable,
+                "wrong retry policy for {error:?}"
+            );
+            assert!(!issue.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn api_errors_preserve_safe_server_copy_and_retry_only_transient_statuses() {
+        for (status, retryable) in [
+            (400, false),
+            (401, false),
+            (403, false),
+            (429, true),
+            (500, true),
+        ] {
+            let error = ClientError::Api {
+                status,
+                code: "server_code".to_owned(),
+                message: "bounded server message".to_owned(),
+            };
+            assert_eq!(error.is_unauthorized(), status == 401);
+            assert_eq!(
+                error.issue(),
+                ClientIssue {
+                    code: "server_code".to_owned(),
+                    message: "bounded server message".to_owned(),
+                    retryable,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn dns_failures_are_distinguishable_from_other_transport_failures() {
+        assert!(ClientError::dns_resolution("x", "DNS timed out").is_dns_resolution_failure());
+        assert!(!ClientError::transport("x", "failed", true).is_dns_resolution_failure());
+    }
+}

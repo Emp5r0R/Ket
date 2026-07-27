@@ -309,6 +309,48 @@ pub fn run() {
     });
 }
 
+#[cfg(test)]
+mod command_contract_tests {
+    use super::*;
+
+    #[test]
+    fn desktop_protocol_parser_covers_every_implemented_wire_name() {
+        for (wire_name, protocol) in [
+            ("hysteria2", TransportProtocol::Hysteria2),
+            ("open_vpn_stunnel", TransportProtocol::OpenVpnStunnel),
+            ("shadowsocks2022", TransportProtocol::Shadowsocks2022),
+            ("stealth", TransportProtocol::Stealth),
+            ("vless_xtls_reality", TransportProtocol::VlessXtlsReality),
+            ("wire_guard", TransportProtocol::WireGuard),
+        ] {
+            assert_eq!(parse_protocol(wire_name).unwrap(), protocol);
+        }
+
+        for invalid in ["", "auto", "ikev2", "xor_scrambled", "STEALTH", " stealth"] {
+            let issue = parse_protocol(invalid).unwrap_err();
+            assert_eq!(issue.code, "invalid_protocol");
+            assert!(!issue.retryable);
+            if !invalid.is_empty() {
+                assert!(!issue.message.contains(invalid));
+            }
+        }
+    }
+
+    #[test]
+    fn command_errors_keep_stable_machine_readable_codes() {
+        let missing = not_enrolled();
+        assert_eq!(missing.code, "not_enrolled");
+        assert!(!missing.retryable);
+
+        let invalid = issue(ket_client_core::ClientError::InvalidInput(
+            "bad code".to_owned(),
+        ));
+        assert_eq!(invalid.code, "invalid_input");
+        assert!(!invalid.retryable);
+        assert!(invalid.message.contains("input is invalid"));
+    }
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod security_regression_tests {
     use glib::{Variant, prelude::*};

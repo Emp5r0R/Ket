@@ -99,9 +99,7 @@ jobs:
         with:
           toolchain: 1.88.0
           components: rustfmt, clippy
-      - run: cargo fmt --all -- --check
-      - run: cargo test --locked --workspace --exclude ket-desktop
-      - run: cargo clippy --locked --workspace --exclude ket-desktop --all-targets --all-features -- -D warnings
+      - run: ./scripts/test-all.sh rust
 
   desktop-ui:
     needs: changes
@@ -118,8 +116,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/ket-desktop/package-lock.json
       - run: npm ci
-      - run: npm test -- --run
-      - run: npm run build
+      - run: ../../scripts/test-all.sh desktop-ui
 
   desktop-native:
     needs: changes
@@ -144,7 +141,7 @@ jobs:
       - run: npm ci
         working-directory: apps/ket-desktop
       - name: Test optimized Linux desktop and patched glib iterator
-        run: cargo test --locked --release -p ket-desktop --lib
+        run: ./scripts/test-all.sh desktop-native
 
   linux-package:
     needs: changes
@@ -318,7 +315,8 @@ jobs:
             echo "KET_ANDROID_KEY_PASSWORD=$password"
             echo "KET_ANDROID_CERT_SHA256=$cert_sha256"
           } >> "$GITHUB_ENV"
-      - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug assembleRelease
+      - run: ../../scripts/test-all.sh android
+      - run: ./gradlew --no-daemon assembleDebug assembleRelease
       - run: APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner" ../../packaging/validate-android-apk.sh app/build/outputs/apk/debug/app-debug.apk
       - run: APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner" ../../packaging/validate-android-apk.sh --expected-cert-sha256 "$KET_ANDROID_CERT_SHA256" app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
@@ -333,11 +331,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: bash -n packaging/validate-env.sh
-      - run: bash -n packaging/build-multiarch.sh
-      - run: bash -n packaging/install-server.sh packaging/server/*.sh
-      - run: ./packaging/test-install-server.sh
-      - run: ./packaging/test-certificate-trust-bundle.sh
+      - run: ./scripts/test-all.sh server
       - run: KET_ADMIN_TOKEN=01234567890123456789012345678901 KET_SESSION_TTL_SECONDS=1800 KET_MAX_SESSIONS=100 KET_COUNTRY_CODE=US ./packaging/validate-env.sh
       - name: Validate VLESS + REALITY environment
         run: >-

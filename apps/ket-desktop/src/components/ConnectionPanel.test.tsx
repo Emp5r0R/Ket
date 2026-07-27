@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
+import { describe, expect, it, vi } from "vitest";
 import type { ClientSnapshot, EngineReadiness } from "../types";
 import { ConnectionPanel } from "./ConnectionPanel";
 
@@ -80,4 +81,129 @@ it("offers an enabled cancel action while reconnecting", () => {
   expect(onStop).toHaveBeenCalledOnce();
   expect(screen.getByRole("combobox", { name: "Preferred protocol" })).toBeDisabled();
   expect(screen.getByText("Testing available routes")).toBeInTheDocument();
+});
+
+describe("connection controls", () => {
+  const renderPanel = (
+    snapshot: ClientSnapshot,
+    engine: EngineReadiness = ready,
+    overrides: Partial<ComponentProps<typeof ConnectionPanel>> = {},
+  ) => {
+    const callbacks = {
+      onPreferenceChange: vi.fn(),
+      onLearnMore: vi.fn(),
+      onConnect: vi.fn(async () => undefined),
+      onStop: vi.fn(async () => undefined),
+      onOpenDiagnostics: vi.fn(),
+    };
+    const result = render(
+      <ConnectionPanel
+        snapshot={snapshot}
+        engine={engine}
+        busy={false}
+        preference="auto"
+        {...callbacks}
+        {...overrides}
+      />,
+    );
+    return { ...result, ...callbacks };
+  };
+
+  it("renders no controls without an enrolled node", () => {
+    const { container } = renderPanel({ ...reconnecting, node: null });
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("connects from an enrolled state and opens the first offered protocol guide", () => {
+    const { onConnect, onLearnMore } = renderPanel({
+      ...reconnecting,
+      phase: "enrolled",
+      active_transport: null,
+      preferred_protocol: null,
+      reconnect_attempt: 0,
+    });
+    expect(screen.getByText("Connect to get liberated")).toBeInTheDocument();
+    expect(screen.getByText("You are under surveillance")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Learn more" }));
+    expect(onLearnMore).toHaveBeenCalledWith("vless_xtls_reality");
+    fireEvent.click(screen.getByRole("button", { name: "Connect tunnel" }));
+    expect(onConnect).toHaveBeenCalledOnce();
+  });
+
+  it("disconnects a connected route and locks protocol selection", () => {
+    const { onStop } = renderPanel(
+      { ...reconnecting, phase: "connected" },
+      ready,
+      { preference: "vless_xtls_reality" },
+    );
+    expect(screen.getByText("Liberated")).toBeInTheDocument();
+    expect(screen.getByText("Protected route active")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Preferred protocol" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect tunnel" }));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it("maps tunnel service readiness to actionable warnings and disables connect", () => {
+    const cases: [EngineReadiness["status"], string][] = [
+      ["permission_required", "Restart Ket from the application menu to activate tunnel access."],
+      ["not_installed", "Tunnel service is not installed."],
+      ["unavailable", "Tunnel service is installed but is not responding."],
+    ];
+    for (const [status, message] of cases) {
+      const { unmount } = renderPanel(
+        { ...reconnecting, phase: "enrolled" },
+        { binary_available: false, broker_available: false, mode: "privileged_broker", status },
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(message);
+      expect(screen.getByRole("button", { name: "Connect tunnel" })).toBeDisabled();
+      unmount();
+    }
+  });
+
+  it("distinguishes missing engines and opens diagnostics for a connection failure", () => {
+    const { onOpenDiagnostics } = renderPanel(
+      {
+        ...reconnecting,
+        phase: "error",
+        issue: { code: "transport_failed", message: "Route validation failed", retryable: true },
+      },
+      { ...ready, binary_available: false },
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Transport engines are not installed.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Route validation failed");
+    expect(screen.getByText("Connection failed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Troubleshoot" }));
+    expect(onOpenDiagnostics).toHaveBeenCalledOnce();
+  });
+
+  it("uses stable copy for every lifecycle phase", () => {
+    const labels: [ClientSnapshot["phase"], string][] = [
+      ["disconnected", "You are being watched"],
+      ["enrolling", "Adding server"],
+      ["enrolled", "Connect to get liberated"],
+      ["probing", "Testing route"],
+      ["connecting", "Connecting"],
+      ["connected", "Liberated"],
+      ["reconnecting", "Reconnecting"],
+      ["disconnecting", "Disconnecting"],
+      ["error", "Connection failed"],
+    ];
+    const { rerender } = renderPanel({ ...reconnecting, phase: "disconnected" });
+    for (const [phase, label] of labels) {
+      rerender(
+        <ConnectionPanel
+          snapshot={{ ...reconnecting, phase }}
+          engine={ready}
+          busy={false}
+          preference="auto"
+          onPreferenceChange={vi.fn()}
+          onLearnMore={vi.fn()}
+          onConnect={vi.fn(async () => undefined)}
+          onStop={vi.fn(async () => undefined)}
+          onOpenDiagnostics={vi.fn()}
+        />,
+      );
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+  });
 });

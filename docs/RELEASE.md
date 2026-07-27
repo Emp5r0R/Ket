@@ -18,20 +18,16 @@ The v0.2 implementation scope is complete as of 2026-07-26. This checklist separ
 Run these before publishing a release:
 
 ```bash
-cargo fmt --all -- --check
-cargo test --locked --workspace --exclude ket-desktop
-cargo clippy --locked --workspace --exclude ket-desktop --all-targets --all-features -- -D warnings
-./packaging/verify-openvpn-handshake.sh
-./packaging/verify-shadowsocks-traffic.sh
-./packaging/verify-xhttp-tls-traffic.sh
-cargo test --locked --release -p ket-desktop --lib
-npm --prefix apps/ket-desktop test -- --run
-npm --prefix apps/ket-desktop run build
+./scripts/test-all.sh all
 sudo env KET_PACKAGE_TEST_ALLOW_HOST_MUTATION=1 KET_PACKAGE_TEST_USER="$USER" ./packaging/verify-linux-deb.sh target/release/bundle/deb/*.deb
 ./packaging/prepare-android-engines.sh apps/ket-android/app
-(cd apps/ket-android && ./gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug)
+(cd apps/ket-android && ./gradlew --no-daemon assembleDebug)
 ./packaging/validate-android-apk.sh apps/ket-android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+The root runner and maintained feature-to-test matrix are described in
+[the testing guide](TESTING.md). It intentionally keeps package installation,
+signing, real-device, and restricted-network evidence as separate release gates.
 
 Run the Windows NSIS lifecycle only from an elevated shell on a disposable test host:
 
