@@ -17,6 +17,7 @@ ExecStartPre=/usr/libexec/ket/wstunnel --version
 ExecStartPre=/usr/libexec/ket/tun2proxy --version
 ExecStart=/usr/libexec/ket/ket-tunnel-service
 ExecStopPost=/usr/libexec/ket/ket-tunnel-service --restore-dns
+KillSignal=SIGTERM
 Restart=on-failure
 RestartSec=3s
 TimeoutStartSec=20s

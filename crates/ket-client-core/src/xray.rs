@@ -200,7 +200,7 @@ impl TransportAdapter for XrayAdapter {
         )
         .await
         {
-            stop_bridge(&mut bridge).await;
+            let _ = stop_bridge(&mut bridge).await;
             stop_child(&mut xray).await;
             return Err(error);
         }

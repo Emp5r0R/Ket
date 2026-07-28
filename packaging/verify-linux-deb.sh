@@ -83,6 +83,8 @@ grep -qx 'StateDirectory=ket' "${service_unit}" || fail "service lacks persisten
 grep -qx 'StateDirectoryMode=0700' "${service_unit}" || fail "DNS recovery state is not private"
 grep -qx 'ExecStopPost=/usr/libexec/ket/ket-tunnel-service --restore-dns' "${service_unit}" \
   || fail "service lacks crash-safe DNS restoration"
+grep -qx 'KillSignal=SIGTERM' "${service_unit}" \
+  || fail "service does not use its graceful tunnel cleanup signal"
 
 desktop_entry=${scratch}/root/usr/share/applications/Ket.desktop
 [[ -f ${desktop_entry} ]] || fail "desktop entry is missing"

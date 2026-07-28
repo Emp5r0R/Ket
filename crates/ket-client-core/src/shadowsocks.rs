@@ -156,7 +156,7 @@ impl TransportAdapter for Shadowsocks2022Adapter {
         )
         .await
         {
-            stop_bridge(&mut bridge).await;
+            let _ = stop_bridge(&mut bridge).await;
             stop_child(&mut engine).await;
             return Err(error);
         }

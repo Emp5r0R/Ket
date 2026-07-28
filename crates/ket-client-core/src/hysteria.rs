@@ -192,7 +192,7 @@ impl TransportAdapter for Hysteria2Adapter {
         )
         .await
         {
-            stop_bridge(&mut bridge).await;
+            let _ = stop_bridge(&mut bridge).await;
             stop_child(&mut child).await;
             return Err(error);
         }

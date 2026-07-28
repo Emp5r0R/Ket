@@ -393,10 +393,27 @@ pub(crate) async fn stop_child(child: &mut Child) {
     let _ = child.wait().await;
 }
 
-pub(crate) async fn stop_bridge(bridge: &mut FullRouteProcess) {
-    stop_child(&mut bridge.child).await;
+async fn stop_bridge_child(child: &mut Child) {
+    #[cfg(unix)]
+    if let Some(process_id) = child.id()
+        && unsafe { libc::kill(process_id as libc::pid_t, libc::SIGINT) } == 0
+        && matches!(
+            timeout(Duration::from_secs(5), child.wait()).await,
+            Ok(Ok(_))
+        )
+    {
+        return;
+    }
+
+    stop_child(child).await;
+}
+
+pub(crate) async fn stop_bridge(bridge: &mut FullRouteProcess) -> std::io::Result<()> {
+    // tun2proxy owns a Linux bind mount over /etc/resolv.conf. SIGINT lets its
+    // cancellation path unmount it before Ket restores the underlying file.
+    stop_bridge_child(&mut bridge.child).await;
     let _ = take_bridge_diagnostic(bridge).await;
-    let _ = bridge.dns_lease.restore();
+    bridge.dns_lease.restore()
 }
 
 async fn bridge_exit_if_stopped(
@@ -533,27 +550,29 @@ async fn supervise_processes(
 ) {
     tokio::select! {
         result = engine.wait() => {
-            stop_bridge(&mut bridge).await;
-            let message = result.map_or_else(
+            let cleanup = stop_bridge(&mut bridge).await;
+            let mut message = result.map_or_else(
                 |_| format!("failed to wait for {engine_name}"),
                 |exit| format!("{engine_name} exited unexpectedly ({exit})"),
             );
+            append_dns_cleanup_failure(&mut message, cleanup);
             status.send_replace(TunnelStatus::Failed(message));
         }
         result = bridge.child.wait() => {
             stop_child(&mut engine).await;
             let diagnostic = take_bridge_diagnostic(&mut bridge).await;
-            let _ = bridge.dns_lease.restore();
-            let message = result.map_or_else(
+            let cleanup = bridge.dns_lease.restore();
+            let mut message = result.map_or_else(
                 |_| "failed to wait for the full-route bridge".to_owned(),
                 |exit| bridge_exit_message(exit, diagnostic),
             );
+            append_dns_cleanup_failure(&mut message, cleanup);
             status.send_replace(TunnelStatus::Failed(message));
         }
         _ = commands.recv() => {
-            stop_bridge(&mut bridge).await;
+            let cleanup = stop_bridge(&mut bridge).await;
             stop_child(&mut engine).await;
-            status.send_replace(TunnelStatus::Stopped);
+            publish_stopped_or_dns_failure(&status, cleanup);
         }
     }
 }
@@ -569,39 +588,42 @@ async fn supervise_three_processes(
 ) {
     tokio::select! {
         result = engine.wait() => {
-            stop_bridge(&mut bridge).await;
+            let cleanup = stop_bridge(&mut bridge).await;
             stop_child(&mut carrier).await;
-            let message = result.map_or_else(
+            let mut message = result.map_or_else(
                 |_| format!("failed to wait for {engine_name}"),
                 |exit| format!("{engine_name} exited unexpectedly ({exit})"),
             );
+            append_dns_cleanup_failure(&mut message, cleanup);
             status.send_replace(TunnelStatus::Failed(message));
         }
         result = carrier.wait() => {
-            stop_bridge(&mut bridge).await;
+            let cleanup = stop_bridge(&mut bridge).await;
             stop_child(&mut engine).await;
-            let message = result.map_or_else(
+            let mut message = result.map_or_else(
                 |_| format!("failed to wait for {carrier_name}"),
                 |exit| format!("{carrier_name} exited unexpectedly ({exit})"),
             );
+            append_dns_cleanup_failure(&mut message, cleanup);
             status.send_replace(TunnelStatus::Failed(message));
         }
         result = bridge.child.wait() => {
             stop_child(&mut carrier).await;
             stop_child(&mut engine).await;
             let diagnostic = take_bridge_diagnostic(&mut bridge).await;
-            let _ = bridge.dns_lease.restore();
-            let message = result.map_or_else(
+            let cleanup = bridge.dns_lease.restore();
+            let mut message = result.map_or_else(
                 |_| "failed to wait for the full-route bridge".to_owned(),
                 |exit| bridge_exit_message(exit, diagnostic),
             );
+            append_dns_cleanup_failure(&mut message, cleanup);
             status.send_replace(TunnelStatus::Failed(message));
         }
         _ = commands.recv() => {
-            stop_bridge(&mut bridge).await;
+            let cleanup = stop_bridge(&mut bridge).await;
             stop_child(&mut carrier).await;
             stop_child(&mut engine).await;
-            status.send_replace(TunnelStatus::Stopped);
+            publish_stopped_or_dns_failure(&status, cleanup);
         }
     }
 }
@@ -618,29 +640,48 @@ async fn supervise_two_processes(
     tokio::select! {
         result = engine.wait() => {
             stop_child(&mut carrier).await;
-            let _ = dns_lease.restore();
-            let message = result.map_or_else(
+            let cleanup = dns_lease.restore();
+            let mut message = result.map_or_else(
                 |_| format!("failed to wait for {engine_name}"),
                 |exit| format!("{engine_name} exited unexpectedly ({exit})"),
             );
+            append_dns_cleanup_failure(&mut message, cleanup);
             status.send_replace(TunnelStatus::Failed(message));
         }
         result = carrier.wait() => {
             stop_child(&mut engine).await;
-            let _ = dns_lease.restore();
-            let message = result.map_or_else(
+            let cleanup = dns_lease.restore();
+            let mut message = result.map_or_else(
                 |_| format!("failed to wait for {carrier_name}"),
                 |exit| format!("{carrier_name} exited unexpectedly ({exit})"),
             );
+            append_dns_cleanup_failure(&mut message, cleanup);
             status.send_replace(TunnelStatus::Failed(message));
         }
         _ = commands.recv() => {
             stop_child(&mut engine).await;
             stop_child(&mut carrier).await;
-            let _ = dns_lease.restore();
-            status.send_replace(TunnelStatus::Stopped);
+            let cleanup = dns_lease.restore();
+            publish_stopped_or_dns_failure(&status, cleanup);
         }
     }
+}
+
+fn append_dns_cleanup_failure(message: &mut String, cleanup: std::io::Result<()>) {
+    if cleanup.is_err() {
+        message.push_str("; system DNS restoration failed");
+    }
+}
+
+fn publish_stopped_or_dns_failure(
+    status: &watch::Sender<TunnelStatus>,
+    cleanup: std::io::Result<()>,
+) {
+    status.send_replace(if cleanup.is_ok() {
+        TunnelStatus::Stopped
+    } else {
+        TunnelStatus::Failed("system DNS restoration failed after tunnel shutdown".to_owned())
+    });
 }
 
 struct FullRouteTunnel {
@@ -686,13 +727,25 @@ impl ActiveTunnel for FullRouteTunnel {
         .map_err(|_| {
             ClientError::transport(&self.transport_id, "transport shutdown timed out", true)
         })?;
-        Ok(())
+        match &*status.borrow() {
+            TunnelStatus::Stopped => Ok(()),
+            TunnelStatus::Failed(message) => Err(ClientError::transport(
+                &self.transport_id,
+                message.clone(),
+                true,
+            )),
+            TunnelStatus::Connected => Err(ClientError::transport(
+                &self.transport_id,
+                "transport shutdown did not complete",
+                true,
+            )),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, str::FromStr};
+    use std::{net::Ipv4Addr, process::Stdio, str::FromStr};
 
     use super::*;
 
@@ -773,5 +826,50 @@ mod tests {
         assert_eq!(diagnostic, BridgeDiagnostic::TunDevice);
         assert!(!diagnostic.message().contains("credential"));
         assert!(!diagnostic.message().contains("example.test"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bridge_shutdown_uses_graceful_signal_before_force_kill() {
+        let mut child = Command::new("sh")
+            .args(["-c", "trap 'exit 0' INT; while :; do :; done"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        stop_bridge_child(&mut child).await;
+
+        assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn stop_reports_terminal_cleanup_failure() {
+        let (command_tx, mut command_rx) = mpsc::channel(1);
+        let (status_tx, status_rx) = watch::channel(TunnelStatus::Connected);
+        tokio::spawn(async move {
+            assert!(matches!(
+                command_rx.recv().await,
+                Some(ProcessCommand::Stop)
+            ));
+            status_tx.send_replace(TunnelStatus::Failed(
+                "system DNS restoration failed after tunnel shutdown".to_owned(),
+            ));
+        });
+        let tunnel = FullRouteTunnel {
+            transport_id: "test-route".to_owned(),
+            command_tx,
+            status_rx,
+            stop_timeout: Duration::from_secs(1),
+        };
+
+        let error = tunnel
+            .stop()
+            .await
+            .expect_err("cleanup failure must surface");
+
+        assert_eq!(error.issue().code, "transport_failed");
+        assert!(error.issue().message.contains("DNS restoration failed"));
     }
 }

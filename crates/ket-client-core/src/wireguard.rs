@@ -235,7 +235,7 @@ impl TransportAdapter for WireGuardTlsAdapter {
         )
         .await
         {
-            stop_bridge(&mut bridge).await;
+            let _ = stop_bridge(&mut bridge).await;
             stop_child(&mut xray).await;
             stop_child(&mut carrier).await;
             return Err(error);

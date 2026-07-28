@@ -24,10 +24,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     ensure_privileged()?;
-    serve_until(config, async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
-    .await
+    serve_until(config, shutdown_signal()).await
 }
 
 #[cfg(windows)]
@@ -62,6 +59,23 @@ fn initialize_logging() {
         .with_target(false)
         .compact()
         .init();
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut terminate = signal(SignalKind::terminate()).ok();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = async {
+            if let Some(signal) = terminate.as_mut() {
+                signal.recv().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        } => {}
+    }
 }
 
 #[cfg(unix)]
