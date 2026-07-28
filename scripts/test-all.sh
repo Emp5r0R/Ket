@@ -119,6 +119,7 @@ android_quality() {
 
 server_contracts() {
   require_command bash
+  require_command gpg
   local scripts=()
   while IFS= read -r script; do scripts+=("$script"); done < <(
     find "$ROOT/.github/scripts" "$ROOT/packaging" "$ROOT/scripts" \
@@ -128,6 +129,7 @@ server_contracts() {
   run_step 'Server installer argument and rendering tests' "$ROOT/packaging/test-install-server.sh"
   run_step 'Certificate trust-bundle tests' "$ROOT/packaging/test-certificate-trust-bundle.sh"
   run_step 'All-transport environment preflight tests' "$ROOT/packaging/test-validate-env.sh"
+  run_step 'Release checksum and OpenPGP signing tests' "$ROOT/packaging/test-sign-release.sh"
   run_step 'CI change-classifier tests' "$ROOT/.github/scripts/test-ci-changes.sh"
   if command -v shellcheck >/dev/null 2>&1; then
     run_step 'ShellCheck static analysis' shellcheck "${scripts[@]}"

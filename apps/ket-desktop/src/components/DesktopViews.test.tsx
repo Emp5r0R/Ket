@@ -68,7 +68,7 @@ describe("desktop settings", () => {
     expect(screen.getByText("ket.example.test")).toBeInTheDocument();
     expect(screen.queryByText(/secret/)).not.toBeInTheDocument();
     expect(screen.getByText("Workstation")).toBeInTheDocument();
-    expect(screen.getByText("Ket 0.2.2")).toBeInTheDocument();
+    expect(screen.getByText("Ket 1.0.0")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByRole("radio", { name: "Light" }));
     expect(onThemeChange).toHaveBeenCalledWith("light");

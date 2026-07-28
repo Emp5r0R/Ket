@@ -1,30 +1,42 @@
 # Windows Package Test Plan
 
-Use this checklist for the unsigned Ket NSIS package on a physical Windows 10 or
+Use this checklist for the Ket NSIS package on a physical Windows 10 or
 Windows 11 x64 machine. Run it from an administrator PowerShell session on a
 machine that can be restored or cleaned afterward. Never publish an access code,
 `tunnel.token`, server credential, or unredacted Ket runtime file.
 
 ## Obtain and verify the package
 
-Download these files from the same GitHub prerelease into an empty directory:
+Download these files from the same GitHub release into an empty directory:
 
-- `Ket_0.2.2_x64-setup.exe`
+- `Ket_1.0.0_x64-setup.exe`
+- `Ket_1.0.0_x64-setup.exe.asc`
 - `SHA256SUMS`
+- `SHA256SUMS.asc`
+- `ket-release-signing-key.asc`
 
-An unsigned-publisher warning is expected for the current prerelease. A checksum
-mismatch is not expected and must stop testing.
+The v1.0.0 release has a detached OpenPGP signature, but no commercial Windows
+Authenticode identity. A Windows unknown-publisher warning is therefore expected.
+A checksum or OpenPGP mismatch must stop testing.
 
 ```powershell
 $Work = Join-Path $HOME "Downloads\Ket-test"
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 Set-Location $Work
 
-$Installer = Resolve-Path ".\Ket_0.2.2_x64-setup.exe"
-$Expected = (Select-String -Path ".\SHA256SUMS" -Pattern "Ket_0.2.2_x64-setup.exe").Line.Split()[0].ToLowerInvariant()
+$Installer = Resolve-Path ".\Ket_1.0.0_x64-setup.exe"
+$Expected = (Select-String -Path ".\SHA256SUMS" -Pattern "Ket_1.0.0_x64-setup.exe").Line.Split()[0].ToLowerInvariant()
 $Actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Installer).Hash.ToLowerInvariant()
 if ($Actual -ne $Expected) { throw "Ket installer checksum mismatch" }
+
+gpg.exe --import .\ket-release-signing-key.asc
+gpg.exe --fingerprint releases@ket.nsa.tools
+gpg.exe --verify .\SHA256SUMS.asc .\SHA256SUMS
+gpg.exe --verify .\Ket_1.0.0_x64-setup.exe.asc .\Ket_1.0.0_x64-setup.exe
+if ($LASTEXITCODE -ne 0) { throw "Ket OpenPGP verification failed" }
 ```
+
+The fingerprint must be `3FFD C479 EB97 4B59 5D70 C60F 754B 51EC 583C 5BFF`.
 
 Record the baseline public IP and DNS state before installation:
 
@@ -187,7 +199,7 @@ installer lifecycle can be run from an elevated PowerShell session:
 
 ```powershell
 $env:KET_PACKAGE_TEST_ALLOW_HOST_MUTATION = "1"
-$Installer = (Resolve-Path ".\Ket_0.2.2_x64-setup.exe").Path
+$Installer = (Resolve-Path ".\Ket_1.0.0_x64-setup.exe").Path
 .\packaging\verify-windows-nsis.ps1 -Installer $Installer
 ```
 

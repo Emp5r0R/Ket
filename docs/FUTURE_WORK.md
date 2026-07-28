@@ -1,8 +1,8 @@
 # Future work
 
-## Completed v0.2 boundary
+## Completed v1.0 boundary
 
-The Ket v0.2 implementation scope is complete as of 2026-07-26. It includes the Rust control plane, the one-command Docker installer, lease-scoped grants and revocation, Linux and Windows desktop clients and privilege broker, Android `VpnService`, diagnostics, saved expiring profiles, automatic and explicitly locked protocol selection, and six maintained data-plane integrations:
+The Ket v1.0 implementation scope is complete as of 2026-07-28. It includes the Rust control plane, the one-command Docker installer, lease-scoped grants and revocation, Linux and Windows desktop clients and privilege broker, Android `VpnService`, diagnostics, saved expiring profiles, automatic and explicitly locked protocol selection, six maintained data-plane integrations, and selectable Hysteria XOR obfuscation:
 
 - Hysteria2 with authenticated HTTP control plus an explicitly selectable Hysteria XOR mode backed by Salamander/Gecko.
 - VLESS + REALITY through Xray-core.
@@ -15,7 +15,7 @@ The source gates cover strict profile parsing, credential isolation, lifecycle a
 
 ## Physical release qualification
 
-These checks require hardware, network conditions, or owner-held signing identities. They are release-confidence work, not missing v0.2 implementation:
+These checks require hardware or network conditions. They are release-confidence work, not missing v1.0 implementation:
 
 1. Repeat fail-closed Wi-Fi/mobile handover and engine-exit recovery on the current API 36 device.
 2. Exercise Hysteria2, WireGuard TLS, and OpenVPN Android packet flow on restricted networks, including revocation and reconnect.
@@ -29,7 +29,7 @@ These checks require hardware, network conditions, or owner-held signing identit
 
 ### IKEv2
 
-`Ikev2` is currently a typed discovery identifier, not an executable adapter. A post-v0.2 implementation must use a maintained IKEv2 engine and preserve Ket's existing invariants: lease-scoped credentials, live revocation, traffic accounting, strict manual protocol locking, full-route DNS behavior, diagnostics, and Linux/Windows/Android parity. It must not be exposed in a client selector before those contracts and package payloads are implemented.
+`Ikev2` is currently a typed discovery identifier, not an executable adapter. A future implementation must use a maintained IKEv2 engine and preserve Ket's existing invariants: lease-scoped credentials, live revocation, traffic accounting, strict manual protocol locking, full-route DNS behavior, diagnostics, and Linux/Windows/Android parity. It must not be exposed in a client selector before those contracts and package payloads are implemented. Android API 26-29 compatibility, Windows native RAS lifecycle, Linux strongSwan ownership, UDP 500/4500 deployment, and real-device validation are required gates.
 
 ### XOR wrapping
 

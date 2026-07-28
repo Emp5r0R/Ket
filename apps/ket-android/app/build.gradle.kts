@@ -22,10 +22,10 @@ if (releaseSigningConfigured && !releaseSigningComplete) {
 val configuredVersionCode = System.getenv("KET_ANDROID_VERSION_CODE")?.let { value ->
     value.toIntOrNull()?.takeIf { it > 0 }
         ?: throw GradleException("KET_ANDROID_VERSION_CODE must be a positive integer")
-} ?: 4
+} ?: 5
 val configuredVersionName = System.getenv("KET_ANDROID_VERSION_NAME")
     ?.takeIf { it.isNotBlank() }
-    ?: "0.2.2"
+    ?: "1.0.0"
 
 android { namespace = "com.ket.android"; compileSdk = 34
     ndkVersion = "27.3.13750724"
