@@ -73,7 +73,7 @@ Clients use a policy engine rather than a hard-coded default. In Automatic mode,
 
 `Ikev2` remains a discovery identifier rather than an executable adapter. A future implementation must use a maintained engine while preserving lease-scoped credentials, live revocation, accounting, and platform parity.
 
-`XorScrambled` is represented only as an obfuscation layer. It is not encryption and must wrap an authenticated encrypted transport. Hysteria2 can retain HTTP/3 masquerading or enable Salamander/Gecko packet obfuscation; the client must receive the exact configured mode and password. CDN or reverse-proxy compatibility is transport-specific and cannot be assumed for UDP.
+`XorScrambled` is executable only as an obfuscation layer over Hysteria2. It is not encryption. The manifest must declare `inner_protocol=hysteria2`, Salamander or Gecko, and a credential-scoped password; desktop and Android fail closed on every other combination. Hysteria2 can otherwise retain HTTP/3 masquerading. CDN or reverse-proxy compatibility cannot be assumed for UDP.
 
 ## Client parity
 

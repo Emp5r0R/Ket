@@ -105,6 +105,7 @@ impl TransportAdapter for BrokerTransportAdapter {
                 | TransportProtocol::Stealth
                 | TransportProtocol::VlessXtlsReality
                 | TransportProtocol::WireGuard
+                | TransportProtocol::XorScrambled
         )
     }
 

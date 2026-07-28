@@ -57,7 +57,7 @@ sudo apt-get install --no-install-recommends -y \
 | OpenVPN TLS | Certificate and `tls-crypt` bounds, hardened configs, management/TUN settings, scoped auth, counters, release/revocation, and real nested handshake harness |
 | Privileged tunnel service | Framing limits, authentication, loopback-only broker policy, lease expiry, heartbeat/status/stop behavior, DNS restoration, and desktop exchange |
 | Desktop client | Saved/expired profiles, reconnect policy, theme, every view/component, every lifecycle state, protocol guides, availability, maps, telemetry, diagnostics copying, engine warnings, and Tauri protocol commands |
-| Android client | Strict node/session parsing, durable authenticated credentials, all six transport parsers/configs, ranking/recovery, route/DNS ownership, network transitions, runtime subscriptions, pending launch ownership, diagnostics, map geometry, and UI status copy |
+| Android client | Strict node/session parsing, durable authenticated credentials, all maintained transport parsers/configs plus Hysteria XOR mode, ranking/recovery, route/DNS ownership, network transitions, runtime subscriptions, pending launch ownership, diagnostics, map geometry, and UI status copy |
 | Server installation and CI | Installer arguments/templates, certificate trust rotation, every transport preflight with negative cases, shell syntax, and conservative affected-job routing |
 
 ## Required Test Design

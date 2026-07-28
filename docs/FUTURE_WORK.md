@@ -4,7 +4,7 @@
 
 The Ket v0.2 implementation scope is complete as of 2026-07-26. It includes the Rust control plane, the one-command Docker installer, lease-scoped grants and revocation, Linux and Windows desktop clients and privilege broker, Android `VpnService`, diagnostics, saved expiring profiles, automatic and explicitly locked protocol selection, and six maintained data-plane integrations:
 
-- Hysteria2 with authenticated HTTP control and Salamander/Gecko options.
+- Hysteria2 with authenticated HTTP control plus an explicitly selectable Hysteria XOR mode backed by Salamander/Gecko.
 - VLESS + REALITY through Xray-core.
 - HTTPS Stealth using VLESS + XHTTP/TLS through a CDN-capable edge.
 - Shadowsocks 2022 through shadowsocks-rust.
@@ -33,7 +33,7 @@ These checks require hardware, network conditions, or owner-held signing identit
 
 ### XOR wrapping
 
-`XorScrambled` is an extension identifier only. XOR provides no confidentiality or authentication and will never be offered as a standalone security protocol. Any implementation may only obfuscate an already authenticated and encrypted maintained transport, with downgrade-resistant negotiation and explicit server/client compatibility.
+`XorScrambled` is implemented as a strict Hysteria2 wrapper on the server, Linux, Windows, and Android clients. It accepts only `inner_protocol=hysteria2` with Hysteria's maintained Salamander or Gecko mode and a credential-scoped obfuscation password. It never provides confidentiality or authentication itself; Hysteria's TLS-secured QUIC remains responsible for both. Generic XOR wrapping of other protocols is intentionally excluded because it would introduce an unaudited custom wire format without a maintained interoperable engine.
 
 ### Additional stealth transports
 

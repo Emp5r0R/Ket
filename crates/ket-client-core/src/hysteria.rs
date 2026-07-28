@@ -24,7 +24,12 @@ use crate::{
     runtime::EphemeralConfig,
 };
 
-const KNOWN_OPTIONS: &[&str] = &["obfs", "gecko_min_packet_size", "gecko_max_packet_size"];
+const KNOWN_OPTIONS: &[&str] = &[
+    "inner_protocol",
+    "obfs",
+    "gecko_min_packet_size",
+    "gecko_max_packet_size",
+];
 const KNOWN_SECRETS: &[&str] = &["obfs_password"];
 
 #[derive(Clone, Debug)]
@@ -63,7 +68,10 @@ impl Hysteria2Adapter {
 #[async_trait]
 impl TransportAdapter for Hysteria2Adapter {
     fn supports(&self, transport: &SessionTransport) -> bool {
-        transport.profile.protocol == TransportProtocol::Hysteria2
+        matches!(
+            transport.profile.protocol,
+            TransportProtocol::Hysteria2 | TransportProtocol::XorScrambled
+        )
     }
 
     async fn probe(&self, transport: &SessionTransport) -> Result<ProbeReport, ClientError> {
@@ -214,8 +222,10 @@ impl TransportAdapter for Hysteria2Adapter {
 
 fn validate_transport(transport: &SessionTransport) -> Result<(), ClientError> {
     let id = &transport.profile.id;
-    if transport.profile.protocol != TransportProtocol::Hysteria2
-        || transport.profile.network != Network::Udp
+    if !matches!(
+        transport.profile.protocol,
+        TransportProtocol::Hysteria2 | TransportProtocol::XorScrambled
+    ) || transport.profile.network != Network::Udp
     {
         return Err(ClientError::transport(
             id,
@@ -280,7 +290,46 @@ fn validate_transport(transport: &SessionTransport) -> Result<(), ClientError> {
             false,
         ));
     }
+    validate_protocol_mode(transport)?;
     Ok(())
+}
+
+fn validate_protocol_mode(transport: &SessionTransport) -> Result<(), ClientError> {
+    let id = &transport.profile.id;
+    let inner = transport
+        .profile
+        .options
+        .get("inner_protocol")
+        .map(String::as_str);
+    let obfs = transport
+        .profile
+        .options
+        .get("obfs")
+        .map(String::as_str)
+        .unwrap_or("none");
+    match transport.profile.protocol {
+        TransportProtocol::XorScrambled
+            if inner == Some("hysteria2") && matches!(obfs, "salamander" | "gecko") =>
+        {
+            Ok(())
+        }
+        TransportProtocol::XorScrambled => Err(ClientError::transport(
+            id,
+            "XOR mode must wrap Hysteria2 with Salamander or Gecko obfuscation",
+            false,
+        )),
+        TransportProtocol::Hysteria2 if inner.is_none() => Ok(()),
+        TransportProtocol::Hysteria2 => Err(ClientError::transport(
+            id,
+            "plain Hysteria2 cannot declare an inner protocol",
+            false,
+        )),
+        _ => Err(ClientError::transport(
+            id,
+            "profile is not a Hysteria2 UDP transport",
+            false,
+        )),
+    }
 }
 
 #[derive(Serialize)]
@@ -579,6 +628,47 @@ mod tests {
 
         transport.profile.options.remove("insecure");
         transport.credential = None;
+        assert!(render_client_config(&transport, address, 10808).is_err());
+    }
+
+    #[test]
+    fn xor_profile_requires_an_explicit_hysteria_obfuscation_wrapper() {
+        let address = "203.0.113.8".parse().unwrap();
+        let mut transport = test_transport("salamander");
+        transport.profile.protocol = TransportProtocol::XorScrambled;
+        transport
+            .profile
+            .options
+            .insert("inner_protocol".to_owned(), "hysteria2".to_owned());
+
+        let document = render_client_config(&transport, address, 10808).unwrap();
+        let document: serde_json::Value = serde_json::from_slice(&document).unwrap();
+        assert_eq!(document["obfs"]["type"], "salamander");
+
+        transport.profile.options.remove("inner_protocol");
+        assert!(render_client_config(&transport, address, 10808).is_err());
+
+        transport
+            .profile
+            .options
+            .insert("inner_protocol".to_owned(), "hysteria2".to_owned());
+        transport
+            .profile
+            .options
+            .insert("obfs".to_owned(), "none".to_owned());
+        transport.credential.as_mut().unwrap().secrets.clear();
+        assert!(render_client_config(&transport, address, 10808).is_err());
+    }
+
+    #[test]
+    fn plain_hysteria_rejects_an_inner_protocol_declaration() {
+        let address = "203.0.113.8".parse().unwrap();
+        let mut transport = test_transport("salamander");
+        transport
+            .profile
+            .options
+            .insert("inner_protocol".to_owned(), "hysteria2".to_owned());
+
         assert!(render_client_config(&transport, address, 10808).is_err());
     }
 

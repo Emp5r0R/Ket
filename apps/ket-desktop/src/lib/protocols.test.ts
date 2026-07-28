@@ -7,6 +7,7 @@ describe("protocol catalog contract", () => {
       "stealth",
       "wire_guard",
       "hysteria2",
+      "xor_scrambled",
       "vless_xtls_reality",
       "shadowsocks2022",
       "open_vpn_stunnel",

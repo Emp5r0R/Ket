@@ -3,7 +3,7 @@ package com.ket.android
 import org.json.JSONArray
 import org.json.JSONObject
 
-private val knownOptions = setOf("obfs", "gecko_min_packet_size", "gecko_max_packet_size")
+private val knownOptions = setOf("inner_protocol", "obfs", "gecko_min_packet_size", "gecko_max_packet_size")
 private val knownSecrets = setOf("obfs_password")
 
 class HysteriaTransport private constructor(
@@ -14,9 +14,9 @@ class HysteriaTransport private constructor(
     val tlsServerName: String,
     val auth: String,
     val obfuscation: HysteriaObfuscation,
+    override val protocol: KetProtocol,
 ) : AndroidTransport {
-    override val displayName: String = "Hysteria 2"
-    override val protocol: KetProtocol = KetProtocol.Hysteria2
+    override val displayName: String = protocol.displayName
 
     override fun toString(): String =
         "HysteriaTransport(id=$id, endpoint=$endpoint, port=$port, tlsServerName=$tlsServerName, auth=[REDACTED], obfuscation=${obfuscation.redactedName})"
@@ -26,13 +26,17 @@ class HysteriaTransport private constructor(
             val candidate = (0 until transports.length())
                 .asSequence()
                 .map { transports.getJSONObject(it) }
-                .firstOrNull { it.optString("protocol") == "hysteria2" }
+                .firstOrNull { it.optString("protocol") in setOf("hysteria2", "xor_scrambled") }
                 ?: throw IllegalStateException("The server did not offer Hysteria2")
             return parse(candidate)
         }
 
         internal fun parse(json: JSONObject): HysteriaTransport {
-            require(json.getString("protocol") == "hysteria2") { "Unsupported Android transport" }
+            val protocol = when (json.getString("protocol")) {
+                "hysteria2" -> KetProtocol.Hysteria2
+                "xor_scrambled" -> KetProtocol.XorScrambled
+                else -> throw IllegalArgumentException("Unsupported Android transport")
+            }
             require(json.getString("network") == "udp") { "Hysteria2 must use UDP" }
             val id = validateTransportId(json.getString("id"))
             val endpoint = validateHost(json.getString("endpoint"), "Transport endpoint")
@@ -65,7 +69,25 @@ class HysteriaTransport private constructor(
                 }
                 else -> throw IllegalArgumentException("Unsupported Hysteria2 obfuscation mode: $mode")
             }
-            return HysteriaTransport(id, endpoint, port, priority, sni, auth, obfs)
+            validateProtocolMode(protocol, options, obfs)
+            return HysteriaTransport(id, endpoint, port, priority, sni, auth, obfs, protocol)
+        }
+
+        private fun validateProtocolMode(
+            protocol: KetProtocol,
+            options: JSONObject,
+            obfuscation: HysteriaObfuscation,
+        ) {
+            val inner = options.optString("inner_protocol").ifEmpty { null }
+            when (protocol) {
+                KetProtocol.XorScrambled -> require(
+                    inner == "hysteria2" && obfuscation !is HysteriaObfuscation.None,
+                ) { "XOR mode must wrap Hysteria2 with Salamander or Gecko obfuscation" }
+                KetProtocol.Hysteria2 -> require(inner == null) {
+                    "Plain Hysteria2 cannot declare an inner protocol"
+                }
+                else -> throw IllegalArgumentException("Unsupported Android transport")
+            }
         }
 
         private fun validateHost(value: String, label: String): String {

@@ -30,6 +30,38 @@ class HysteriaTransportTest {
     }
 
     @Test
+    fun `parses xor only as a protected hysteria obfuscation wrapper`() {
+        val profile = validTransport("salamander")
+            .put("protocol", "xor_scrambled")
+        profile.getJSONObject("options").put("inner_protocol", "hysteria2")
+
+        val transport = HysteriaTransport.select(JSONArray().put(profile))
+
+        assertEquals(KetProtocol.XorScrambled, transport.protocol)
+        assertEquals("Hysteria XOR", transport.displayName)
+
+        profile.getJSONObject("options").remove("inner_protocol")
+        assertThrows(IllegalArgumentException::class.java) {
+            HysteriaTransport.select(JSONArray().put(profile))
+        }
+    }
+
+    @Test
+    fun `rejects xor without obfuscation and plain hysteria with an inner protocol`() {
+        val xor = validTransport("none").put("protocol", "xor_scrambled")
+        xor.getJSONObject("options").put("inner_protocol", "hysteria2")
+        assertThrows(IllegalArgumentException::class.java) {
+            HysteriaTransport.select(JSONArray().put(xor))
+        }
+
+        val plain = validTransport("salamander")
+        plain.getJSONObject("options").put("inner_protocol", "hysteria2")
+        assertThrows(IllegalArgumentException::class.java) {
+            HysteriaTransport.select(JSONArray().put(plain))
+        }
+    }
+
+    @Test
     fun `rejects unknown options instead of accepting a downgrade-shaped profile`() {
         val profile = validTransport("none")
         profile.getJSONObject("options").put("insecure", "true")

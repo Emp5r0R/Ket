@@ -519,6 +519,13 @@ impl HysteriaConfig {
 
     fn transport_profile(&self) -> TransportProfile {
         let mut options = BTreeMap::new();
+        let (display_name, protocol) = match &self.obfuscation {
+            HysteriaObfuscation::Disabled => ("Hysteria 2", TransportProtocol::Hysteria2),
+            HysteriaObfuscation::Salamander { .. } | HysteriaObfuscation::Gecko { .. } => {
+                options.insert("inner_protocol".to_owned(), "hysteria2".to_owned());
+                ("Hysteria XOR", TransportProtocol::XorScrambled)
+            }
+        };
         match &self.obfuscation {
             HysteriaObfuscation::Disabled => {}
             HysteriaObfuscation::Salamander { .. } => {
@@ -532,8 +539,8 @@ impl HysteriaConfig {
         }
         TransportProfile {
             id: self.transport_id.clone(),
-            display_name: "Hysteria 2".to_owned(),
-            protocol: TransportProtocol::Hysteria2,
+            display_name: display_name.to_owned(),
+            protocol,
             endpoint: self.public_host.clone(),
             port: self.public_port,
             network: Network::Udp,
@@ -1125,15 +1132,15 @@ fn validate_location(country_code: &str, latitude: f64, longitude: f64) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, path::PathBuf};
 
     use ket_core::{Network, NodeLocation, TransportProfile, TransportProtocol};
 
     use super::{
-        ShadowsocksConfig, listeners_conflict, normalize_openvpn_material, normalize_public_url,
-        required_reality_key, validate_authority, validate_dns_name, validate_hostname,
-        validate_location, validate_node_metadata, validate_target, validate_transports,
-        validate_xhttp_path,
+        HysteriaConfig, HysteriaObfuscation, ShadowsocksConfig, listeners_conflict,
+        normalize_openvpn_material, normalize_public_url, required_reality_key, validate_authority,
+        validate_dns_name, validate_hostname, validate_location, validate_node_metadata,
+        validate_target, validate_transports, validate_xhttp_path,
     };
 
     #[test]
@@ -1243,6 +1250,41 @@ mod tests {
             .options
             .insert("UPPERCASE".to_owned(), "value".to_owned());
         assert!(validate_transports(&[malformed_option]).is_err());
+    }
+
+    #[test]
+    fn hysteria_profile_exposes_obfuscation_as_an_authenticated_xor_wrapper() {
+        let mut config = test_hysteria_config(HysteriaObfuscation::Salamander {
+            password: "test-obfuscation-password-at-least-32-characters".to_owned(),
+        });
+        let profile = config.transport_profile();
+        assert_eq!(profile.protocol, TransportProtocol::XorScrambled);
+        assert_eq!(profile.display_name, "Hysteria XOR");
+        assert_eq!(profile.options["inner_protocol"], "hysteria2");
+        assert_eq!(profile.options["obfs"], "salamander");
+
+        config.obfuscation = HysteriaObfuscation::Disabled;
+        let profile = config.transport_profile();
+        assert_eq!(profile.protocol, TransportProtocol::Hysteria2);
+        assert!(!profile.options.contains_key("inner_protocol"));
+    }
+
+    fn test_hysteria_config(obfuscation: HysteriaObfuscation) -> HysteriaConfig {
+        HysteriaConfig {
+            transport_id: "hy2-primary".to_owned(),
+            runtime_config_path: PathBuf::from("unused-hysteria.json"),
+            listen: ":8443".to_owned(),
+            public_host: "vpn.example.test".to_owned(),
+            public_port: 443,
+            sni: "vpn.example.test".to_owned(),
+            tls_cert_path: "/tls/fullchain.pem".to_owned(),
+            tls_key_path: "/tls/privkey.pem".to_owned(),
+            auth_url: "http://control-plane:8787/internal/v1/hysteria2/auth".to_owned(),
+            stats_url: "http://hysteria2:9999".to_owned(),
+            stats_secret: "test-stats-secret-at-least-32-characters".to_owned(),
+            masquerade_url: "https://example.com/".to_owned(),
+            obfuscation,
+        }
     }
 
     #[test]

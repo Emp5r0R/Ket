@@ -4,7 +4,8 @@ export type ProtocolId =
   | "vless_xtls_reality"
   | "shadowsocks2022"
   | "wire_guard"
-  | "open_vpn_stunnel";
+  | "open_vpn_stunnel"
+  | "xor_scrambled";
 
 export type ProtocolPreference = "auto" | ProtocolId;
 
@@ -45,6 +46,15 @@ export const protocolCatalog: ProtocolInfo[] = [
     operation: "Uses QUIC congestion control with authenticated leases and optional Salamander or Gecko obfuscation.",
     steps: ["Select Hysteria 2.", "Connect while UDP 443 is reachable.", "Choose a TLS transport if the network blocks UDP."],
     limitations: ["Cannot cross networks that block UDP.", "Obfuscation hides QUIC shape but is not separate encryption."],
+  },
+  {
+    id: "xor_scrambled",
+    label: "Hysteria XOR",
+    shortInstruction: "Use when UDP works but recognizable QUIC traffic is filtered. Manual selection stays locked to this mode.",
+    bestFor: "Networks that permit UDP but classify standard HTTP/3 or QUIC handshakes.",
+    operation: "Applies Hysteria's maintained Salamander or Gecko packet obfuscation over authenticated, encrypted QUIC.",
+    steps: ["Select Hysteria XOR.", "Connect while UDP 443 is reachable.", "Choose HTTPS Stealth if the network blocks UDP entirely."],
+    limitations: ["Cannot cross networks that block UDP.", "XOR is obfuscation only; Hysteria TLS provides security."],
   },
   {
     id: "vless_xtls_reality",

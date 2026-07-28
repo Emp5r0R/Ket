@@ -36,6 +36,15 @@ enum class KetProtocol(
         listOf("Select Hysteria 2.", "Connect while UDP 443 is reachable.", "Choose a TLS transport if UDP is blocked."),
         listOf("Cannot cross networks that block UDP.", "Obfuscation is not separate encryption."),
     ),
+    XorScrambled(
+        "xor_scrambled",
+        "Hysteria XOR",
+        "Use when UDP works but recognizable QUIC traffic is filtered. Manual selection stays locked to this mode.",
+        "Networks that permit UDP but classify standard HTTP/3 or QUIC handshakes.",
+        "Applies Hysteria's maintained Salamander or Gecko packet obfuscation over authenticated, encrypted QUIC.",
+        listOf("Select Hysteria XOR.", "Connect while UDP 443 is reachable.", "Choose HTTPS Stealth if UDP is blocked."),
+        listOf("Cannot cross networks that block UDP.", "XOR is obfuscation only; Hysteria TLS provides security."),
+    ),
     Reality(
         "vless_xtls_reality",
         "VLESS + REALITY",

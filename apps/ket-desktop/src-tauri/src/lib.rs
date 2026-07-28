@@ -205,6 +205,7 @@ fn parse_protocol(value: &str) -> Result<TransportProtocol, ClientIssue> {
         "stealth" => Ok(TransportProtocol::Stealth),
         "vless_xtls_reality" => Ok(TransportProtocol::VlessXtlsReality),
         "wire_guard" => Ok(TransportProtocol::WireGuard),
+        "xor_scrambled" => Ok(TransportProtocol::XorScrambled),
         _ => Err(ClientIssue {
             code: "invalid_protocol".to_owned(),
             message: "choose a protocol offered by this server".to_owned(),
@@ -343,11 +344,12 @@ mod command_contract_tests {
             ("stealth", TransportProtocol::Stealth),
             ("vless_xtls_reality", TransportProtocol::VlessXtlsReality),
             ("wire_guard", TransportProtocol::WireGuard),
+            ("xor_scrambled", TransportProtocol::XorScrambled),
         ] {
             assert_eq!(parse_protocol(wire_name).unwrap(), protocol);
         }
 
-        for invalid in ["", "auto", "ikev2", "xor_scrambled", "STEALTH", " stealth"] {
+        for invalid in ["", "auto", "ikev2", "STEALTH", " stealth"] {
             let issue = parse_protocol(invalid).unwrap_err();
             assert_eq!(issue.code, "invalid_protocol");
             assert!(!issue.retryable);

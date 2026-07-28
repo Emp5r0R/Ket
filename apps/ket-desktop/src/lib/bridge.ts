@@ -42,6 +42,7 @@ const demoTransports: ClientSnapshot["available_transports"] = [
   { id: "xhttp-primary", display_name: "HTTPS Stealth", protocol: "stealth", network: "tcp" },
   { id: "wg-primary", display_name: "WireGuard TLS", protocol: "wire_guard", network: "tcp" },
   { id: "hy2-primary", display_name: "Hysteria 2", protocol: "hysteria2", network: "udp" },
+  { id: "hy2-xor-primary", display_name: "Hysteria XOR", protocol: "xor_scrambled", network: "udp" },
   { id: "reality-primary", display_name: "VLESS + REALITY", protocol: "vless_xtls_reality", network: "tcp" },
   { id: "ss-primary", display_name: "Shadowsocks 2022", protocol: "shadowsocks2022", network: "tcp_and_udp" },
   { id: "ovpn-primary", display_name: "OpenVPN TLS", protocol: "open_vpn_stunnel", network: "tcp" },

@@ -15,6 +15,7 @@ class KetProtocolTest {
                 "stealth",
                 "wire_guard",
                 "hysteria2",
+                "xor_scrambled",
                 "vless_xtls_reality",
                 "shadowsocks2022",
                 "open_vpn_stunnel",
@@ -44,7 +45,7 @@ class KetProtocolTest {
 
     @Test
     fun `wire parser rejects automatic unknown whitespace and case variants`() {
-        listOf("", "auto", "ikev2", "stealth ", "STEALTH", "xor_scrambled").forEach {
+        listOf("", "auto", "ikev2", "stealth ", "STEALTH").forEach {
             assertNull(KetProtocol.fromWireName(it))
         }
         assertFalse(KetProtocol.entries.any { it.wireName == "auto" })

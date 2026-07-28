@@ -30,7 +30,7 @@ internal object AndroidTransportSelector {
                 val candidate = transports.getJSONObject(index)
                 validateTransportId(candidate.getString("id"))
                 when (candidate.optString("protocol")) {
-                    "hysteria2" -> add(HysteriaTransport.parse(candidate))
+                    "hysteria2", "xor_scrambled" -> add(HysteriaTransport.parse(candidate))
                     "shadowsocks2022" -> add(ShadowsocksTransport.parse(candidate))
                     "stealth" -> add(StealthTransport.parse(candidate))
                     "vless_xtls_reality" -> add(RealityTransport.parse(candidate))

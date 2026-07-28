@@ -31,9 +31,9 @@ The control hostname may still use Cloudflare Tunnel. In that layout, set `KET_H
 
 ## Modes
 
-`KET_HYSTERIA_OBFS=none` preserves Hysteria's standard HTTP/3 appearance and active-probe masquerade behavior. Use `salamander` when a network blocks recognizable QUIC but permits other UDP. `gecko` additionally fragments handshake datagrams and is currently marked experimental upstream. Obfuscation hides the HTTP/3 shape, so it does not also behave as a normal HTTP/3 server.
+`KET_HYSTERIA_OBFS=none` advertises the `hysteria2` protocol and preserves Hysteria's standard HTTP/3 appearance and active-probe masquerade behavior. `salamander` and `gecko` advertise the separately selectable `xor_scrambled` mode named Hysteria XOR. Salamander applies Hysteria's salted packet obfuscation when a network blocks recognizable QUIC but permits other UDP. Gecko adds handshake fragmentation and padding and is currently marked experimental upstream. Obfuscation hides the HTTP/3 shape, so it does not also behave as a normal HTTP/3 server.
 
-Ket renders the selected mode into public profile options and its secret into the authenticated credential object. It never labels obfuscation as encryption.
+Ket renders `inner_protocol=hysteria2` and the selected mode into public profile options, while placing its secret in the authenticated credential object. Every client rejects XOR profiles without that exact maintained inner transport and a supported obfuscation mode. Ket never labels obfuscation as encryption.
 
 ## Start
 
