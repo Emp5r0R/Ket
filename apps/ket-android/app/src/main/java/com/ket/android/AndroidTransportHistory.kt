@@ -73,6 +73,7 @@ internal class AndroidTransportHistory(
 internal enum class AndroidLeaseFailureAction {
     Wait,
     Recover,
+    Reauthorize,
     Stop,
 }
 
@@ -93,7 +94,9 @@ internal class AndroidRecoveryPolicy(
         consecutiveFailures: Int,
         authorizationLost: Boolean = false,
         routedInternetHealthy: Boolean? = null,
+        accessExpired: Boolean = false,
     ): AndroidLeaseFailureAction = when {
+        authorizationLost && !accessExpired -> AndroidLeaseFailureAction.Reauthorize
         authorizationLost -> AndroidLeaseFailureAction.Stop
         routedInternetHealthy != false -> AndroidLeaseFailureAction.Wait
         consecutiveFailures >= stopAfterFailures -> AndroidLeaseFailureAction.Stop

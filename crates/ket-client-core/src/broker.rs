@@ -8,7 +8,7 @@ use ket_tunnel_protocol::{
 };
 use tokio::{
     net::TcpStream,
-    sync::{mpsc, watch},
+    sync::{mpsc, oneshot, watch},
     time::timeout,
 };
 
@@ -17,6 +17,7 @@ use crate::{
 };
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(50);
+const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub struct BrokerConfig {
@@ -151,17 +152,19 @@ impl TransportAdapter for BrokerTransportAdapter {
                 let (status_tx, status_rx) = watch::channel(TunnelStatus::Connected);
                 tokio::spawn(monitor_tunnel(
                     self.config.clone(),
-                    tunnel_id,
+                    tunnel_id.clone(),
                     transport.profile.id.clone(),
                     command_rx,
                     status_tx,
                 ));
                 Ok(StartedTunnel {
                     tunnel: Arc::new(BrokerTunnel {
+                        config: self.config.clone(),
+                        tunnel_id: tunnel_id.clone(),
                         transport_id: transport.profile.id.clone(),
                         command_tx,
                         status_rx,
-                        stop_timeout: Duration::from_secs(10),
+                        stop_timeout: DEFAULT_STOP_TIMEOUT,
                     }),
                     handshake_latency: Duration::from_millis(handshake_latency_ms),
                 })
@@ -172,10 +175,14 @@ impl TransportAdapter for BrokerTransportAdapter {
 }
 
 enum TunnelCommand {
-    Stop,
+    Stop {
+        completed: oneshot::Sender<Result<(), ClientError>>,
+    },
 }
 
 struct BrokerTunnel {
+    config: BrokerConfig,
+    tunnel_id: String,
     transport_id: String,
     command_tx: mpsc::Sender<TunnelCommand>,
     status_rx: watch::Receiver<TunnelStatus>,
@@ -194,26 +201,31 @@ impl ActiveTunnel for BrokerTunnel {
 
     async fn stop(&self) -> Result<(), ClientError> {
         if !matches!(*self.status_rx.borrow(), TunnelStatus::Connected) {
-            return Ok(());
+            return stop_remote(
+                &self.config,
+                &self.tunnel_id,
+                &self.transport_id,
+                self.stop_timeout,
+            )
+            .await;
         }
-        self.command_tx
-            .send(TunnelCommand::Stop)
+        let (completed, completion) = oneshot::channel();
+        if self
+            .command_tx
+            .send(TunnelCommand::Stop { completed })
             .await
-            .map_err(|_| broker_error(&self.transport_id, "tunnel monitor is unavailable", true))?;
-        let mut receiver = self.status_rx.clone();
-        timeout(self.stop_timeout, async {
-            while matches!(*receiver.borrow(), TunnelStatus::Connected) {
-                if receiver.changed().await.is_err() {
-                    break;
-                }
-            }
-        })
-        .await
-        .map_err(|_| broker_error(&self.transport_id, "broker shutdown timed out", true))?;
-        match receiver.borrow().clone() {
-            TunnelStatus::Failed(message) => Err(broker_error(&self.transport_id, message, true)),
-            _ => Ok(()),
+            .is_ok()
+            && let Ok(Ok(result)) = timeout(self.stop_timeout, completion).await
+        {
+            return result;
         }
+        stop_remote(
+            &self.config,
+            &self.tunnel_id,
+            &self.transport_id,
+            self.stop_timeout,
+        )
+        .await
     }
 }
 
@@ -238,50 +250,90 @@ async fn monitor_tunnel(
                     Ok(BrokerResponse::Tunnel { status: next }) => {
                         failures = 0;
                         let next = tunnel_status(next);
-                        status.send_replace(next.clone());
                         if !matches!(next, TunnelStatus::Connected) {
+                            let _ = stop_remote(
+                                &config,
+                                &tunnel_id,
+                                &transport_id,
+                                DEFAULT_STOP_TIMEOUT,
+                            )
+                            .await;
+                            status.send_replace(next);
                             break;
                         }
+                        status.send_replace(next);
                     }
                     Ok(response) => {
-                        status.send_replace(TunnelStatus::Failed(
-                            unexpected_response(&transport_id, response).issue().message,
-                        ));
+                        let message = unexpected_response(&transport_id, response).issue().message;
+                        let _ = stop_remote(
+                            &config,
+                            &tunnel_id,
+                            &transport_id,
+                            DEFAULT_STOP_TIMEOUT,
+                        )
+                        .await;
+                        status.send_replace(TunnelStatus::Failed(message));
                         break;
                     }
                     Err(error) => {
                         failures = failures.saturating_add(1);
                         if failures >= 3 {
-                            status.send_replace(TunnelStatus::Failed(error.issue().message));
+                            let message = error.issue().message;
+                            let _ = stop_remote(
+                                &config,
+                                &tunnel_id,
+                                &transport_id,
+                                DEFAULT_STOP_TIMEOUT,
+                            )
+                            .await;
+                            status.send_replace(TunnelStatus::Failed(message));
                             break;
                         }
                     }
                 }
             }
             command = commands.recv() => {
-                if matches!(command, Some(TunnelCommand::Stop)) {
-                    let result = transact(
-                        &config,
-                        BrokerRequest::Stop { tunnel_id: tunnel_id.clone() },
-                        &transport_id,
-                    ).await;
-                    match result {
-                        Ok(BrokerResponse::Stopped) => {
-                            status.send_replace(TunnelStatus::Stopped);
-                        }
-                        Ok(response) => {
-                            status.send_replace(TunnelStatus::Failed(
-                                unexpected_response(&transport_id, response).issue().message,
-                            ));
-                        }
-                        Err(error) => {
-                            status.send_replace(TunnelStatus::Failed(error.issue().message));
-                        }
-                    }
+                let result = stop_remote(
+                    &config,
+                    &tunnel_id,
+                    &transport_id,
+                    DEFAULT_STOP_TIMEOUT,
+                )
+                .await;
+                match &result {
+                    Ok(()) => status.send_replace(TunnelStatus::Stopped),
+                    Err(error) => status.send_replace(TunnelStatus::Failed(error.issue().message)),
+                };
+                if let Some(TunnelCommand::Stop { completed }) = command {
+                    let _ = completed.send(result);
                 }
                 break;
             }
         }
+    }
+}
+
+async fn stop_remote(
+    config: &BrokerConfig,
+    tunnel_id: &str,
+    transport_id: &str,
+    stop_timeout: Duration,
+) -> Result<(), ClientError> {
+    let response = timeout(
+        stop_timeout,
+        transact(
+            config,
+            BrokerRequest::Stop {
+                tunnel_id: tunnel_id.to_owned(),
+            },
+            transport_id,
+        ),
+    )
+    .await
+    .map_err(|_| broker_error(transport_id, "broker shutdown timed out", true))??;
+    match response {
+        BrokerResponse::Stopped => Ok(()),
+        response => Err(unexpected_response(transport_id, response)),
     }
 }
 
@@ -454,5 +506,126 @@ mod tests {
         assert!(readiness.engine_available);
         server.await.unwrap();
         fs::remove_file(token_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn terminal_local_status_still_releases_the_privileged_lease() {
+        let suffix: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        let token_path = std::env::temp_dir().join(format!("ket-broker-token-{suffix}"));
+        let token = Arc::new(BrokerToken::generate());
+        token.write_new(&token_path).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_token = Arc::clone(&token);
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            authenticate(&mut stream, &server_token).await;
+            let request: BrokerRequest = read_frame(&mut stream).await.unwrap();
+            assert!(matches!(
+                request,
+                BrokerRequest::Stop { ref tunnel_id } if tunnel_id == &"A".repeat(48)
+            ));
+            write_frame(&mut stream, &BrokerResponse::Stopped)
+                .await
+                .unwrap();
+        });
+        let config = BrokerConfig::new(address, &token_path)
+            .unwrap()
+            .with_timing(Duration::from_secs(2), Duration::from_millis(50));
+        let (command_tx, command_rx) = mpsc::channel(1);
+        drop(command_rx);
+        let (_, status_rx) = watch::channel(TunnelStatus::Failed("heartbeat failed".to_owned()));
+        let tunnel = BrokerTunnel {
+            config,
+            tunnel_id: "A".repeat(48),
+            transport_id: "test-transport".to_owned(),
+            command_tx,
+            status_rx,
+            stop_timeout: Duration::from_secs(2),
+        };
+
+        tunnel.stop().await.unwrap();
+
+        server.await.unwrap();
+        fs::remove_file(token_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn monitor_releases_the_privileged_lease_before_publishing_failure() {
+        let suffix: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        let token_path = std::env::temp_dir().join(format!("ket-broker-token-{suffix}"));
+        let token = Arc::new(BrokerToken::generate());
+        token.write_new(&token_path).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_token = Arc::clone(&token);
+        let server = tokio::spawn(async move {
+            for request_index in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                authenticate(&mut stream, &server_token).await;
+                let request: BrokerRequest = read_frame(&mut stream).await.unwrap();
+                if request_index == 0 {
+                    assert!(matches!(request, BrokerRequest::Heartbeat { .. }));
+                    write_frame(
+                        &mut stream,
+                        &BrokerResponse::Pong {
+                            engine_available: true,
+                        },
+                    )
+                    .await
+                    .unwrap();
+                } else {
+                    assert!(matches!(request, BrokerRequest::Stop { .. }));
+                    write_frame(&mut stream, &BrokerResponse::Stopped)
+                        .await
+                        .unwrap();
+                }
+            }
+        });
+        let config = BrokerConfig::new(address, &token_path)
+            .unwrap()
+            .with_timing(Duration::from_secs(2), Duration::from_millis(10));
+        let (commands, command_rx) = mpsc::channel(1);
+        let (status_tx, mut status_rx) = watch::channel(TunnelStatus::Connected);
+        let monitor = tokio::spawn(monitor_tunnel(
+            config,
+            "A".repeat(48),
+            "test-transport".to_owned(),
+            command_rx,
+            status_tx,
+        ));
+
+        timeout(Duration::from_secs(2), status_rx.changed())
+            .await
+            .expect("monitor should publish terminal status")
+            .unwrap();
+        assert!(matches!(*status_rx.borrow(), TunnelStatus::Failed(_)));
+
+        drop(commands);
+        monitor.await.unwrap();
+        server.await.unwrap();
+        fs::remove_file(token_path).unwrap();
+    }
+
+    async fn authenticate(stream: &mut TcpStream, token: &BrokerToken) {
+        let challenge = challenge();
+        write_frame(&mut *stream, &challenge).await.unwrap();
+        let proof: HandshakeProof = read_frame(&mut *stream).await.unwrap();
+        write_frame(
+            stream,
+            &HandshakeResult {
+                accepted: token.verify(&challenge.nonce, &proof),
+            },
+        )
+        .await
+        .unwrap();
     }
 }

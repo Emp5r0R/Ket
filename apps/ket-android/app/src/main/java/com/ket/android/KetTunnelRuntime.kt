@@ -34,6 +34,7 @@ data class TunnelSnapshot(
 internal class TunnelLaunchSpec(
     val controlEndpoint: String,
     val sessionToken: String,
+    val sessionExpiresAtEpochSeconds: Long,
     val node: AndroidNodeStatus,
     val transports: List<AndroidTransport>,
     val accessExpiresAtEpochSeconds: Long?,
@@ -41,6 +42,19 @@ internal class TunnelLaunchSpec(
 ) {
     override fun toString(): String =
         "TunnelLaunchSpec(controlEndpoint=$controlEndpoint, sessionToken=[REDACTED], node=${node.displayName}, transports=$transports)"
+
+    fun withSessionExpiry(
+        expiresAtEpochSeconds: Long,
+        confirmedAccessExpiresAtEpochSeconds: Long? = accessExpiresAtEpochSeconds,
+    ): TunnelLaunchSpec = TunnelLaunchSpec(
+        controlEndpoint = controlEndpoint,
+        sessionToken = sessionToken,
+        sessionExpiresAtEpochSeconds = expiresAtEpochSeconds,
+        node = node,
+        transports = transports,
+        accessExpiresAtEpochSeconds = confirmedAccessExpiresAtEpochSeconds,
+        preferredProtocol = preferredProtocol,
+    )
 
     companion object {
         fun fromEnrollment(
@@ -51,6 +65,7 @@ internal class TunnelLaunchSpec(
             TunnelLaunchSpec(
                 controlEndpoint,
                 result.token,
+                result.expiresAtEpochSeconds,
                 result.node,
                 result.transports,
                 result.accessExpiresAtEpochSeconds,
@@ -155,28 +170,58 @@ object KetTunnelController {
                     true
                 }
                 if (!launched) {
-                    val sessionCleanup = runCatching { store.clearSession() }
                     val release = runCatching {
                         KetControlApi.release(preparedSpec.controlEndpoint, preparedSpec.sessionToken)
                     }
+                    val sessionCleanup = runCatching {
+                        TunnelCredentialCleanupPolicy.apply(
+                            store,
+                            TunnelCredentialCleanupPolicy.afterRelease(
+                                sessionExists = true,
+                                releaseConclusive = TunnelCredentialCleanupPolicy.releaseIsConclusive(
+                                    release.exceptionOrNull(),
+                                ),
+                                accessExpired = preparedSpec.accessExpiresAtEpochSeconds
+                                    ?.let { it <= System.currentTimeMillis() / 1_000 } == true,
+                            ),
+                        )
+                    }
                     AndroidConnectionDiagnostics.record(
                         stage = "cancelled_enrollment_cleanup",
-                        outcome = if (sessionCleanup.isSuccess && release.isSuccess) {
+                        outcome = if (
+                            sessionCleanup.isSuccess &&
+                            TunnelCredentialCleanupPolicy.releaseIsConclusive(release.exceptionOrNull())
+                        ) {
                             DiagnosticOutcome.Succeeded
                         } else {
                             DiagnosticOutcome.Failed
                         },
                         phase = TunnelPhase.Stopping,
                         protocol = preferredProtocol,
-                        code = if (sessionCleanup.isSuccess && release.isSuccess) null else "cleanup_incomplete",
+                        code = if (
+                            sessionCleanup.isSuccess &&
+                            TunnelCredentialCleanupPolicy.releaseIsConclusive(release.exceptionOrNull())
+                        ) null else "cleanup_incomplete",
                     )
                 }
             } catch (error: Exception) {
                 KetTunnelRuntime.clearPending()
-                if (spec != null) runCatching {
-                    KetControlApi.release(spec.controlEndpoint, spec.sessionToken)
+                val release = spec?.let {
+                    runCatching { KetControlApi.release(it.controlEndpoint, it.sessionToken) }
                 }
-                if (sessionPrepared) runCatching { AndroidTunnelCredentialStore.get(appContext).clearSession() }
+                if (sessionPrepared) runCatching {
+                    TunnelCredentialCleanupPolicy.apply(
+                        AndroidTunnelCredentialStore.get(appContext),
+                        TunnelCredentialCleanupPolicy.afterRelease(
+                            sessionExists = spec != null,
+                            releaseConclusive = TunnelCredentialCleanupPolicy.releaseIsConclusive(
+                                release?.exceptionOrNull(),
+                            ),
+                            accessExpired = spec?.accessExpiresAtEpochSeconds
+                                ?.let { it <= System.currentTimeMillis() / 1_000 } == true,
+                        ),
+                    )
+                }
                 AndroidConnectionDiagnostics.record(
                     stage = "control_enrollment",
                     outcome = DiagnosticOutcome.Failed,
@@ -210,16 +255,34 @@ object KetTunnelController {
         if (pending != null) {
             executor.execute {
                 val release = runCatching { KetControlApi.release(pending.controlEndpoint, pending.sessionToken) }
-                val cleared = runCatching { AndroidTunnelCredentialStore.get(context.applicationContext).clearSession() }
+                val cleared = runCatching {
+                    TunnelCredentialCleanupPolicy.apply(
+                        AndroidTunnelCredentialStore.get(context.applicationContext),
+                        TunnelCredentialCleanupPolicy.afterRelease(
+                            sessionExists = true,
+                            releaseConclusive = TunnelCredentialCleanupPolicy.releaseIsConclusive(
+                                release.exceptionOrNull(),
+                            ),
+                            accessExpired = pending.accessExpiresAtEpochSeconds
+                                ?.let { it <= System.currentTimeMillis() / 1_000 } == true,
+                        ),
+                    )
+                }
                 AndroidConnectionDiagnostics.record(
                     stage = "pending_session_cleanup",
-                    outcome = if (release.isSuccess && cleared.isSuccess) {
+                    outcome = if (
+                        TunnelCredentialCleanupPolicy.releaseIsConclusive(release.exceptionOrNull()) &&
+                        cleared.isSuccess
+                    ) {
                         DiagnosticOutcome.Succeeded
                     } else {
                         DiagnosticOutcome.Failed
                     },
                     phase = TunnelPhase.Stopping,
-                    code = if (release.isSuccess && cleared.isSuccess) null else "cleanup_incomplete",
+                    code = if (
+                        TunnelCredentialCleanupPolicy.releaseIsConclusive(release.exceptionOrNull()) &&
+                        cleared.isSuccess
+                    ) null else "cleanup_incomplete",
                 )
             }
         }

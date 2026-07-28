@@ -34,7 +34,8 @@ const DEVICE_KEY = "ket.device-name";
 const PROTOCOL_KEY = "ket.protocol-preference";
 const ACCESS_EXPIRY_KEY = "ket.access-expires-at";
 const THEME_KEY = "ket.theme";
-const RESTORE_RETRY_DELAY_MS = 60_000;
+const RESTORE_RETRY_INITIAL_DELAY_MS = 2_000;
+const RESTORE_RETRY_MAX_DELAY_MS = 30_000;
 
 export type ThemePreference = "system" | "light" | "dark";
 
@@ -78,6 +79,13 @@ function loadSavedEnrollment(): SavedEnrollment {
 
 export function shouldRetrySavedEnrollment(issue: ClientIssue): boolean {
   return issue.retryable || issue.code === "grant_capacity_reached";
+}
+
+export function nextRestoreRetryDelay(delayMilliseconds: number): number {
+  return Math.min(
+    Math.max(delayMilliseconds, RESTORE_RETRY_INITIAL_DELAY_MS) * 2,
+    RESTORE_RETRY_MAX_DELAY_MS,
+  );
 }
 
 export function savedEnrollmentIsTerminal(issue: ClientIssue): boolean {
@@ -153,18 +161,35 @@ export default function App() {
   const [surveillanceVariant, setSurveillanceVariant] = useState(0);
   const lastObservedIssue = useRef("");
   const protocolPreferenceRef = useRef(protocolPreference);
+  const savedAccessCodeRef = useRef(savedAccessCode);
+  const accessExpiresAtRef = useRef(accessExpiresAt);
+  const connectionRequestedRef = useRef(false);
+  const previousPhaseRef = useRef(emptySnapshot.phase);
 
   const recordDiagnostic = (diagnostic: ConnectionDiagnostic) => {
     setDiagnostics((current) => appendDiagnostic(current, diagnostic));
   };
 
   const applySnapshot = (snapshot: ClientSnapshot) => {
+    const savedSessionCanRecover = savedSessionNeedsReenrollment(
+      snapshot.issue,
+      savedAccessCodeRef.current,
+      accessExpiresAtRef.current,
+    );
+    if (
+      savedSessionCanRecover &&
+      ["probing", "connecting", "reconnecting", "connected"].includes(previousPhaseRef.current)
+    ) {
+      connectionRequestedRef.current = true;
+    }
+    if (snapshot.phase === "connected") connectionRequestedRef.current = true;
+    previousPhaseRef.current = snapshot.phase;
     setState((current) => ({ ...current, snapshot, configured: snapshot.node !== null || current.configured }));
     if (
       snapshot.issue !== null ||
       ["probing", "connecting", "reconnecting", "connected"].includes(snapshot.phase)
     ) {
-      setLocalIssue(snapshot.issue);
+      setLocalIssue(savedSessionCanRecover ? null : snapshot.issue);
     }
     if (snapshot.traffic?.available) {
       const point = {
@@ -197,7 +222,7 @@ export default function App() {
           elapsedMilliseconds: null,
           issue: snapshot.issue,
         });
-        if (snapshot.phase === "error") setDiagnosticsOpen(true);
+        if (snapshot.phase === "error" && !savedSessionCanRecover) setDiagnosticsOpen(true);
       }
     }
   };
@@ -213,12 +238,24 @@ export default function App() {
       );
       setAccessExpiresAt(snapshot.access_expires_at_epoch_seconds);
     }
+    if (connectionRequestedRef.current) {
+      const preference = protocolPreferenceRef.current;
+      window.setTimeout(() => {
+        if (!connectionRequestedRef.current) return;
+        void run(
+          "connect",
+          () => bridge.connect(preference === "auto" ? null : preference),
+          preference,
+        );
+      });
+    }
   };
 
   const handleRestoreFailure = (error: unknown) => {
     const issue = normalizeIssue(error);
     setLocalIssue(issue);
     if (savedEnrollmentIsTerminal(issue)) {
+      connectionRequestedRef.current = false;
       clearSavedEnrollment();
       setServerUrl("");
       setSavedAccessCode("");
@@ -232,9 +269,11 @@ export default function App() {
     let unsubscribe: (() => void) | undefined;
     void bridge
       .state()
-      .then(async (next) => {
+      .then((next) => {
         if (active) {
           setState(next);
+          previousPhaseRef.current = next.snapshot.phase;
+          if (next.snapshot.phase === "connected") connectionRequestedRef.current = true;
           const traffic = next.snapshot.traffic;
           if (traffic?.available) {
             setHistory([
@@ -244,25 +283,6 @@ export default function App() {
                 received: traffic.bytes_received,
               },
             ]);
-          }
-        }
-        if (
-          active &&
-          !next.configured &&
-          initialEnrollment.serverUrl !== "" &&
-          initialEnrollment.accessCode.length === 32
-        ) {
-          try {
-            const restored = await bridge.enroll({
-              serverUrl: initialEnrollment.serverUrl,
-              accessCode: initialEnrollment.accessCode,
-              deviceName,
-            });
-            if (active) {
-              applyRestoredEnrollment(restored);
-            }
-          } catch (error) {
-            if (active) handleRestoreFailure(error);
           }
         }
       })
@@ -296,6 +316,7 @@ export default function App() {
     let active = true;
     let attempting = false;
     let timer = 0;
+    let retryDelay = RESTORE_RETRY_INITIAL_DELAY_MS;
     const restore = async () => {
       if (!active || attempting) return;
       attempting = true;
@@ -310,13 +331,14 @@ export default function App() {
         if (!active) return;
         const issue = handleRestoreFailure(error);
         if (shouldRetrySavedEnrollment(issue)) {
-          timer = window.setTimeout(() => void restore(), RESTORE_RETRY_DELAY_MS);
+          timer = window.setTimeout(() => void restore(), retryDelay);
+          retryDelay = nextRestoreRetryDelay(retryDelay);
         }
       } finally {
         attempting = false;
       }
     };
-    timer = window.setTimeout(() => void restore(), RESTORE_RETRY_DELAY_MS);
+    void restore();
     return () => {
       active = false;
       window.clearTimeout(timer);
@@ -326,6 +348,11 @@ export default function App() {
   useEffect(() => {
     protocolPreferenceRef.current = protocolPreference;
   }, [protocolPreference]);
+
+  useEffect(() => {
+    savedAccessCodeRef.current = savedAccessCode;
+    accessExpiresAtRef.current = accessExpiresAt;
+  }, [accessExpiresAt, savedAccessCode]);
 
   useEffect(() => {
     if (state.snapshot.phase === "connected") {
@@ -348,14 +375,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!state.configured) return;
-    const timer = window.setInterval(() => {
-      void bridge.refresh().then(applySnapshot).catch(() => undefined);
-    }, 10_000);
-    return () => window.clearInterval(timer);
-  }, [state.configured]);
-
-  useEffect(() => {
     if (
       !state.configured ||
       !savedSessionNeedsReenrollment(
@@ -366,17 +385,9 @@ export default function App() {
     ) {
       return;
     }
-    let active = true;
-    void bridge.forget()
-      .catch(() => undefined)
-      .finally(() => {
-        if (active) {
-          setState((current) => ({ ...current, configured: false, snapshot: emptySnapshot }));
-        }
-      });
-    return () => {
-      active = false;
-    };
+    // A session lease can expire while the durable access grant is still valid.
+    // Let the saved-profile restore loop replace the stale native session immediately.
+    setState((current) => ({ ...current, configured: false }));
   }, [accessExpiresAt, savedAccessCode, state.configured, state.snapshot.issue]);
 
   useEffect(() => {
@@ -445,6 +456,14 @@ export default function App() {
       });
     } catch (error) {
       const issue = normalizeIssue(error);
+      const sessionWillRecover = operationName === "connect" && savedSessionNeedsReenrollment(
+        issue,
+        savedAccessCode,
+        accessExpiresAt,
+      );
+      if (operationName === "connect" && !sessionWillRecover) {
+        connectionRequestedRef.current = false;
+      }
       setLocalIssue(issue);
       recordDiagnostic({
         recordedAtEpochMilliseconds: Date.now(),
@@ -456,7 +475,7 @@ export default function App() {
         elapsedMilliseconds: performance.now() - startedAt,
         issue,
       });
-      if (operationName !== "enroll") setDiagnosticsOpen(true);
+      if (operationName !== "enroll" && !sessionWillRecover) setDiagnosticsOpen(true);
     } finally {
       setBusy(false);
     }
@@ -489,6 +508,7 @@ export default function App() {
   };
 
   const forget = async () => {
+    connectionRequestedRef.current = false;
     await run("forget", async () => {
       const snapshot = await bridge.forget();
       setState((current) => ({ ...current, configured: false }));
@@ -604,12 +624,18 @@ export default function App() {
                   preference={protocolPreference}
                   onPreferenceChange={chooseProtocol}
                   onLearnMore={openProtocolGuide}
-                  onConnect={() => run(
-                    "connect",
-                    () => bridge.connect(protocolPreference === "auto" ? null : protocolPreference),
-                    protocolPreference,
-                  )}
-                  onStop={() => run("stop", () => bridge.stop(), protocolPreference)}
+                  onConnect={() => {
+                    connectionRequestedRef.current = true;
+                    return run(
+                      "connect",
+                      () => bridge.connect(protocolPreference === "auto" ? null : protocolPreference),
+                      protocolPreference,
+                    );
+                  }}
+                  onStop={() => {
+                    connectionRequestedRef.current = false;
+                    return run("stop", () => bridge.stop(), protocolPreference);
+                  }}
                   onOpenDiagnostics={() => setDiagnosticsOpen(true)}
                 />
               ) : (

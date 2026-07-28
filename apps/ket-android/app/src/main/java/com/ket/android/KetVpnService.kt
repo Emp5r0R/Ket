@@ -37,8 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class KetVpnService : VpnService() {
     private val worker = Executors.newSingleThreadExecutor()
     private val scheduler = Executors.newScheduledThreadPool(2)
-    private val active = AtomicBoolean()
-    private val stopping = AtomicBoolean()
+    private val lifecycle = AndroidVpnServiceLifecycle()
     private val reconnecting = AtomicBoolean()
     private val leaseRefreshGate = AndroidLeaseRefreshGate()
     private val transportHistory = AndroidTransportHistory()
@@ -84,6 +83,8 @@ class KetVpnService : VpnService() {
     private var networkCallbackRegistered = false
     private var idleModeReceiverRegistered = false
     private var renewalFailures = 0
+    @Volatile
+    private var renewAtEpochSeconds = Long.MAX_VALUE
 
     override fun onCreate() {
         super.onCreate()
@@ -113,7 +114,7 @@ class KetVpnService : VpnService() {
             requestStop(null)
             return START_NOT_STICKY
         }
-        if (!active.compareAndSet(false, true)) return START_REDELIVER_INTENT
+        if (!lifecycle.tryStart()) return START_REDELIVER_INTENT
         startForegroundCompat(notification("Starting protected route"))
         val pending = if (intent?.getBooleanExtra(EXTRA_APP_STARTED, false) == true) {
             KetTunnelRuntime.take()
@@ -147,6 +148,7 @@ class KetVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        val terminalSnapshot = lifecycle.destroy()
         healthTask?.cancel(true)
         telemetryTask?.cancel(true)
         networkChangeTask?.cancel(true)
@@ -159,6 +161,7 @@ class KetVpnService : VpnService() {
             idleModeReceiverRegistered = false
         }
         cleanupLocal()
+        terminalSnapshot?.let(KetTunnelRuntime::publish)
         scheduler.shutdownNow()
         worker.shutdownNow()
         super.onDestroy()
@@ -174,10 +177,10 @@ class KetVpnService : VpnService() {
             )
             transportAddresses = resolveTransportAddresses(spec.transports)
             val selected = startLocalRoute(spec, reconnectAttempt = 0)
-            if (stopping.get()) return
+            if (lifecycle.isStopping()) return
             publishConnected(spec, selected)
             scheduleHealthChecks()
-            scheduleTelemetry(spec)
+            scheduleTelemetry()
         } catch (error: Exception) {
             AndroidConnectionDiagnostics.record(
                 stage = "tunnel_start",
@@ -199,7 +202,7 @@ class KetVpnService : VpnService() {
             spec.preferredProtocol,
         )
         for (transport in candidates) {
-            if (stopping.get()) throw IllegalStateException("Tunnel stop was requested")
+            if (lifecycle.isStopping()) throw IllegalStateException("Tunnel stop was requested")
             KetTunnelRuntime.update {
                 it.copy(
                     phase = if (reconnectAttempt > 0) TunnelPhase.Reconnecting else TunnelPhase.Connecting,
@@ -234,8 +237,8 @@ class KetVpnService : VpnService() {
                 continue
             }
             try {
-                val started = candidate.start(stopping::get)
-                if (stopping.get()) throw IllegalStateException("Tunnel stop was requested")
+                val started = candidate.start(lifecycle::isStopping)
+                if (lifecycle.isStopping()) throw IllegalStateException("Tunnel stop was requested")
                 engine = candidate
                 activeTransportId = transport.id
                 establishVpnRoute(spec, candidate, started)
@@ -254,7 +257,7 @@ class KetVpnService : VpnService() {
                 } else {
                     runCatching { candidate.close() }
                 }
-                if (stopping.get()) throw IllegalStateException("Tunnel stop was requested")
+                if (lifecycle.isStopping()) throw IllegalStateException("Tunnel stop was requested")
                 transportHistory.recordFailure(transport.id, SystemClock.elapsedRealtime())
                 failures += "${transport.displayName}: ${error.message ?: "startup failed"}"
                 AndroidConnectionDiagnostics.record(
@@ -304,7 +307,7 @@ class KetVpnService : VpnService() {
             require(vpnRoute.isActive()) { "OpenVPN did not attach its Android tunnel interface" }
             require(selectedEngine.isAlive()) { "OpenVPN stopped while attaching the VPN interface" }
             bridgeActive = false
-            AndroidRoutedInternetProbe.verify(stopping::get)
+            AndroidRoutedInternetProbe.verify(lifecycle::isStopping)
             return
         }
         val socks = selected.route as AndroidEngineRoute.Socks
@@ -330,7 +333,7 @@ class KetVpnService : VpnService() {
         if (!selectedEngine.isAlive()) {
             throw IllegalStateException("${selectedEngine.displayName} stopped while attaching the VPN interface")
         }
-        AndroidRoutedInternetProbe.verify(stopping::get)
+        AndroidRoutedInternetProbe.verify(lifecycle::isStopping)
     }
 
     private fun establishOpenVpnRoute(
@@ -366,6 +369,10 @@ class KetVpnService : VpnService() {
     private fun publishConnected(spec: TunnelLaunchSpec, selected: SelectedTransport) {
         reconnecting.set(false)
         renewalFailures = 0
+        renewAtEpochSeconds = AndroidLeaseRenewalSchedule.nextRenewalEpochSeconds(
+            System.currentTimeMillis() / 1_000,
+            spec.sessionExpiresAtEpochSeconds,
+        )
         underlyingNetworks.markConnected()
         KetTunnelRuntime.update {
             it.copy(
@@ -392,7 +399,7 @@ class KetVpnService : VpnService() {
         healthTask = scheduler.scheduleWithFixedDelay(
             {
                 val currentEngine = engine
-                if (!stopping.get() && currentEngine != null && !currentEngine.isAlive()) {
+                if (!lifecycle.isStopping() && currentEngine != null && !currentEngine.isAlive()) {
                     requestRecovery("${currentEngine.displayName} stopped unexpectedly")
                 }
             },
@@ -421,7 +428,7 @@ class KetVpnService : VpnService() {
         stopTransportAndBridge()
         var lastFailure = failureReason
         for (attempt in 1..recoveryPolicy.maximumReconnectRounds) {
-            if (stopping.get()) {
+            if (lifecycle.isStopping()) {
                 reconnecting.set(false)
                 return
             }
@@ -435,7 +442,7 @@ class KetVpnService : VpnService() {
             updateForegroundNotification("Restoring protected route")
             try {
                 val selected = startLocalRoute(spec, reconnectAttempt = attempt)
-                if (stopping.get()) {
+                if (lifecycle.isStopping()) {
                     cleanupLocal()
                     reconnecting.set(false)
                     return
@@ -468,7 +475,7 @@ class KetVpnService : VpnService() {
     }
 
     private fun requestRecovery(failureReason: String) {
-        if (stopping.get() || !reconnecting.compareAndSet(false, true)) return
+        if (lifecycle.isStopping() || !reconnecting.compareAndSet(false, true)) return
         val currentEngine = engine
         val spec = launchSpec
         if (currentEngine == null || spec == null) {
@@ -486,13 +493,73 @@ class KetVpnService : VpnService() {
         }
     }
 
+    private fun requestSessionReauthorization(failureReason: String) {
+        if (lifecycle.isStopping() || !reconnecting.compareAndSet(false, true)) return
+        worker.execute {
+            AndroidConnectionDiagnostics.record(
+                stage = "session_reauthorization",
+                outcome = DiagnosticOutcome.Started,
+                phase = TunnelPhase.Reconnecting,
+                transport = activeTransportId,
+                code = "authorization_lost",
+                message = failureReason,
+            )
+            KetTunnelRuntime.update {
+                it.copy(
+                    phase = TunnelPhase.Reconnecting,
+                    message = "Refreshing server authorization...",
+                    reconnectAttempt = 1,
+                )
+            }
+            try {
+                val saved = credentialStore.load()
+                    ?: throw IllegalStateException("The saved access profile is unavailable")
+                if (saved.accessExpired()) {
+                    credentialStore.clearAll()
+                    throw IllegalStateException("Access time has expired")
+                }
+                credentialStore.clearSession()
+                val replacement = DurableTunnelSessionResolver(KetControlApi, credentialStore)
+                    .resolveForApp(saved.profile)
+                launchSpec = replacement
+                if (lifecycle.isStopping()) return@execute
+                val replacementAddresses = resolveTransportAddresses(replacement.transports)
+                stopTransportAndBridge()
+                transportAddresses = replacementAddresses
+                val selected = startLocalRoute(replacement, reconnectAttempt = 1)
+                if (lifecycle.isStopping()) return@execute
+                publishConnected(replacement, selected)
+                AndroidConnectionDiagnostics.record(
+                    stage = "session_reauthorization",
+                    outcome = DiagnosticOutcome.Succeeded,
+                    phase = TunnelPhase.Connected,
+                    protocol = replacement.preferredProtocol,
+                    transport = activeTransportId,
+                )
+            } catch (error: Exception) {
+                AndroidConnectionDiagnostics.record(
+                    stage = "session_reauthorization",
+                    outcome = DiagnosticOutcome.Failed,
+                    phase = TunnelPhase.Failed,
+                    transport = activeTransportId,
+                    code = "reauthorization_failed",
+                    message = error.message,
+                )
+                reconnecting.set(false)
+                if (!lifecycle.isStopping()) {
+                    requestStop(error.message ?: "The server session could not be refreshed")
+                }
+            }
+        }
+    }
+
     @Synchronized
     private fun scheduleNetworkChangeRecovery(networkSetChanged: Boolean) {
         if (!networkSetChanged || !underlyingNetworks.isConnected() || scheduler.isShutdown) return
         networkChangeTask?.cancel(false)
         networkChangeTask = scheduler.schedule(
             {
-                if (!stopping.get() && underlyingNetworks.consumeRecoveryRequired()) {
+                if (!lifecycle.isStopping() && underlyingNetworks.consumeRecoveryRequired()) {
                     requestRecovery("The underlying network changed")
                 }
             },
@@ -501,9 +568,9 @@ class KetVpnService : VpnService() {
         )
     }
 
-    private fun scheduleTelemetry(spec: TunnelLaunchSpec) {
+    private fun scheduleTelemetry() {
         telemetryTask = scheduler.scheduleWithFixedDelay(
-            { refreshTelemetry(spec) },
+            { launchSpec?.let(::refreshTelemetry) },
             1,
             10,
             TimeUnit.SECONDS,
@@ -511,16 +578,24 @@ class KetVpnService : VpnService() {
     }
 
     private fun requestImmediateTelemetryRefresh() {
-        val spec = launchSpec ?: return
-        if (stopping.get() || scheduler.isShutdown) return
-        runCatching { scheduler.execute { refreshTelemetry(spec) } }
+        if (launchSpec == null) return
+        if (lifecycle.isStopping() || scheduler.isShutdown) return
+        runCatching { scheduler.execute { launchSpec?.let(::refreshTelemetry) } }
     }
 
     private fun refreshTelemetry(spec: TunnelLaunchSpec) {
-        if (!leaseRefreshGate.tryStart(stopping.get(), powerManager.isDeviceIdleMode)) return
+        if (!leaseRefreshGate.tryStart(lifecycle.isStopping(), powerManager.isDeviceIdleMode)) return
         try {
+            val nowEpochSeconds = System.currentTimeMillis() / 1_000
+            val renewalDue = AndroidLeaseRenewalSchedule.isDue(nowEpochSeconds, renewAtEpochSeconds)
+            val remote: SessionTelemetry
             try {
-                KetControlApi.renew(spec.controlEndpoint, spec.sessionToken)
+                remote = if (renewalDue) {
+                    KetControlApi.renewStatus(spec.controlEndpoint, spec.sessionToken)
+                } else {
+                    KetControlApi.status(spec.controlEndpoint, spec.sessionToken)
+                }
+                confirmSessionLease(spec, remote, nowEpochSeconds, renewalDue)
                 renewalFailures = 0
             } catch (error: Exception) {
                 val authorizationLost = (error as? KetControlException)?.authorizationLost == true
@@ -538,7 +613,7 @@ class KetVpnService : VpnService() {
                 val routedInternetHealthy = if (
                     recoveryPolicy.shouldVerifyRoute(renewalFailures, authorizationLost)
                 ) {
-                    runCatching { AndroidRoutedInternetProbe.verify(stopping::get) }.isSuccess.also {
+                    runCatching { AndroidRoutedInternetProbe.verify(lifecycle::isStopping) }.isSuccess.also {
                         AndroidConnectionDiagnostics.record(
                             stage = "routed_health_after_control_failure",
                             outcome = if (it) DiagnosticOutcome.Succeeded else DiagnosticOutcome.Failed,
@@ -556,11 +631,16 @@ class KetVpnService : VpnService() {
                         renewalFailures,
                         authorizationLost,
                         routedInternetHealthy,
+                        spec.accessExpiresAtEpochSeconds
+                            ?.let { it <= System.currentTimeMillis() / 1_000 } == true,
                     )
                 ) {
                     AndroidLeaseFailureAction.Wait -> Unit
                     AndroidLeaseFailureAction.Recover -> requestRecovery(
                         "The protected route stopped reaching the server",
+                    )
+                    AndroidLeaseFailureAction.Reauthorize -> requestSessionReauthorization(
+                        "The server no longer recognizes the active session",
                     )
                     AndroidLeaseFailureAction.Stop -> requestStop(
                         if (authorizationLost) {
@@ -572,10 +652,7 @@ class KetVpnService : VpnService() {
                 }
                 return
             }
-            if (stopping.get()) return
-            val remote = runCatching {
-                KetControlApi.status(spec.controlEndpoint, spec.sessionToken)
-            }.getOrNull()
+            if (lifecycle.isStopping()) return
             val local = if (reconnecting.get()) {
                 null
             } else {
@@ -585,27 +662,82 @@ class KetVpnService : VpnService() {
                     null
                 }
             }
-            if (stopping.get()) return
-            if (remote != null || local != null) {
-                val remoteTraffic = remote?.takeIf(SessionTelemetry::available)
-                KetTunnelRuntime.update {
-                    it.copy(
-                        node = remote?.node ?: it.node,
-                        accessExpiresAtEpochSeconds = remote?.accessExpiresAtEpochSeconds
-                            ?: it.accessExpiresAtEpochSeconds,
-                        sentBytes = local?.getOrNull(1) ?: remoteTraffic?.sent ?: it.sentBytes,
-                        receivedBytes = local?.getOrNull(3) ?: remoteTraffic?.received ?: it.receivedBytes,
-                        onlineConnections = remoteTraffic?.online ?: it.onlineConnections,
-                    )
-                }
+            if (lifecycle.isStopping()) return
+            val remoteTraffic = remote.takeIf(SessionTelemetry::available)
+            KetTunnelRuntime.update {
+                it.copy(
+                    node = remote.node,
+                    accessExpiresAtEpochSeconds = remote.accessExpiresAtEpochSeconds
+                        ?: it.accessExpiresAtEpochSeconds,
+                    sentBytes = local?.getOrNull(1) ?: remoteTraffic?.sent ?: it.sentBytes,
+                    receivedBytes = local?.getOrNull(3) ?: remoteTraffic?.received ?: it.receivedBytes,
+                    onlineConnections = remoteTraffic?.online ?: it.onlineConnections,
+                )
             }
         } finally {
             leaseRefreshGate.finish()
         }
     }
 
+    private fun confirmSessionLease(
+        spec: TunnelLaunchSpec,
+        remote: SessionTelemetry,
+        nowEpochSeconds: Long,
+        renewed: Boolean,
+    ) {
+        val leaseChanged = remote.expiresAtEpochSeconds != spec.sessionExpiresAtEpochSeconds
+        val confirmedAccessExpiry = remote.accessExpiresAtEpochSeconds ?: spec.accessExpiresAtEpochSeconds
+        val updated = spec.withSessionExpiry(remote.expiresAtEpochSeconds, confirmedAccessExpiry)
+        launchSpec = updated
+        if (renewed || leaseChanged) {
+            renewAtEpochSeconds = AndroidLeaseRenewalSchedule.nextRenewalEpochSeconds(
+                nowEpochSeconds,
+                remote.expiresAtEpochSeconds,
+            )
+        }
+        if (
+            remote.expiresAtEpochSeconds == spec.sessionExpiresAtEpochSeconds &&
+            confirmedAccessExpiry == spec.accessExpiresAtEpochSeconds
+        ) {
+            return
+        }
+        runCatching {
+            val saved = credentialStore.load() ?: return@runCatching
+            if (saved.launchSpec()?.sessionToken != spec.sessionToken) return@runCatching
+            credentialStore.save(
+                DurableTunnelCredentials(
+                    profile = saved.profile,
+                    sessionManifest = saved.sessionManifest,
+                    accessExpiresAtEpochSeconds = confirmedAccessExpiry
+                        ?: saved.accessExpiresAtEpochSeconds,
+                    sessionExpiresAtEpochSeconds = remote.expiresAtEpochSeconds,
+                ),
+            )
+        }.onFailure { error ->
+            AndroidConnectionDiagnostics.record(
+                stage = "lease_persistence",
+                outcome = DiagnosticOutcome.Failed,
+                phase = KetTunnelRuntime.snapshot().phase,
+                protocol = spec.preferredProtocol,
+                transport = activeTransportId,
+                code = "lease_persistence_failed",
+                message = error.message,
+            )
+        }
+    }
+
     private fun requestStop(failure: String?) {
-        if (!stopping.compareAndSet(false, true)) return
+        if (!lifecycle.tryStop()) return
+        KetTunnelRuntime.update {
+            it.copy(
+                phase = TunnelPhase.Stopping,
+                message = if (failure == null) {
+                    "Stopping protected route..."
+                } else {
+                    "Closing the failed protected route..."
+                },
+            )
+        }
         worker.execute { stopTunnel(failure) }
     }
 
@@ -621,14 +753,22 @@ class KetVpnService : VpnService() {
         val release = spec?.let {
             runCatching { KetControlApi.release(it.controlEndpoint, it.sessionToken) }
         }
+        val releaseConclusive = TunnelCredentialCleanupPolicy.releaseIsConclusive(
+            release?.exceptionOrNull(),
+        )
+        val accessExpired = spec?.accessExpiresAtEpochSeconds
+            ?.let { it <= System.currentTimeMillis() / 1_000 } == true
         val credentialCleanup = runCatching {
-            if (spec?.accessExpiresAtEpochSeconds?.let { it <= System.currentTimeMillis() / 1_000 } == true) {
-                credentialStore.clearAll()
-            } else {
-                credentialStore.clearSession()
-            }
+            TunnelCredentialCleanupPolicy.apply(
+                credentialStore,
+                TunnelCredentialCleanupPolicy.afterRelease(
+                    sessionExists = spec != null,
+                    releaseConclusive = releaseConclusive,
+                    accessExpired = accessExpired,
+                ),
+            )
         }
-        val cleanupSucceeded = localCleanupSucceeded && release?.isFailure != true && credentialCleanup.isSuccess
+        val cleanupSucceeded = localCleanupSucceeded && releaseConclusive && credentialCleanup.isSuccess
         AndroidConnectionDiagnostics.record(
             stage = "disconnect_cleanup",
             outcome = if (cleanupSucceeded) DiagnosticOutcome.Succeeded else DiagnosticOutcome.Failed,
@@ -637,17 +777,17 @@ class KetVpnService : VpnService() {
             code = if (cleanupSucceeded) null else "cleanup_incomplete",
             message = release?.exceptionOrNull()?.message ?: credentialCleanup.exceptionOrNull()?.message,
         )
-        if (failure == null) {
-            KetTunnelRuntime.publish(TunnelSnapshot())
-        } else {
-            KetTunnelRuntime.publish(
+        lifecycle.stageTerminal(
+            if (failure == null) {
+                TunnelSnapshot()
+            } else {
                 TunnelSnapshot(
                     phase = TunnelPhase.Failed,
                     node = spec?.node ?: KetTunnelRuntime.snapshot().node,
                     message = failure,
-                ),
-            )
-        }
+                )
+            },
+        )
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

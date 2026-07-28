@@ -220,6 +220,10 @@ impl KetClient {
             runtime.preferred_protocol = preferred_protocol.clone();
         }
         self.update_snapshot(|snapshot| snapshot.preferred_protocol = preferred_protocol);
+        if let Err(error) = self.renew_before_connect_locked().await {
+            self.runtime.lock().await.connection_requested = false;
+            return Err(error);
+        }
         let result = self.connect_locked(false).await;
         if result.is_err() {
             self.runtime.lock().await.connection_requested = false;
@@ -229,12 +233,12 @@ impl KetClient {
 
     pub async fn refresh(&self) -> Result<ClientSnapshot, ClientError> {
         let _operation = self.operation.lock().await;
-        self.refresh_locked(false).await
+        self.refresh_locked(false, true).await
     }
 
     pub async fn renew(&self) -> Result<ClientSnapshot, ClientError> {
         let _operation = self.operation.lock().await;
-        self.refresh_locked(true).await
+        self.refresh_locked(true, true).await
     }
 
     pub async fn maintain_once(&self) -> Result<ClientSnapshot, ClientError> {
@@ -246,17 +250,37 @@ impl KetClient {
                     (
                         tunnel.transport_id().to_owned(),
                         tunnel.status().borrow().clone(),
+                        Arc::clone(tunnel),
                     )
                 }),
                 runtime.connection_requested,
             )
         };
-        if let Some((transport_id, status)) = &tunnel_status
+        if let Some((transport_id, status, tunnel)) = &tunnel_status
             && !matches!(status, TunnelStatus::Connected)
         {
             self.runtime.lock().await.tunnel = None;
-            self.record_failure(transport_id).await;
-            return self.reconnect_locked().await;
+            self.stop_and_retain_on_failure(Arc::clone(tunnel)).await?;
+            if connection_requested {
+                self.record_failure(transport_id).await;
+                return self.reconnect_locked().await;
+            }
+            let enrolled = self.runtime.lock().await.session.is_some();
+            self.update_snapshot(|snapshot| {
+                snapshot.phase = if enrolled {
+                    ClientPhase::Enrolled
+                } else {
+                    ClientPhase::Disconnected
+                };
+                snapshot.active_transport = None;
+                snapshot.connected_at_epoch_seconds = None;
+                snapshot.handshake_latency_ms = None;
+                snapshot.reconnect_attempt = 0;
+                snapshot.issue = None;
+            });
+            if !enrolled {
+                return Ok(self.snapshot());
+            }
         }
         if tunnel_status.is_none() && connection_requested {
             return self.reconnect_locked().await;
@@ -267,17 +291,26 @@ impl KetClient {
             .await
             .renew_at_epoch_seconds
             .is_some_and(|deadline| unix_time() >= deadline);
-        match self.refresh_locked(renew).await {
+        match self.refresh_locked(renew, false).await {
             Ok(snapshot) => Ok(snapshot),
             Err(error @ ClientError::Network(_)) => {
-                let should_verify_route = {
+                let (route_is_active, should_verify_route) = {
                     let mut runtime = self.runtime.lock().await;
                     runtime.control_failures = runtime.control_failures.saturating_add(1);
-                    runtime.control_failures >= 2
-                        && runtime.connection_requested
-                        && runtime.tunnel.is_some()
+                    let route_is_active = runtime.connection_requested && runtime.tunnel.is_some();
+                    (
+                        route_is_active,
+                        runtime.control_failures >= 2
+                            && runtime.connection_requested
+                            && runtime.tunnel.is_some(),
+                    )
                 };
-                if !should_verify_route || self.route_health.is_healthy().await {
+                if route_is_active && (!should_verify_route || self.route_health.is_healthy().await)
+                {
+                    self.update_snapshot(|snapshot| snapshot.issue = None);
+                    return Ok(self.snapshot());
+                }
+                if !should_verify_route {
                     return Err(error);
                 }
                 let recovery = {
@@ -295,7 +328,7 @@ impl KetClient {
                 let Some((transport_id, tunnel)) = recovery else {
                     return Err(error);
                 };
-                tunnel.stop().await?;
+                self.stop_and_retain_on_failure(tunnel).await?;
                 self.record_failure(&transport_id).await;
                 self.reconnect_locked().await
             }
@@ -337,10 +370,21 @@ impl KetClient {
             snapshot.issue = None;
         });
 
-        let stop_error = match tunnel {
-            Some(tunnel) => tunnel.stop().await.err(),
-            None => None,
-        };
+        if let Some(tunnel) = tunnel
+            && let Err(error) = self.stop_and_retain_on_failure(tunnel).await
+        {
+            self.update_snapshot(|snapshot| {
+                snapshot.phase = ClientPhase::Error;
+                snapshot.issue = Some(error.issue());
+            });
+            return Err(error);
+        }
+        self.update_snapshot(|snapshot| {
+            snapshot.active_transport = None;
+            snapshot.connected_at_epoch_seconds = None;
+            snapshot.handshake_latency_ms = None;
+            snapshot.reconnect_attempt = 0;
+        });
         let release_error = match token {
             Some(token) => self
                 .api
@@ -350,6 +394,13 @@ impl KetClient {
                 .filter(|error| !error.is_unauthorized()),
             None => None,
         };
+        if let Some(error) = release_error {
+            self.update_snapshot(|snapshot| {
+                snapshot.phase = ClientPhase::Error;
+                snapshot.issue = Some(error.issue());
+            });
+            return Err(error);
+        }
         {
             let mut runtime = self.runtime.lock().await;
             runtime.session = None;
@@ -357,7 +408,6 @@ impl KetClient {
             runtime.control_failures = 0;
             runtime.probes.clear();
         }
-        let error = stop_error.or(release_error);
         self.update_snapshot(|snapshot| {
             snapshot.phase = ClientPhase::Disconnected;
             snapshot.node = None;
@@ -370,12 +420,9 @@ impl KetClient {
             snapshot.connected_at_epoch_seconds = None;
             snapshot.handshake_latency_ms = None;
             snapshot.reconnect_attempt = 0;
-            snapshot.issue = error.as_ref().map(ClientError::issue);
+            snapshot.issue = None;
         });
-        match error {
-            Some(error) => Err(error),
-            None => Ok(self.snapshot()),
-        }
+        Ok(self.snapshot())
     }
 
     /// Stops packet forwarding while retaining the in-memory server lease.
@@ -412,17 +459,22 @@ impl KetClient {
             snapshot.phase = ClientPhase::Disconnecting;
             snapshot.issue = None;
         });
-        let result = tunnel.stop().await;
+        let result = self.stop_and_retain_on_failure(tunnel).await;
+        let stopped = result.is_ok();
         self.update_snapshot(|snapshot| {
-            snapshot.phase = if enrolled {
+            snapshot.phase = if !stopped {
+                ClientPhase::Error
+            } else if enrolled {
                 ClientPhase::Enrolled
             } else {
                 ClientPhase::Disconnected
             };
-            snapshot.active_transport = None;
-            snapshot.connected_at_epoch_seconds = None;
-            snapshot.handshake_latency_ms = None;
-            snapshot.reconnect_attempt = 0;
+            if stopped {
+                snapshot.active_transport = None;
+                snapshot.connected_at_epoch_seconds = None;
+                snapshot.handshake_latency_ms = None;
+                snapshot.reconnect_attempt = 0;
+            }
             snapshot.issue = result.as_ref().err().map(ClientError::issue);
         });
         result.map(|()| self.snapshot())
@@ -454,16 +506,18 @@ impl KetClient {
 
     async fn connect_locked(&self, reconnecting: bool) -> Result<ClientSnapshot, ClientError> {
         let mut cancellation = self.connect_cancellation.subscribe();
-        {
-            let mut runtime = self.runtime.lock().await;
-            if runtime
-                .tunnel
-                .as_ref()
-                .is_some_and(|tunnel| matches!(*tunnel.status().borrow(), TunnelStatus::Connected))
+        let stale_tunnel =
             {
-                return Err(ClientError::AlreadyConnected);
-            }
-            runtime.tunnel = None;
+                let mut runtime = self.runtime.lock().await;
+                if runtime.tunnel.as_ref().is_some_and(|tunnel| {
+                    matches!(*tunnel.status().borrow(), TunnelStatus::Connected)
+                }) {
+                    return Err(ClientError::AlreadyConnected);
+                }
+                runtime.tunnel.take()
+            };
+        if let Some(tunnel) = stale_tunnel {
+            self.stop_and_retain_on_failure(tunnel).await?;
         }
         let candidates = {
             let runtime = self.runtime.lock().await;
@@ -541,7 +595,10 @@ impl KetClient {
                 None => return Ok(self.finish_cancelled_connection().await),
                 Some(Ok(started)) => {
                     if cancellation.has_changed().unwrap_or(false) {
-                        let _ = started.tunnel.stop().await;
+                        if let Err(error) = self.stop_and_retain_on_failure(started.tunnel).await {
+                            self.fail(&error);
+                            return Err(error);
+                        }
                         return Ok(self.finish_cancelled_connection().await);
                     }
                     let latency =
@@ -603,7 +660,7 @@ impl KetClient {
                     .await
                     .renew_at_epoch_seconds
                     .is_some_and(|deadline| unix_time() >= deadline);
-                let refresh = self.refresh_locked(renew).await;
+                let refresh = self.refresh_locked(renew, false).await;
                 if let Err(error) = refresh
                     && error.is_unauthorized()
                 {
@@ -615,7 +672,36 @@ impl KetClient {
         }
     }
 
-    async fn refresh_locked(&self, renew: bool) -> Result<ClientSnapshot, ClientError> {
+    async fn renew_before_connect_locked(&self) -> Result<(), ClientError> {
+        let now = unix_time();
+        let (renew_due, expires_at) = {
+            let runtime = self.runtime.lock().await;
+            let session = runtime.session.as_ref().ok_or(ClientError::NotEnrolled)?;
+            (
+                runtime
+                    .renew_at_epoch_seconds
+                    .is_some_and(|deadline| now >= deadline),
+                session.session_expires_at_epoch_seconds,
+            )
+        };
+        if !renew_due {
+            return Ok(());
+        }
+        match self.refresh_locked(true, false).await {
+            Ok(_) => Ok(()),
+            Err(ClientError::Network(_)) if unix_time() < expires_at => {
+                self.update_snapshot(|snapshot| snapshot.issue = None);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn refresh_locked(
+        &self,
+        renew: bool,
+        surface_errors: bool,
+    ) -> Result<ClientSnapshot, ClientError> {
         let token = self
             .runtime
             .lock()
@@ -633,9 +719,11 @@ impl KetClient {
             Ok(status) => {
                 if let Err(error) = validate_status(&status, &token, &self.client_name, unix_time())
                 {
-                    self.update_snapshot(|snapshot| {
-                        snapshot.issue = Some(error.issue());
-                    });
+                    if surface_errors {
+                        self.update_snapshot(|snapshot| {
+                            snapshot.issue = Some(error.issue());
+                        });
+                    }
                     return Err(error);
                 }
                 self.apply_status(status, renew).await;
@@ -648,8 +736,14 @@ impl KetClient {
                     runtime.preferred_protocol = None;
                     runtime.tunnel.take()
                 };
-                if let Some(tunnel) = tunnel {
-                    let _ = tunnel.stop().await;
+                if let Some(tunnel) = tunnel
+                    && let Err(cleanup_error) = self.stop_and_retain_on_failure(tunnel).await
+                {
+                    self.update_snapshot(|snapshot| {
+                        snapshot.phase = ClientPhase::Error;
+                        snapshot.issue = Some(cleanup_error.issue());
+                    });
+                    return Err(cleanup_error);
                 }
                 {
                     let mut runtime = self.runtime.lock().await;
@@ -663,17 +757,22 @@ impl KetClient {
                     snapshot.active_transport = None;
                     snapshot.available_transports.clear();
                     snapshot.preferred_protocol = None;
+                    snapshot.traffic = None;
                     snapshot.session_expires_at_epoch_seconds = None;
                     snapshot.access_expires_at_epoch_seconds = None;
                     snapshot.connected_at_epoch_seconds = None;
+                    snapshot.handshake_latency_ms = None;
+                    snapshot.reconnect_attempt = 0;
                     snapshot.issue = Some(error.issue());
                 });
                 Err(error)
             }
             Err(error) => {
-                self.update_snapshot(|snapshot| {
-                    snapshot.issue = Some(error.issue());
-                });
+                if surface_errors {
+                    self.update_snapshot(|snapshot| {
+                        snapshot.issue = Some(error.issue());
+                    });
+                }
                 Err(error)
             }
         }
@@ -710,6 +809,22 @@ impl KetClient {
             unix_time(),
             self.selector.policy().failure_cooldown_seconds,
         );
+    }
+
+    async fn stop_and_retain_on_failure(
+        &self,
+        tunnel: Arc<dyn ActiveTunnel>,
+    ) -> Result<(), ClientError> {
+        match tunnel.stop().await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let mut runtime = self.runtime.lock().await;
+                if runtime.tunnel.is_none() {
+                    runtime.tunnel = Some(tunnel);
+                }
+                Err(error)
+            }
+        }
     }
 
     async fn cache_probe(&self, transport: &ket_core::SessionTransport, report: &ProbeReport) {
@@ -1002,6 +1117,108 @@ mod tests {
             Some(&TransportProtocol::Hysteria2)
         );
         assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn direct_reconnect_stops_a_failed_handle_before_starting_a_replacement() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("hy2-primary", 1)];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+
+        client.connect().await.unwrap();
+        adapter.fail("hy2-primary");
+        let reconnected = client.connect().await.unwrap();
+
+        assert_eq!(reconnected.phase, ClientPhase::Connected);
+        assert_eq!(adapter.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_user_stop_cleanup_is_retried_without_reconnecting() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("hy2-primary", 1)];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        client.connect().await.unwrap();
+        adapter.set_stop_failure(true);
+
+        let stop_error = client.stop_tunnel().await.unwrap_err();
+        assert!(matches!(stop_error, ClientError::Transport { .. }));
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+
+        let retry_error = client.maintain_once().await.unwrap_err();
+        assert!(matches!(retry_error, ClientError::Transport { .. }));
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+
+        adapter.set_stop_failure(false);
+        let maintained = client.maintain_once().await.unwrap();
+        assert_eq!(maintained.phase, ClientPhase::Enrolled);
+        assert_eq!(maintained.active_transport, None);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn authorization_loss_waits_for_tunnel_cleanup_before_dropping_ownership() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("hy2-primary", 1)];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        client.connect().await.unwrap();
+        adapter.set_stop_failure(true);
+        api.set_unauthorized(true);
+
+        let cleanup_error = client.maintain_once().await.unwrap_err();
+        assert!(matches!(cleanup_error, ClientError::Transport { .. }));
+        assert!(client.runtime.lock().await.session.is_some());
+        assert!(client.runtime.lock().await.tunnel.is_some());
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+
+        adapter.set_stop_failure(false);
+        let authorization_error = client.maintain_once().await.unwrap_err();
+        assert!(authorization_error.is_unauthorized());
+        assert!(client.runtime.lock().await.session.is_none());
+        assert!(client.runtime.lock().await.tunnel.is_none());
+        assert_eq!(client.snapshot().issue.unwrap().code, "unauthorized");
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -1103,6 +1320,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connect_renews_a_due_lease_before_starting_the_transport() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("hy2-primary", 1)];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        client.runtime.lock().await.renew_at_epoch_seconds = Some(unix_time());
+
+        client.connect().await.unwrap();
+
+        assert_eq!(api.renewals.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn connect_can_use_an_unexpired_cached_lease_during_a_control_timeout() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("hy2-primary", 1)];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        client.runtime.lock().await.renew_at_epoch_seconds = Some(unix_time());
+        api.fail_next_control_requests(1);
+
+        let connected = client.connect().await.unwrap();
+
+        assert_eq!(connected.phase, ClientPhase::Connected);
+        assert_eq!(connected.issue, None);
+        assert_eq!(api.renewals.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn connect_does_not_start_transport_with_an_expired_unrenewed_lease() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("hy2-primary", 1)];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        {
+            let mut runtime = client.runtime.lock().await;
+            runtime.renew_at_epoch_seconds = Some(unix_time());
+            runtime
+                .session
+                .as_mut()
+                .expect("client remains enrolled")
+                .session_expires_at_epoch_seconds = unix_time();
+        }
+        api.fail_next_control_requests(1);
+
+        let error = client.connect().await.unwrap_err();
+
+        assert!(matches!(error, ClientError::Network(_)));
+        assert_eq!(api.renewals.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 0);
+        assert!(!client.runtime.lock().await.connection_requested);
+    }
+
+    #[tokio::test]
     async fn maintenance_recovers_after_control_timeouts_when_the_route_is_unhealthy() {
         let api = Arc::new(MockApi::new(test_manifest()));
         let adapter = Arc::new(RecoveryAdapter::new());
@@ -1123,10 +1432,9 @@ mod tests {
         client.connect().await.unwrap();
         api.fail_next_control_requests(2);
 
-        assert!(matches!(
-            client.maintain_once().await,
-            Err(ClientError::Network(_))
-        ));
+        let retained = client.maintain_once().await.unwrap();
+        assert_eq!(retained.phase, ClientPhase::Connected);
+        assert_eq!(retained.issue, None);
         let recovered = client.maintain_once().await.unwrap();
 
         assert_eq!(recovered.phase, ClientPhase::Connected);
@@ -1157,10 +1465,9 @@ mod tests {
         api.fail_next_control_requests(3);
 
         for _ in 0..3 {
-            assert!(matches!(
-                client.maintain_once().await,
-                Err(ClientError::Network(_))
-            ));
+            let retained = client.maintain_once().await.unwrap();
+            assert_eq!(retained.phase, ClientPhase::Connected);
+            assert_eq!(retained.issue, None);
         }
 
         assert_eq!(client.snapshot().phase, ClientPhase::Connected);
@@ -1233,7 +1540,7 @@ mod tests {
         let connection_attempts = adapter.connection_attempts.load(Ordering::SeqCst);
         let stopped = client.stop_tunnel().await.unwrap();
         assert_eq!(stopped.phase, ClientPhase::Enrolled);
-        assert_eq!(adapter.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.stops.load(Ordering::SeqCst), 2);
 
         let maintained = client.maintain_once().await.unwrap();
         assert_eq!(maintained.phase, ClientPhase::Enrolled);
@@ -1255,6 +1562,7 @@ mod tests {
         statuses: AtomicUsize,
         renewals: AtomicUsize,
         control_failures_remaining: AtomicUsize,
+        unauthorized: AtomicBool,
     }
 
     impl MockApi {
@@ -1271,12 +1579,17 @@ mod tests {
                 statuses: AtomicUsize::new(0),
                 renewals: AtomicUsize::new(0),
                 control_failures_remaining: AtomicUsize::new(0),
+                unauthorized: AtomicBool::new(false),
             }
         }
 
         fn fail_next_control_requests(&self, count: usize) {
             self.control_failures_remaining
                 .store(count, Ordering::SeqCst);
+        }
+
+        fn set_unauthorized(&self, unauthorized: bool) {
+            self.unauthorized.store(unauthorized, Ordering::SeqCst);
         }
 
         fn control_request_fails(&self) -> bool {
@@ -1306,6 +1619,13 @@ mod tests {
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
             self.statuses.fetch_add(1, Ordering::SeqCst);
+            if self.unauthorized.load(Ordering::SeqCst) {
+                return Err(ClientError::Api {
+                    status: 401,
+                    code: "unauthorized".to_owned(),
+                    message: "session credentials are invalid".to_owned(),
+                });
+            }
             if self.control_request_fails() {
                 return Err(ClientError::Network("request timed out"));
             }
@@ -1318,6 +1638,13 @@ mod tests {
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
             self.renewals.fetch_add(1, Ordering::SeqCst);
+            if self.unauthorized.load(Ordering::SeqCst) {
+                return Err(ClientError::Api {
+                    status: 401,
+                    code: "unauthorized".to_owned(),
+                    message: "session credentials are invalid".to_owned(),
+                });
+            }
             if self.control_request_fails() {
                 return Err(ClientError::Network("request timed out"));
             }
@@ -1346,6 +1673,7 @@ mod tests {
         probe_attempts: AtomicUsize,
         connection_attempts: AtomicUsize,
         stops: Arc<AtomicUsize>,
+        stop_failure: Arc<AtomicBool>,
     }
 
     struct BlockingAdapter {
@@ -1403,6 +1731,7 @@ mod tests {
                 probe_attempts: AtomicUsize::new(0),
                 connection_attempts: AtomicUsize::new(0),
                 stops: Arc::new(AtomicUsize::new(0)),
+                stop_failure: Arc::new(AtomicBool::new(false)),
             }
         }
 
@@ -1413,6 +1742,10 @@ mod tests {
 
         fn set_dns_unavailable(&self, unavailable: bool) {
             self.dns_unavailable.store(unavailable, Ordering::SeqCst);
+        }
+
+        fn set_stop_failure(&self, fail: bool) {
+            self.stop_failure.store(fail, Ordering::SeqCst);
         }
 
         fn fail(&self, transport_id: &str) {
@@ -1476,6 +1809,7 @@ mod tests {
                     transport_id: transport.profile.id.clone(),
                     status,
                     stops: Arc::clone(&self.stops),
+                    stop_failure: Arc::clone(&self.stop_failure),
                 }),
                 handshake_latency: Duration::from_millis(25),
             })
@@ -1486,6 +1820,7 @@ mod tests {
         transport_id: String,
         status: watch::Sender<TunnelStatus>,
         stops: Arc<AtomicUsize>,
+        stop_failure: Arc<AtomicBool>,
     }
 
     #[async_trait]
@@ -1500,6 +1835,15 @@ mod tests {
 
         async fn stop(&self) -> Result<(), ClientError> {
             self.stops.fetch_add(1, Ordering::SeqCst);
+            if self.stop_failure.load(Ordering::SeqCst) {
+                self.status
+                    .send_replace(TunnelStatus::Failed("simulated cleanup failure".to_owned()));
+                return Err(ClientError::transport(
+                    &self.transport_id,
+                    "simulated cleanup failure",
+                    true,
+                ));
+            }
             self.status.send_replace(TunnelStatus::Stopped);
             Ok(())
         }

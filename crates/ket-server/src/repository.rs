@@ -7,9 +7,10 @@ use std::{
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::model::PersistedState;
+use crate::model::{CURRENT_STATE_SCHEMA_VERSION, PersistedState};
 
 const MAX_STATE_FILE_BYTES: usize = 64 * 1024 * 1024;
+const LEGACY_STATE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Error)]
 pub enum RepositoryError {
@@ -73,16 +74,20 @@ fn load_file(path: &Path) -> Result<PersistedState, RepositoryError> {
     if content.len() > MAX_STATE_FILE_BYTES {
         return Err(RepositoryError::TooLarge);
     }
-    let state: PersistedState = serde_json::from_slice(&content)?;
-    if state.schema_version != 1 {
-        return Err(RepositoryError::UnsupportedSchema(state.schema_version));
+    let mut state: PersistedState = serde_json::from_slice(&content)?;
+    match state.schema_version {
+        LEGACY_STATE_SCHEMA_VERSION => {
+            state.schema_version = CURRENT_STATE_SCHEMA_VERSION;
+        }
+        CURRENT_STATE_SCHEMA_VERSION => {}
+        unsupported => return Err(RepositoryError::UnsupportedSchema(unsupported)),
     }
     state.validate().map_err(RepositoryError::InvalidState)?;
     Ok(state)
 }
 
 fn store_file(path: &Path, state: &PersistedState) -> Result<(), RepositoryError> {
-    if state.schema_version != 1 {
+    if state.schema_version != CURRENT_STATE_SCHEMA_VERSION {
         return Err(RepositoryError::UnsupportedSchema(state.schema_version));
     }
     state.validate().map_err(RepositoryError::InvalidState)?;
@@ -178,9 +183,33 @@ mod tests {
 
         let state = load_file(path.path()).expect("compatible v1 state should load");
 
+        assert_eq!(state.schema_version, CURRENT_STATE_SCHEMA_VERSION);
         assert_eq!(state.grants.len(), 1);
         assert_eq!(state.sessions.len(), 1);
+        assert!(state.sessions[0].secret_hash.is_some());
+        assert_eq!(state.sessions[0].control_secret_hash, None);
         assert_eq!(state.sessions[0].data_plane_secret_hash, None);
+
+        store_file(path.path(), &state).expect("migrated state should be persisted as v2");
+        let stored: serde_json::Value = serde_json::from_slice(
+            &fs::read(path.path()).expect("migrated state should be readable"),
+        )
+        .expect("migrated state should remain JSON");
+        assert_eq!(stored["schema_version"], CURRENT_STATE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn fast_control_token_hashes_round_trip_without_a_legacy_argon_hash() {
+        let path = TemporaryStatePath::new("fast-control-hash");
+        let mut state = valid_state();
+        state.sessions[0].secret_hash = None;
+        state.sessions[0].control_secret_hash = Some([7; 32]);
+
+        store_file(path.path(), &state).expect("fast-hash state should be stored");
+        let loaded = load_file(path.path()).expect("fast-hash state should load");
+
+        assert_eq!(loaded.sessions[0].secret_hash, None);
+        assert_eq!(loaded.sessions[0].control_secret_hash, Some([7; 32]));
     }
 
     #[test]
@@ -225,12 +254,12 @@ mod tests {
         let schema_path = TemporaryStatePath::new("schema");
         fs::write(
             schema_path.path(),
-            br#"{"schema_version":2,"grants":[],"sessions":[]}"#,
+            br#"{"schema_version":3,"grants":[],"sessions":[]}"#,
         )
         .expect("future schema should be written");
         assert!(matches!(
             load_file(schema_path.path()),
-            Err(RepositoryError::UnsupportedSchema(2))
+            Err(RepositoryError::UnsupportedSchema(3))
         ));
 
         let oversized_path = TemporaryStatePath::new("oversized");
@@ -245,7 +274,7 @@ mod tests {
 
     fn valid_state() -> PersistedState {
         PersistedState {
-            schema_version: 1,
+            schema_version: CURRENT_STATE_SCHEMA_VERSION,
             grants: vec![AccessGrantRecord {
                 id: "Grant00001".to_owned(),
                 secret_hash: VALID_HASH.to_owned(),
@@ -257,7 +286,8 @@ mod tests {
             sessions: vec![SessionRecord {
                 id: "Session00001".to_owned(),
                 grant_id: "Grant00001".to_owned(),
-                secret_hash: VALID_HASH.to_owned(),
+                secret_hash: Some(VALID_HASH.to_owned()),
+                control_secret_hash: None,
                 data_plane_secret_hash: None,
                 resource_slot: Some(0),
                 client_name: "Valid client".to_owned(),

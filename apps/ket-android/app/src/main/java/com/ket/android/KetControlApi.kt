@@ -37,7 +37,7 @@ internal class KetControlException(
     val statusCode: Int,
     message: String,
 ) : IllegalStateException(message) {
-    val authorizationLost: Boolean = statusCode == 401 || statusCode == 403
+    val authorizationLost: Boolean = statusCode in setOf(401, 403, 404, 410)
 }
 
 /** Small platform adapter for the versioned Ket control contract. Secrets never enter logs. */
@@ -80,13 +80,17 @@ object KetControlApi : TunnelSessionApi {
     }
 
     override fun renew(serverUrl: String, token: String): Long {
+        return renewStatus(serverUrl, token).expiresAtEpochSeconds
+    }
+
+    fun renewStatus(serverUrl: String, token: String): SessionTelemetry {
         val validatedToken = validateSessionToken(token)
         val connection = open("${normalizeBaseUrl(serverUrl)}/v1/sessions/current").apply {
             requestMethod = "PUT"; setRequestProperty("Authorization", "Bearer $validatedToken")
         }
         val (code, body) = response(connection)
         requireSuccess(code, HttpURLConnection.HTTP_OK, body, "Session renewal failed")
-        return parseStatus(body, validatedToken.take(SESSION_ID_LENGTH)).expiresAtEpochSeconds
+        return parseStatus(body, validatedToken.take(SESSION_ID_LENGTH))
     }
 
     override fun release(serverUrl: String, token: String) {

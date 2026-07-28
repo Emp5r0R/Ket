@@ -8,10 +8,10 @@ interface DiagnosticsDialogProps {
 }
 
 export function DiagnosticsDialog({ open, report, onClose }: DiagnosticsDialogProps) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
-    if (!open) setCopied(false);
+    if (!open) setCopyState("idle");
   }, [open]);
 
   useEffect(() => {
@@ -26,8 +26,13 @@ export function DiagnosticsDialog({ open, report, onClose }: DiagnosticsDialogPr
   if (!open) return null;
 
   const copy = async () => {
-    await navigator.clipboard.writeText(report);
-    setCopied(true);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(report);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
   };
 
   return (
@@ -48,14 +53,16 @@ export function DiagnosticsDialog({ open, report, onClose }: DiagnosticsDialogPr
             <X size={18} />
           </button>
         </header>
-        <p>
-          This report contains connection stages and cleanup results. Access codes and session credentials are excluded.
-        </p>
-        <pre>{report}</pre>
+        <div className="diagnostics-body">
+          <p>
+            This report contains connection stages and cleanup results. Access codes and session credentials are excluded.
+          </p>
+          <pre role="region" tabIndex={0} aria-label="Connection diagnostic report">{report}</pre>
+        </div>
         <footer>
           <button type="button" className="primary-button" onClick={() => void copy()}>
-            {copied ? <Check size={16} /> : <ClipboardCopy size={16} />}
-            {copied ? "Copied" : "Copy logs"}
+            {copyState === "copied" ? <Check size={16} /> : <ClipboardCopy size={16} />}
+            {copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy logs"}
           </button>
         </footer>
       </section>

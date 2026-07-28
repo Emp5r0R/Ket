@@ -107,12 +107,24 @@ function mockBridge(): DesktopBridge {
     ? "connected"
     : demoPhase === "reconnecting"
       ? "reconnecting"
-      : demoPhase === "enrolled"
-        ? "enrolled"
-        : "disconnected";
+      : demoPhase === "error"
+        ? "error"
+        : demoPhase === "enrolled"
+          ? "enrolled"
+          : "disconnected";
   let snapshot = demoSnapshot(
     initialPhase,
   );
+  if (demoPhase === "error") {
+    snapshot = {
+      ...snapshot,
+      issue: {
+        code: "transport_failed",
+        message: "The selected transport could not establish a protected route.",
+        retryable: true,
+      },
+    };
+  }
   let configured = snapshot.node !== null;
   const listeners = new Set<SnapshotListener>();
   const publish = (next: ClientSnapshot) => {

@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 const SNAPSHOT_EVENT: &str = "ket://snapshot";
+const EXIT_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct DesktopSession {
     client: Arc<KetClient>,
@@ -25,6 +26,7 @@ impl Drop for DesktopSession {
 
 struct DesktopController {
     adapter: BrokerTransportAdapter,
+    lifecycle: Mutex<()>,
     session: Mutex<Option<DesktopSession>>,
 }
 
@@ -49,6 +51,7 @@ impl DesktopController {
     fn new(config: BrokerConfig) -> Self {
         Self {
             adapter: BrokerTransportAdapter::new(config),
+            lifecycle: Mutex::new(()),
             session: Mutex::new(None),
         }
     }
@@ -136,8 +139,10 @@ async fn enroll(
     access_code: String,
     device_name: String,
 ) -> Result<ClientSnapshot, ClientIssue> {
+    let _lifecycle = controller.lifecycle.lock().await;
     let endpoint = ControlEndpoint::parse(server_url.trim()).map_err(issue)?;
     let api = Arc::new(HttpControlPlane::new().map_err(issue)?);
+    retire_current_session(&controller).await?;
     let adapter = Arc::new(controller.adapter.clone());
     let client = KetClient::new(
         endpoint,
@@ -156,14 +161,16 @@ async fn enroll(
             let _ = watcher_app.emit(SNAPSHOT_EVENT, receiver.borrow().clone());
         }
     });
+    let maintenance = client.spawn_maintenance(Duration::from_secs(15));
     let previous = controller.session.lock().await.replace(DesktopSession {
         client,
-        maintenance: None,
+        maintenance: Some(maintenance),
         watcher,
     });
-    if let Some(previous) = previous {
-        let _ = previous.client.disconnect().await;
-    }
+    debug_assert!(
+        previous.is_none(),
+        "the previous desktop session was retired"
+    );
     let _ = app.emit(SNAPSHOT_EVENT, snapshot.clone());
     Ok(snapshot)
 }
@@ -184,16 +191,10 @@ async fn connect(
         .as_deref()
         .map(parse_protocol)
         .transpose()?;
-    let result = client.connect_with_protocol(preferred_protocol).await;
-    let mut session = controller.session.lock().await;
-    if let Some(session) = session
-        .as_mut()
-        .filter(|session| Arc::ptr_eq(&session.client, &client))
-        && session.maintenance.is_none()
-    {
-        session.maintenance = Some(client.spawn_maintenance(Duration::from_secs(15)));
-    }
-    result.map_err(issue)
+    client
+        .connect_with_protocol(preferred_protocol)
+        .await
+        .map_err(issue)
 }
 
 fn parse_protocol(value: &str) -> Result<TransportProtocol, ClientIssue> {
@@ -240,23 +241,44 @@ async fn refresh(controller: State<'_, DesktopController>) -> Result<ClientSnaps
 
 #[tauri::command]
 async fn forget(controller: State<'_, DesktopController>) -> Result<ClientSnapshot, ClientIssue> {
+    let _lifecycle = controller.lifecycle.lock().await;
+    Ok(retire_current_session(&controller)
+        .await?
+        .unwrap_or_default())
+}
+
+async fn retire_current_session(
+    controller: &DesktopController,
+) -> Result<Option<ClientSnapshot>, ClientIssue> {
     let session = controller.session.lock().await.take();
     let Some(mut session) = session else {
-        return Ok(ClientSnapshot::default());
+        return Ok(None);
     };
     if let Some(maintenance) = session.maintenance.take() {
         maintenance.shutdown().await;
     }
-    session.client.disconnect().await.map_err(issue)
+    match session.client.disconnect().await {
+        Ok(snapshot) => Ok(Some(snapshot)),
+        Err(error) => {
+            session.maintenance = Some(session.client.spawn_maintenance(Duration::from_secs(15)));
+            let replaced = controller.session.lock().await.replace(session);
+            debug_assert!(
+                replaced.is_none(),
+                "desktop lifecycle operations are serialized"
+            );
+            Err(issue(error))
+        }
+    }
 }
 
 async fn shutdown_controller(controller: &DesktopController) {
+    let _lifecycle = controller.lifecycle.lock().await;
     let session = controller.session.lock().await.take();
     let Some(mut session) = session else {
         return;
     };
     if let Some(maintenance) = session.maintenance.take() {
-        maintenance.shutdown().await;
+        drop(maintenance);
     }
     let _ = session.client.disconnect().await;
 }
@@ -266,11 +288,10 @@ fn release_session_before_exit(app: &AppHandle) {
     let (finished, receiver) = std::sync::mpsc::sync_channel(1);
     tauri::async_runtime::spawn(async move {
         let controller = app.state::<DesktopController>();
-        let _ =
-            tokio::time::timeout(Duration::from_secs(5), shutdown_controller(&controller)).await;
+        let _ = tokio::time::timeout(EXIT_CLEANUP_TIMEOUT, shutdown_controller(&controller)).await;
         let _ = finished.send(());
     });
-    let _ = receiver.recv_timeout(Duration::from_secs(6));
+    let _ = receiver.recv_timeout(EXIT_CLEANUP_TIMEOUT + Duration::from_secs(1));
 }
 
 fn issue(error: ket_client_core::ClientError) -> ClientIssue {

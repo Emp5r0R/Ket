@@ -8,6 +8,7 @@ const SESSION_ID_LENGTH: usize = 12;
 const MAX_SECRET_HASH_LENGTH: usize = 512;
 const MAX_LABEL_LENGTH: usize = 64;
 const MAX_CLIENT_NAME_LENGTH: usize = 96;
+pub(crate) const CURRENT_STATE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct PersistedState {
@@ -19,7 +20,7 @@ pub(crate) struct PersistedState {
 impl Default for PersistedState {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: CURRENT_STATE_SCHEMA_VERSION,
             grants: Vec::new(),
             sessions: Vec::new(),
         }
@@ -77,11 +78,20 @@ impl PersistedState {
             let Some(grant_expiry) = grants_by_id.get(session.grant_id.as_str()) else {
                 return Err("session references an unknown access grant");
             };
-            if !valid_text(&session.secret_hash, MAX_SECRET_HASH_LENGTH) {
-                return Err("session hash is invalid");
-            }
-            if !is_supported_secret_hash(&session.secret_hash) {
-                return Err("session hash profile is unsupported");
+            match (&session.control_secret_hash, &session.secret_hash) {
+                (Some(_), None) => {}
+                (None, Some(secret_hash)) => {
+                    if !valid_text(secret_hash, MAX_SECRET_HASH_LENGTH) {
+                        return Err("session hash is invalid");
+                    }
+                    if !is_supported_secret_hash(secret_hash) {
+                        return Err("session hash profile is unsupported");
+                    }
+                }
+                (Some(_), Some(_)) => {
+                    return Err("session has multiple control-token hashes");
+                }
+                (None, None) => return Err("session control-token hash is missing"),
             }
             if !valid_text(&session.client_name, MAX_CLIENT_NAME_LENGTH) {
                 return Err("session client name is invalid");
@@ -124,7 +134,12 @@ pub(crate) struct AccessGrantRecord {
 pub(crate) struct SessionRecord {
     pub id: String,
     pub grant_id: String,
-    pub secret_hash: String,
+    /// Legacy Argon2 control-token hash. New sessions use `control_secret_hash`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_hash: Option<String>,
+    /// Fast hash for the machine-generated, high-entropy control token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_secret_hash: Option<[u8; 32]>,
     #[serde(default)]
     pub data_plane_secret_hash: Option<[u8; 32]>,
     #[serde(default)]
@@ -194,9 +209,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn sessions_require_exactly_one_supported_control_token_hash() {
+        let mut fast = valid_state();
+        fast.sessions[0].secret_hash = None;
+        fast.sessions[0].control_secret_hash = Some([9; 32]);
+        assert_eq!(fast.validate(), Ok(()));
+
+        let mut missing = valid_state();
+        missing.sessions[0].secret_hash = None;
+        assert_eq!(
+            missing.validate(),
+            Err("session control-token hash is missing")
+        );
+
+        let mut ambiguous = valid_state();
+        ambiguous.sessions[0].control_secret_hash = Some([9; 32]);
+        assert_eq!(
+            ambiguous.validate(),
+            Err("session has multiple control-token hashes")
+        );
+    }
+
     fn valid_state() -> PersistedState {
         PersistedState {
-            schema_version: 1,
+            schema_version: CURRENT_STATE_SCHEMA_VERSION,
             grants: vec![AccessGrantRecord {
                 id: "Grant00001".to_owned(),
                 secret_hash: VALID_HASH.to_owned(),
@@ -208,7 +245,8 @@ mod tests {
             sessions: vec![SessionRecord {
                 id: "Session00001".to_owned(),
                 grant_id: "Grant00001".to_owned(),
-                secret_hash: VALID_HASH.to_owned(),
+                secret_hash: Some(VALID_HASH.to_owned()),
+                control_secret_hash: None,
                 data_plane_secret_hash: None,
                 resource_slot: Some(0),
                 client_name: "Valid client".to_owned(),

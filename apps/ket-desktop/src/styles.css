@@ -1455,15 +1455,17 @@ input:disabled {
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 22px;
+  padding: 16px;
   background: rgb(7 12 10 / 58%);
   animation: diagnostics-backdrop-in 160ms ease-out;
 }
 
 .diagnostics-dialog {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(680px, 100%);
-  max-height: min(720px, calc(100vh - 44px));
+  max-height: min(720px, calc(100vh - 32px));
+  max-height: min(720px, calc(100dvh - 32px));
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -1490,7 +1492,14 @@ input:disabled {
   font-size: 18px;
 }
 
-.diagnostics-dialog > p {
+.diagnostics-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.diagnostics-body > p {
   margin: 0;
   padding: 15px 20px;
   color: var(--muted);
@@ -1500,8 +1509,8 @@ input:disabled {
 
 .diagnostics-dialog pre {
   min-height: 180px;
-  margin: 0 20px;
-  overflow: auto;
+  margin: 0 20px 18px;
+  overflow: visible;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -1515,6 +1524,37 @@ input:disabled {
 
 .diagnostics-dialog footer {
   justify-content: flex-end;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-height: 480px), (max-width: 460px) {
+  .diagnostics-backdrop {
+    padding: 8px;
+  }
+
+  .diagnostics-dialog {
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .diagnostics-dialog header,
+  .diagnostics-dialog footer {
+    padding: 12px 14px;
+  }
+
+  .diagnostics-body > p {
+    padding: 12px 14px;
+  }
+
+  .diagnostics-dialog pre {
+    min-height: 120px;
+    margin: 0 14px 14px;
+  }
+
+  .diagnostics-dialog footer .primary-button {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 @keyframes diagnostics-backdrop-in {

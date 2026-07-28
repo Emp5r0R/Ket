@@ -286,7 +286,7 @@ impl AccessService {
         let now = unix_time();
         let token = generate_session_token();
         let token_parts = split_session_token(&token).map_err(|_| ServiceError::Crypto)?;
-        let secret_hash = self.hash(token_parts.secret).await?;
+        let control_secret_hash = hash_token_secret(&token_parts.secret);
         let data_plane_token =
             generate_scoped_token(&token_parts.id).map_err(|_| ServiceError::Crypto)?;
         let data_plane_parts =
@@ -343,7 +343,8 @@ impl AccessService {
         let session = SessionRecord {
             id: token_parts.id.clone(),
             grant_id: grant.id.clone(),
-            secret_hash,
+            secret_hash: None,
+            control_secret_hash: Some(control_secret_hash),
             data_plane_secret_hash: Some(data_plane_secret_hash),
             resource_slot: Some(resource_slot),
             client_name: client_name.clone(),
@@ -540,10 +541,16 @@ impl AccessService {
                 .ok_or(ServiceError::Unauthorized)?;
             (session, grant)
         };
-        if !self
-            .verify(parts.secret, session.secret_hash.clone())
-            .await?
-        {
+        let authorized = match (&session.control_secret_hash, &session.secret_hash) {
+            (Some(expected_hash), None) => verify_token_secret(&parts.secret, expected_hash),
+            (None, Some(legacy_hash)) => self.verify(parts.secret, legacy_hash.clone()).await?,
+            _ => {
+                return Err(ServiceError::InvalidState(
+                    "session control-token hash is invalid",
+                ));
+            }
+        };
+        if !authorized {
             return Err(ServiceError::Unauthorized);
         }
         let now = unix_time();
@@ -689,6 +696,125 @@ mod tests {
         }
     }
 
+    struct SnapshotRepository(PersistedState);
+
+    #[async_trait::async_trait]
+    impl StateRepository for SnapshotRepository {
+        async fn load(&self) -> Result<PersistedState, RepositoryError> {
+            Ok(self.0.clone())
+        }
+
+        async fn store(&self, _state: &PersistedState) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn new_control_tokens_authenticate_while_argon_admission_is_saturated() {
+        let service = AccessService::load(Arc::new(EmptyRepository), Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let grant = service
+            .create_grant(CreateAccessGrantRequest {
+                label: "Fast session authentication".to_owned(),
+                max_connections: 1,
+                valid_for_minutes: 60,
+            })
+            .await
+            .expect("grant should be created");
+        let session = service
+            .create_session(grant.access_code.expose_secret(), "Fast client".to_owned())
+            .await
+            .expect("session should be created");
+        {
+            let state = service.state.lock().await;
+            let stored = state.sessions.first().expect("session should be stored");
+            assert!(stored.secret_hash.is_none());
+            assert_eq!(
+                stored.control_secret_hash,
+                Some(hash_token_secret(
+                    &split_session_token(session.token.expose_secret())
+                        .expect("generated token should split")
+                        .secret,
+                )),
+            );
+        }
+
+        let saturated = service
+            .crypto_admission
+            .clone()
+            .acquire_many_owned(MAX_PENDING_CRYPTO_OPERATIONS as u32)
+            .await
+            .expect("test should reserve the Argon admission queue");
+        let current = service
+            .session(session.token.expose_secret())
+            .await
+            .expect("fast session status should not need Argon admission");
+        let renewed = service
+            .renew_session(session.token.expose_secret())
+            .await
+            .expect("fast session renewal should not need Argon admission");
+
+        assert_eq!(current.id, session.id);
+        assert_eq!(renewed.id, session.id);
+        assert!(renewed.expires_at_epoch_seconds >= current.expires_at_epoch_seconds);
+        assert_eq!(service.crypto_overload_count(), 0);
+        drop(saturated);
+    }
+
+    #[tokio::test]
+    async fn legacy_argon_control_tokens_still_load_authenticate_and_renew() {
+        let now = unix_time();
+        let session_id = "Session00001";
+        let session_secret = "L".repeat(32);
+        let token = format!("{session_id}{session_secret}");
+        let state = PersistedState {
+            schema_version: 1,
+            grants: vec![AccessGrantRecord {
+                id: "Grant00001".to_owned(),
+                secret_hash: hash_secret("legacy-grant-secret")
+                    .expect("legacy grant hash should be created"),
+                label: "Legacy grant".to_owned(),
+                max_connections: 1,
+                expires_at_epoch_seconds: Some(now + 600),
+                created_at_epoch_seconds: now.saturating_sub(60),
+            }],
+            sessions: vec![SessionRecord {
+                id: session_id.to_owned(),
+                grant_id: "Grant00001".to_owned(),
+                secret_hash: Some(
+                    hash_secret(&session_secret).expect("legacy session hash should be created"),
+                ),
+                control_secret_hash: None,
+                data_plane_secret_hash: None,
+                resource_slot: Some(0),
+                client_name: "Legacy client".to_owned(),
+                issued_at_epoch_seconds: now.saturating_sub(1),
+                expires_at_epoch_seconds: now + 300,
+            }],
+        };
+        let service = AccessService::load(
+            Arc::new(SnapshotRepository(state)),
+            Duration::from_secs(300),
+            4,
+        )
+        .await
+        .expect("legacy state should load");
+
+        let current = service
+            .session(&token)
+            .await
+            .expect("legacy session should authenticate");
+        let renewed = service
+            .renew_session(&token)
+            .await
+            .expect("legacy session should renew");
+
+        assert_eq!(current.id, session_id);
+        assert_eq!(renewed.id, session_id);
+        assert!(renewed.expires_at_epoch_seconds >= current.expires_at_epoch_seconds);
+    }
+
     #[tokio::test]
     async fn grant_duration_is_required_bounded_and_returned_as_an_absolute_expiry() {
         let service = AccessService::load(Arc::new(EmptyRepository), Duration::from_secs(300), 4)
@@ -805,7 +931,8 @@ mod tests {
         SessionRecord {
             id: id.to_owned(),
             grant_id: "Grant00001".to_owned(),
-            secret_hash: "unused-by-slot-tests".to_owned(),
+            secret_hash: None,
+            control_secret_hash: Some([0; 32]),
             data_plane_secret_hash: None,
             resource_slot,
             client_name: "Slot test".to_owned(),

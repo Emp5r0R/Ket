@@ -125,15 +125,24 @@ class AndroidTransportHistoryTest {
     }
 
     @Test
-    fun `authorization loss stops without futile transport recovery`() {
+    fun `authorization loss re-enrolls while valid access remains and stops after access expiry`() {
         val policy = AndroidRecoveryPolicy()
 
+        assertEquals(
+            AndroidLeaseFailureAction.Reauthorize,
+            policy.leaseFailureAction(
+                consecutiveFailures = 1,
+                authorizationLost = true,
+                routedInternetHealthy = true,
+            ),
+        )
         assertEquals(
             AndroidLeaseFailureAction.Stop,
             policy.leaseFailureAction(
                 consecutiveFailures = 1,
                 authorizationLost = true,
                 routedInternetHealthy = true,
+                accessExpired = true,
             ),
         )
         assertEquals(false, policy.shouldVerifyRoute(5, authorizationLost = true))

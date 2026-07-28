@@ -31,13 +31,16 @@ internal class DurableTunnelCredentials(
     val sessionManifest: String?,
     val accessExpiresAtEpochSeconds: Long? = sessionManifest
         ?.let { KetControlApi.parseEnrollment(it).accessExpiresAtEpochSeconds },
+    val sessionExpiresAtEpochSeconds: Long? = sessionManifest
+        ?.let { KetControlApi.parseEnrollment(it).expiresAtEpochSeconds },
 ) {
     fun launchSpec(): TunnelLaunchSpec? = sessionManifest?.let { manifest ->
-        TunnelLaunchSpec.fromEnrollment(
+        val parsed = TunnelLaunchSpec.fromEnrollment(
             profile.serverUrl,
             KetControlApi.parseEnrollment(manifest, requireActiveLease = false),
             profile.preferredProtocol,
         )
+        sessionExpiresAtEpochSeconds?.let { parsed.withSessionExpiry(it) } ?: parsed
     }
 
     override fun toString(): String =
@@ -54,6 +57,35 @@ internal interface TunnelCredentialStore {
     fun clearAll()
 }
 
+internal enum class TunnelCredentialCleanupAction {
+    RetainSession,
+    ClearSession,
+    ClearAll,
+}
+
+internal object TunnelCredentialCleanupPolicy {
+    fun releaseIsConclusive(error: Throwable?): Boolean =
+        error == null || (error as? KetControlException)?.authorizationLost == true
+
+    fun afterRelease(
+        sessionExists: Boolean,
+        releaseConclusive: Boolean,
+        accessExpired: Boolean,
+    ): TunnelCredentialCleanupAction = when {
+        accessExpired -> TunnelCredentialCleanupAction.ClearAll
+        sessionExists && !releaseConclusive -> TunnelCredentialCleanupAction.RetainSession
+        else -> TunnelCredentialCleanupAction.ClearSession
+    }
+
+    fun apply(store: TunnelCredentialStore, action: TunnelCredentialCleanupAction) {
+        when (action) {
+            TunnelCredentialCleanupAction.RetainSession -> Unit
+            TunnelCredentialCleanupAction.ClearSession -> store.clearSession()
+            TunnelCredentialCleanupAction.ClearAll -> store.clearAll()
+        }
+    }
+}
+
 internal object DurableTunnelCredentialsCodec {
     private const val SCHEMA_VERSION = 1
     private const val MAX_PLAINTEXT_BYTES = 128 * 1024
@@ -64,6 +96,7 @@ internal object DurableTunnelCredentialsCodec {
         "preferred_protocol",
         "session_manifest",
         "access_expires_at_epoch_seconds",
+        "session_expires_at_epoch_seconds",
     )
 
     fun encode(credentials: DurableTunnelCredentials): ByteArray {
@@ -74,6 +107,7 @@ internal object DurableTunnelCredentialsCodec {
         credentials.profile.preferredProtocol?.let { root.put("preferred_protocol", it.wireName) }
         credentials.sessionManifest?.let { root.put("session_manifest", JSONObject(it)) }
         credentials.accessExpiresAtEpochSeconds?.let { root.put("access_expires_at_epoch_seconds", it) }
+        credentials.sessionExpiresAtEpochSeconds?.let { root.put("session_expires_at_epoch_seconds", it) }
         return root.toString().toByteArray(StandardCharsets.UTF_8).also {
             require(it.size <= MAX_PLAINTEXT_BYTES) { "Saved tunnel credentials are too large" }
         }
@@ -104,7 +138,20 @@ internal object DurableTunnelCredentialsCodec {
         } else {
             enrollment?.accessExpiresAtEpochSeconds
         }
-        return DurableTunnelCredentials(profile, manifest, accessExpiresAt)
+        val sessionExpiresAt = if (root.has("session_expires_at_epoch_seconds")) {
+            root.getLong("session_expires_at_epoch_seconds").also {
+                require(it > 0) { "Saved session expiry is invalid" }
+            }
+        } else {
+            enrollment?.expiresAtEpochSeconds
+        }
+        require((manifest == null) == (sessionExpiresAt == null)) {
+            "Saved session expiry does not match its manifest"
+        }
+        require(accessExpiresAt == null || sessionExpiresAt == null || sessionExpiresAt <= accessExpiresAt) {
+            "Saved session lease outlives access time"
+        }
+        return DurableTunnelCredentials(profile, manifest, accessExpiresAt, sessionExpiresAt)
     }
 }
 
@@ -195,7 +242,7 @@ internal class AndroidTunnelCredentialStore private constructor(context: Context
     override fun clearSession() = synchronized(fileLock) {
         val current = load() ?: return@synchronized
         if (current.sessionManifest != null) {
-            save(DurableTunnelCredentials(current.profile, null, current.accessExpiresAtEpochSeconds))
+            save(DurableTunnelCredentials(current.profile, null, current.accessExpiresAtEpochSeconds, null))
         }
     }
 
@@ -248,6 +295,7 @@ internal interface TunnelSessionApi {
 internal class DurableTunnelSessionResolver(
     private val api: TunnelSessionApi,
     private val store: TunnelCredentialStore,
+    private val nowEpochSeconds: () -> Long = { System.currentTimeMillis() / 1_000 },
 ) {
     fun resolveForApp(profile: TunnelEnrollmentProfile): TunnelLaunchSpec {
         val saved = store.load()
@@ -257,6 +305,7 @@ internal class DurableTunnelSessionResolver(
                 profile,
                 saved.sessionManifest,
                 saved.accessExpiresAtEpochSeconds,
+                saved.sessionExpiresAtEpochSeconds,
             )
             if (saved.profile.preferredProtocol != profile.preferredProtocol) store.save(updated)
             return resolveSaved(updated)
@@ -279,17 +328,38 @@ internal class DurableTunnelSessionResolver(
     private fun resolveSaved(initial: DurableTunnelCredentials): TunnelLaunchSpec {
         var saved = initial
         saved.launchSpec()?.let { existing ->
-            try {
+            val renewedExpiry = try {
                 api.renew(existing.controlEndpoint, existing.sessionToken)
-                return existing
             } catch (error: Exception) {
-                if ((error as? KetControlException)?.authorizationLost != true) return existing
+                val authorizationLost = (error as? KetControlException)?.authorizationLost == true
+                if (!authorizationLost && existing.sessionExpiresAtEpochSeconds > nowEpochSeconds()) {
+                    return existing
+                }
+                if (!authorizationLost) {
+                    throw IllegalStateException(
+                        "The saved server session could not be renewed before its last confirmed lease expired",
+                        error,
+                    )
+                }
                 store.clearSession()
                 saved = DurableTunnelCredentials(
                     saved.profile,
                     null,
                     saved.accessExpiresAtEpochSeconds,
+                    null,
                 )
+                null
+            }
+            if (renewedExpiry != null) {
+                store.save(
+                    DurableTunnelCredentials(
+                        saved.profile,
+                        saved.sessionManifest,
+                        saved.accessExpiresAtEpochSeconds,
+                        renewedExpiry,
+                    ),
+                )
+                return existing.withSessionExpiry(renewedExpiry)
             }
         }
 
@@ -302,6 +372,7 @@ internal class DurableTunnelSessionResolver(
             profile,
             result.manifestJson,
             result.accessExpiresAtEpochSeconds,
+            result.expiresAtEpochSeconds,
         )
         try {
             store.save(next)

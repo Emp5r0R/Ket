@@ -52,37 +52,30 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
     val accent = MaterialTheme.colorScheme.primary
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val zoom by animateFloatAsState(
-        targetValue = if (connected && location != null) 2.05f else 1f,
+        targetValue = if (connected && location != null) 2.45f else 1f,
         animationSpec = tween(720),
         label = "map region zoom",
     )
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val mapBackground by animateColorAsState(
         targetValue = when {
-            dark && connected -> Color(0xFF190D11)
-            dark -> Color(0xFF0B1519)
-            connected -> Color(0xFFFFF2F4)
-            else -> Color(0xFFF2F6F3)
+            dark && connected -> Color(0xFF1B1416)
+            dark -> Color(0xFF141916)
+            else -> Color(0xFFF8FAF8)
         },
         animationSpec = tween(360),
         label = "map background",
     )
-    val mapGrid = when {
-        dark && connected -> Color(0xFF3A242A)
-        dark -> Color(0xFF262E30)
-        else -> Color(0xFFDDE5E0)
-    }
     val mapLand = when {
-        dark && connected -> Color(0xFF543139)
-        dark -> Color(0xFF343B3D)
-        connected -> Color(0xFFE5B9BF)
-        else -> Color(0xFFD3D8D5)
+        dark && connected -> Color(0xFF3B3033)
+        dark -> Color(0xFF303934)
+        else -> Color(0xFFDDE3DF)
     }
     val mapBorder = if (dark) Color(0xFF4B5355) else Color(0xFFFFFFFF)
     Box(
         Modifier
             .fillMaxWidth()
-            .aspectRatio(2f)
+            .aspectRatio(900f / 432f)
             .background(mapBackground, RoundedCornerShape(4.dp))
             .semantics {
                 contentDescription = location?.let {
@@ -126,7 +119,7 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
                             verticalPadding,
                         )
                     }
-                    val progress = ((zoom - 1f) / 1.05f).coerceIn(0f, 1f)
+                    val progress = ((zoom - 1f) / 1.45f).coerceIn(0f, 1f)
                     val markerX = marker?.x ?: size.width / 2f
                     val markerY = marker?.y ?: size.height / 2f
                     val focusedX = markerX + (size.width / 2f - markerX) * progress
@@ -134,24 +127,6 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
                     val translateX = focusedX - markerX * zoom
                     val translateY = focusedY - markerY * zoom
                     onDrawBehind {
-                        for (x in 0..6) {
-                            val position = size.width * x / 6f
-                            drawLine(
-                                mapGrid,
-                                Offset(position, 0f),
-                                Offset(position, size.height),
-                                0.7.dp.toPx(),
-                            )
-                        }
-                        for (y in 0..3) {
-                            val position = size.height * y / 3f
-                            drawLine(
-                                mapGrid,
-                                Offset(0f, position),
-                                Offset(size.width, position),
-                                0.7.dp.toPx(),
-                            )
-                        }
                         if (geometry != null) {
                             withTransform({
                                 translate(translateX, translateY)
@@ -179,7 +154,7 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
                     5.dp.toPx(),
                 )
                 val center = Offset(marker.x, marker.y)
-                val progress = ((zoom - 1f) / 1.05f).coerceIn(0f, 1f)
+                val progress = ((zoom - 1f) / 1.45f).coerceIn(0f, 1f)
                 val focusedCenter = Offset(
                     center.x + (size.width / 2f - center.x) * progress,
                     center.y + (size.height / 2f - center.y) * progress,

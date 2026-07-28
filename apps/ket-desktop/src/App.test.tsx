@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ClientSnapshot } from "./types";
 
 afterEach(() => {
   cleanup();
@@ -13,6 +14,7 @@ describe("Ket desktop shell", () => {
     const {
       savedEnrollmentIsTerminal,
       savedSessionNeedsReenrollment,
+      nextRestoreRetryDelay,
       shouldRetrySavedEnrollment,
     } = await import("./App");
 
@@ -46,6 +48,31 @@ describe("Ket desktop shell", () => {
       message: "expired session",
       retryable: false,
     }, "A".repeat(32), 1_000, 1_000)).toBe(false);
+    expect(nextRestoreRetryDelay(0)).toBe(4_000);
+    expect(nextRestoreRetryDelay(16_000)).toBe(30_000);
+    expect(nextRestoreRetryDelay(30_000)).toBe(30_000);
+  });
+
+  it("immediately retries a saved profile without deleting it on a timeout", async () => {
+    const expiry = Math.floor(Date.now() / 1_000) + 3_600;
+    localStorage.setItem("ket.server-url", "https://saved.example.test");
+    localStorage.setItem("ket.access-code", "R".repeat(32));
+    localStorage.setItem("ket.access-expires-at", expiry.toString());
+    const { bridge } = await import("./lib/bridge");
+    const enroll = vi.spyOn(bridge, "enroll").mockRejectedValue({
+      code: "network_unavailable",
+      message: "request timed out",
+      retryable: true,
+    });
+    const { default: App } = await import("./App");
+
+    render(<App />);
+
+    await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("alert")).toHaveTextContent("request timed out");
+    expect(localStorage.getItem("ket.server-url")).toBe("https://saved.example.test");
+    expect(localStorage.getItem("ket.access-code")).toBe("R".repeat(32));
+    expect(localStorage.getItem("ket.access-expires-at")).toBe(expiry.toString());
   });
 
   it("retains a successful profile and access expiry", async () => {
@@ -100,6 +127,109 @@ describe("Ket desktop shell", () => {
     expect(screen.queryByLabelText("Access code")).not.toBeInTheDocument();
     expect(screen.getByText(/access left/)).toBeInTheDocument();
     expect(localStorage.getItem("ket.access-code")).toBe("S".repeat(32));
+  });
+
+  it("re-enrolls and resumes the requested tunnel after a session authorization loss", async () => {
+    const expiry = Math.floor(Date.now() / 1_000) + 3_600;
+    localStorage.setItem("ket.server-url", "https://saved.example.test");
+    localStorage.setItem("ket.access-code", "U".repeat(32));
+    localStorage.setItem("ket.access-expires-at", expiry.toString());
+    localStorage.setItem("ket.protocol-preference", "stealth");
+    const connected: ClientSnapshot = {
+      phase: "connected",
+      node: {
+        node_id: "fra-01",
+        display_name: "Frankfurt 01",
+        public_url: "https://saved.example.test",
+        location: {
+          country_code: "DE",
+          country_name: "Germany",
+          city: "Frankfurt",
+          latitude: 50.1109,
+          longitude: 8.6821,
+        },
+        health: "healthy",
+        active_sessions: 1,
+        session_capacity: 10,
+        capacity_percent: 10,
+        cpu_load_percent: 5,
+        memory_used_bytes: 1,
+        memory_total_bytes: 2,
+        uptime_seconds: 60,
+        observed_at_epoch_seconds: expiry - 3_600,
+      },
+      available_transports: [
+        {
+          id: "xhttp-primary",
+          display_name: "HTTPS Stealth",
+          protocol: "stealth",
+          network: "tcp",
+        },
+      ],
+      preferred_protocol: "stealth",
+      active_transport: {
+        id: "xhttp-primary",
+        display_name: "HTTPS Stealth",
+        protocol: "stealth",
+        network: "tcp",
+      },
+      traffic: null,
+      handshake_latency_ms: 20,
+      session_expires_at_epoch_seconds: expiry - 3_000,
+      access_expires_at_epoch_seconds: expiry,
+      connected_at_epoch_seconds: expiry - 3_500,
+      reconnect_attempt: 0,
+      issue: null,
+      updated_at_epoch_seconds: expiry - 3_500,
+    };
+    const enrolled: ClientSnapshot = {
+      ...connected,
+      phase: "enrolled",
+      active_transport: null,
+      connected_at_epoch_seconds: null,
+      handshake_latency_ms: null,
+    };
+    const { bridge } = await import("./lib/bridge");
+    let publish: ((snapshot: ClientSnapshot) => void) | undefined;
+    vi.spyOn(bridge, "state").mockResolvedValue({
+      snapshot: connected,
+      configured: true,
+      engine: {
+        binary_available: true,
+        broker_available: true,
+        mode: "privileged_broker",
+        status: "ready",
+      },
+      platform: "linux",
+      version: "0.2.1",
+    });
+    vi.spyOn(bridge, "subscribe").mockImplementation(async (listener) => {
+      publish = listener;
+      return () => undefined;
+    });
+    const enroll = vi.spyOn(bridge, "enroll").mockResolvedValue(enrolled);
+    const connect = vi.spyOn(bridge, "connect").mockResolvedValue(connected);
+    const { default: App } = await import("./App");
+    render(<App />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Liberated");
+
+    await act(async () => {
+      publish?.({
+        ...connected,
+        phase: "error",
+        active_transport: null,
+        issue: {
+          code: "unauthorized",
+          message: "session credentials are invalid",
+          retryable: false,
+        },
+        updated_at_epoch_seconds: connected.updated_at_epoch_seconds + 1,
+      });
+    });
+
+    await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(connect).toHaveBeenCalledWith("stealth"));
+    expect(localStorage.getItem("ket.access-code")).toBe("U".repeat(32));
   });
 
   it("persists an explicit dark theme", async () => {

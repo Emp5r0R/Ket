@@ -152,7 +152,7 @@ impl BrokerService {
                     return fault("unsupported_transport", "transport is not supported", false);
                 };
                 let _operation = self.operation.lock().await;
-                self.reap_expired().await;
+                self.reap_expired_locked().await;
                 if resolved_addresses.is_empty() {
                     return fault("invalid_transport", "transport request is invalid", false);
                 }
@@ -191,11 +191,20 @@ impl BrokerService {
                 let _operation = self.operation.lock().await;
                 let lease = self.tunnels.lock().await.remove(&tunnel_id);
                 let Some(lease) = lease else {
-                    return fault("tunnel_not_found", "tunnel is no longer active", false);
+                    return BrokerResponse::Stopped;
                 };
                 match lease.tunnel.stop().await {
                     Ok(()) => BrokerResponse::Stopped,
-                    Err(error) => client_fault(error),
+                    Err(error) => {
+                        self.tunnels.lock().await.insert(
+                            tunnel_id,
+                            TunnelLease {
+                                tunnel: lease.tunnel,
+                                expires_at: Instant::now() + self.lease_ttl,
+                            },
+                        );
+                        client_fault(error)
+                    }
                 }
             }
         }
@@ -215,11 +224,8 @@ impl BrokerService {
                     .expect("the tunnel lease remains present while locked")
                     .expires_at = Instant::now() + self.lease_ttl;
             }
-        } else {
-            if let ket_client_core::TunnelStatus::Failed(message) = &status {
-                tracing::warn!(%transport_id, reason = %message, "tunnel process exited");
-            }
-            tunnels.remove(tunnel_id);
+        } else if let ket_client_core::TunnelStatus::Failed(message) = &status {
+            tracing::warn!(%transport_id, reason = %message, "tunnel process exited");
         }
         BrokerResponse::Tunnel {
             status: match status {
@@ -243,6 +249,11 @@ impl BrokerService {
     }
 
     async fn reap_expired(&self) {
+        let _operation = self.operation.lock().await;
+        self.reap_expired_locked().await;
+    }
+
+    async fn reap_expired_locked(&self) {
         let now = Instant::now();
         let expired = {
             let mut tunnels = self.tunnels.lock().await;
@@ -251,15 +262,24 @@ impl BrokerService {
                 .filter_map(|(id, lease)| (lease.expires_at <= now).then_some(id.clone()))
                 .collect::<Vec<_>>();
             ids.into_iter()
-                .filter_map(|id| tunnels.remove(&id))
+                .filter_map(|id| tunnels.remove(&id).map(|lease| (id, lease)))
                 .collect::<Vec<_>>()
         };
-        for lease in expired {
-            let _ = lease.tunnel.stop().await;
+        for (id, lease) in expired {
+            if lease.tunnel.stop().await.is_err() {
+                self.tunnels.lock().await.insert(
+                    id,
+                    TunnelLease {
+                        tunnel: lease.tunnel,
+                        expires_at: Instant::now() + Duration::from_secs(2),
+                    },
+                );
+            }
         }
     }
 
     async fn stop_all(&self) {
+        let _operation = self.operation.lock().await;
         let leases = self
             .tunnels
             .lock()
@@ -588,16 +608,21 @@ pub fn initialize_token(path: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         fs,
-        sync::atomic::{AtomicBool, Ordering},
+        net::Ipv4Addr,
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
     use async_trait::async_trait;
     use ket_client_core::{
         BrokerConfig, BrokerTransportAdapter, ClientError, ProbeReport, StartedTunnel, TunnelStatus,
     };
-    use ket_core::SessionTransport;
-    use tokio::{net::TcpListener, sync::watch};
+    use ket_core::{Network, SessionTransport, TransportProfile, TransportProtocol};
+    use tokio::{
+        net::TcpListener,
+        sync::{Notify, watch},
+    };
 
     use super::*;
 
@@ -625,6 +650,87 @@ mod tests {
     struct MockTunnel {
         stopped: Arc<AtomicBool>,
         status: watch::Receiver<TunnelStatus>,
+    }
+
+    struct BlockingTunnel {
+        stop_started: Arc<Notify>,
+        allow_stop: Arc<Notify>,
+        status: watch::Receiver<TunnelStatus>,
+    }
+
+    struct RetryStopTunnel {
+        stop_attempts: Arc<AtomicUsize>,
+        status: watch::Receiver<TunnelStatus>,
+    }
+
+    #[async_trait]
+    impl ActiveTunnel for BlockingTunnel {
+        fn transport_id(&self) -> &str {
+            "expiring"
+        }
+
+        fn status(&self) -> watch::Receiver<TunnelStatus> {
+            self.status.clone()
+        }
+
+        async fn stop(&self) -> Result<(), ClientError> {
+            self.stop_started.notify_one();
+            self.allow_stop.notified().await;
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl ActiveTunnel for RetryStopTunnel {
+        fn transport_id(&self) -> &str {
+            "retry-stop"
+        }
+
+        fn status(&self) -> watch::Receiver<TunnelStatus> {
+            self.status.clone()
+        }
+
+        async fn stop(&self) -> Result<(), ClientError> {
+            if self.stop_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(ClientError::Transport {
+                    transport_id: self.transport_id().to_owned(),
+                    message: "simulated teardown failure".to_owned(),
+                    retryable: true,
+                });
+            }
+            Ok(())
+        }
+    }
+
+    struct ConnectAdapter {
+        connections: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl TransportAdapter for ConnectAdapter {
+        fn supports(&self, _transport: &SessionTransport) -> bool {
+            true
+        }
+
+        async fn probe(&self, _transport: &SessionTransport) -> Result<ProbeReport, ClientError> {
+            unreachable!()
+        }
+
+        async fn connect(
+            &self,
+            _transport: &SessionTransport,
+            _probe: &ProbeReport,
+        ) -> Result<StartedTunnel, ClientError> {
+            self.connections.fetch_add(1, Ordering::SeqCst);
+            let (_, status) = watch::channel(TunnelStatus::Connected);
+            Ok(StartedTunnel {
+                tunnel: Arc::new(MockTunnel {
+                    stopped: Arc::new(AtomicBool::new(false)),
+                    status,
+                }),
+                handshake_latency: Duration::ZERO,
+            })
+        }
     }
 
     #[async_trait]
@@ -664,6 +770,138 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stopping_an_unknown_tunnel_is_idempotent() {
+        let service = BrokerService::new(Vec::new(), false, Duration::from_secs(12));
+
+        let response = service
+            .handle(BrokerRequest::Stop {
+                tunnel_id: "A".repeat(48),
+            })
+            .await;
+
+        assert!(matches!(response, BrokerResponse::Stopped));
+    }
+
+    #[tokio::test]
+    async fn failed_stop_keeps_lease_available_for_retry() {
+        let stop_attempts = Arc::new(AtomicUsize::new(0));
+        let service = BrokerService::new(Vec::new(), false, Duration::from_secs(12));
+        let tunnel_id = "A".repeat(48);
+        let (_, status) = watch::channel(TunnelStatus::Connected);
+        service.tunnels.lock().await.insert(
+            tunnel_id.clone(),
+            TunnelLease {
+                tunnel: Arc::new(RetryStopTunnel {
+                    stop_attempts: Arc::clone(&stop_attempts),
+                    status,
+                }),
+                expires_at: Instant::now() + Duration::from_secs(12),
+            },
+        );
+
+        let first = service
+            .handle(BrokerRequest::Stop {
+                tunnel_id: tunnel_id.clone(),
+            })
+            .await;
+        assert!(matches!(first, BrokerResponse::Error { .. }));
+        assert!(service.tunnels.lock().await.contains_key(&tunnel_id));
+
+        let second = service.handle(BrokerRequest::Stop { tunnel_id }).await;
+        assert!(matches!(second, BrokerResponse::Stopped));
+        assert_eq!(stop_attempts.load(Ordering::SeqCst), 2);
+        assert!(service.tunnels.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn terminal_status_keeps_lease_until_explicit_stop_finishes() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let service = BrokerService::new(Vec::new(), false, Duration::from_secs(12));
+        let tunnel_id = "A".repeat(48);
+        let (_, status) = watch::channel(TunnelStatus::Stopped);
+        service.tunnels.lock().await.insert(
+            tunnel_id.clone(),
+            TunnelLease {
+                tunnel: Arc::new(MockTunnel {
+                    stopped: Arc::clone(&stopped),
+                    status,
+                }),
+                expires_at: Instant::now() + Duration::from_secs(12),
+            },
+        );
+
+        let status = service
+            .handle(BrokerRequest::Heartbeat {
+                tunnel_id: tunnel_id.clone(),
+            })
+            .await;
+        assert!(matches!(
+            status,
+            BrokerResponse::Tunnel {
+                status: BrokerTunnelStatus::Stopped
+            }
+        ));
+        assert!(service.tunnels.lock().await.contains_key(&tunnel_id));
+        assert!(!stopped.load(Ordering::SeqCst));
+
+        let stopped_response = service.handle(BrokerRequest::Stop { tunnel_id }).await;
+        assert!(matches!(stopped_response, BrokerResponse::Stopped));
+        assert!(stopped.load(Ordering::SeqCst));
+        assert!(service.tunnels.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn replacement_waits_until_expired_tunnel_teardown_finishes() {
+        let stop_started = Arc::new(Notify::new());
+        let allow_stop = Arc::new(Notify::new());
+        let connections = Arc::new(AtomicUsize::new(0));
+        let service = BrokerService::new(
+            vec![Arc::new(ConnectAdapter {
+                connections: Arc::clone(&connections),
+            })],
+            true,
+            Duration::from_secs(6),
+        );
+        let (_, status) = watch::channel(TunnelStatus::Connected);
+        service.tunnels.lock().await.insert(
+            "A".repeat(48),
+            TunnelLease {
+                tunnel: Arc::new(BlockingTunnel {
+                    stop_started: Arc::clone(&stop_started),
+                    allow_stop: Arc::clone(&allow_stop),
+                    status,
+                }),
+                expires_at: Instant::now() - Duration::from_secs(1),
+            },
+        );
+        let reaping_service = Arc::clone(&service);
+        let reaper = tokio::spawn(async move { reaping_service.reap_expired().await });
+        stop_started.notified().await;
+        let connecting_service = Arc::clone(&service);
+        let connection = tokio::spawn(async move {
+            connecting_service
+                .handle(BrokerRequest::Connect {
+                    transport: test_transport(),
+                    resolved_addresses: vec![SocketAddr::from((
+                        Ipv4Addr::new(203, 0, 113, 9),
+                        443,
+                    ))],
+                })
+                .await
+        });
+        tokio::task::yield_now().await;
+
+        assert!(!connection.is_finished());
+        assert_eq!(connections.load(Ordering::SeqCst), 0);
+        allow_stop.notify_one();
+        reaper.await.unwrap();
+        let response = connection.await.unwrap();
+
+        assert!(matches!(response, BrokerResponse::Connected { .. }));
+        assert_eq!(connections.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn desktop_adapter_and_service_complete_authenticated_tcp_exchange() {
         let token_path = std::env::temp_dir().join(format!("ket-service-test-{}", random_id()));
         let token = Arc::new(BrokerToken::generate());
@@ -687,5 +925,22 @@ mod tests {
         assert!(!readiness.engine_available);
         server.await.unwrap().unwrap();
         fs::remove_file(token_path).unwrap();
+    }
+
+    fn test_transport() -> SessionTransport {
+        SessionTransport {
+            profile: TransportProfile {
+                id: "test-transport".to_owned(),
+                display_name: "Test transport".to_owned(),
+                protocol: TransportProtocol::Hysteria2,
+                endpoint: "vpn.example.test".to_owned(),
+                port: 443,
+                network: Network::Udp,
+                priority: 1,
+                tls_server_name: Some("vpn.example.test".to_owned()),
+                options: BTreeMap::new(),
+            },
+            credential: None,
+        }
     }
 }

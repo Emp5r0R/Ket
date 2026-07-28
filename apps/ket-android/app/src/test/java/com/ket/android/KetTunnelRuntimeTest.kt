@@ -78,6 +78,7 @@ class KetTunnelRuntimeTest {
     private fun launchSpec(token: String): TunnelLaunchSpec = TunnelLaunchSpec(
         controlEndpoint = "https://ket.example.test",
         sessionToken = token,
+        sessionExpiresAtEpochSeconds = 4_000_000_000,
         node = node(),
         transports = emptyList(),
         accessExpiresAtEpochSeconds = 3_000,

@@ -26,6 +26,7 @@ class DurableTunnelCredentialsTest {
         assertEquals(KetProtocol.WireGuardTls, decoded.profile.preferredProtocol)
         assertEquals(KetProtocol.WireGuardTls, launch.preferredProtocol)
         assertEquals(OLD_TOKEN, launch.sessionToken)
+        assertEquals(4_000_000_000, decoded.sessionExpiresAtEpochSeconds)
         assertEquals("Hysteria 2", launch.transports.single().displayName)
         assertFalse(decoded.toString().contains(ACCESS_CODE))
         assertFalse(decoded.toString().contains(OLD_TOKEN))
@@ -103,7 +104,8 @@ class DurableTunnelCredentialsTest {
         assertEquals(EXISTING_TOKEN, resolved.sessionToken)
         assertEquals(1, api.renewals)
         assertEquals(0, api.enrollments)
-        assertEquals(0, store.saves)
+        assertEquals(1, store.saves)
+        assertEquals(4_000_000_000, resolved.sessionExpiresAtEpochSeconds)
     }
 
     @Test
@@ -118,6 +120,7 @@ class DurableTunnelCredentialsTest {
         assertEquals(1, api.renewals)
         assertEquals(0, api.enrollments)
         assertEquals(0, api.releasedTokens.size)
+        assertEquals(1, store.saves)
     }
 
     @Test
@@ -133,7 +136,7 @@ class DurableTunnelCredentialsTest {
         assertEquals(KetProtocol.Stealth, store.current?.profile?.preferredProtocol)
         assertEquals(1, api.renewals)
         assertEquals(0, api.enrollments)
-        assertEquals(1, store.saves)
+        assertEquals(2, store.saves)
     }
 
     @Test
@@ -149,6 +152,105 @@ class DurableTunnelCredentialsTest {
         assertEquals(EXISTING_TOKEN, resolved.sessionToken)
         assertEquals(0, api.enrollments)
         assertEquals(0, store.clears)
+    }
+
+    @Test
+    fun `unconfirmed session past its saved lease fails closed without clearing or re-enrolling`() {
+        val store = FakeCredentialStore(credentials(testSessionManifest(EXISTING_TOKEN)))
+        val api = FakeSessionApi(
+            enrollment(REPLACEMENT_TOKEN),
+            renewalError = IllegalStateException("control endpoint timed out"),
+        )
+        val resolver = DurableTunnelSessionResolver(api, store) { 4_000_000_001 }
+
+        val error = assertThrows(IllegalStateException::class.java) { resolver.resolve(null) }
+
+        assertTrue(error.message.orEmpty().contains("last confirmed lease expired"))
+        assertEquals(1, api.renewals)
+        assertEquals(0, api.enrollments)
+        assertEquals(0, store.clears)
+        assertEquals(EXISTING_TOKEN, store.current?.launchSpec()?.sessionToken)
+    }
+
+    @Test
+    fun `successful renewal reuses a live token even after the original manifest expiry`() {
+        val store = FakeCredentialStore(credentials(testSessionManifest(EXISTING_TOKEN)))
+        val api = FakeSessionApi(enrollment(UNUSED_TOKEN), renewedExpiry = 4_000_000_120)
+        val resolver = DurableTunnelSessionResolver(api, store) { 4_000_000_001 }
+
+        val resolved = resolver.resolve(null)
+
+        assertEquals(EXISTING_TOKEN, resolved.sessionToken)
+        assertEquals(4_000_000_120, resolved.sessionExpiresAtEpochSeconds)
+        assertEquals(4_000_000_120, store.current?.sessionExpiresAtEpochSeconds)
+        assertEquals(1, api.renewals)
+        assertEquals(0, api.enrollments)
+        assertEquals(0, store.clears)
+    }
+
+    @Test
+    fun `failed release retains resumable session while successful release clears only its lease`() {
+        val failedReleaseStore = FakeCredentialStore(credentials(testSessionManifest(EXISTING_TOKEN)))
+        val retained = TunnelCredentialCleanupPolicy.afterRelease(
+            sessionExists = true,
+            releaseConclusive = false,
+            accessExpired = false,
+        )
+
+        TunnelCredentialCleanupPolicy.apply(failedReleaseStore, retained)
+
+        assertEquals(TunnelCredentialCleanupAction.RetainSession, retained)
+        assertEquals(EXISTING_TOKEN, failedReleaseStore.current?.launchSpec()?.sessionToken)
+        assertEquals(0, failedReleaseStore.clears)
+
+        val cleared = TunnelCredentialCleanupPolicy.afterRelease(
+            sessionExists = true,
+            releaseConclusive = true,
+            accessExpired = false,
+        )
+        TunnelCredentialCleanupPolicy.apply(failedReleaseStore, cleared)
+        assertEquals(TunnelCredentialCleanupAction.ClearSession, cleared)
+        assertNull(failedReleaseStore.current?.sessionManifest)
+    }
+
+    @Test
+    fun `missing server session is conclusive cleanup but transient release failure is ambiguous`() {
+        assertTrue(TunnelCredentialCleanupPolicy.releaseIsConclusive(null))
+        assertTrue(
+            TunnelCredentialCleanupPolicy.releaseIsConclusive(
+                KetControlException(404, "session absent"),
+            ),
+        )
+        assertTrue(
+            TunnelCredentialCleanupPolicy.releaseIsConclusive(
+                KetControlException(410, "session expired"),
+            ),
+        )
+        assertFalse(
+            TunnelCredentialCleanupPolicy.releaseIsConclusive(
+                KetControlException(500, "server unavailable"),
+            ),
+        )
+        assertFalse(
+            TunnelCredentialCleanupPolicy.releaseIsConclusive(
+                IllegalStateException("request timed out"),
+            ),
+        )
+    }
+
+    @Test
+    fun `expired access always removes the whole profile regardless of release result`() {
+        val store = FakeCredentialStore(credentials(testSessionManifest(EXISTING_TOKEN)))
+        val action = TunnelCredentialCleanupPolicy.afterRelease(
+            sessionExists = true,
+            releaseConclusive = false,
+            accessExpired = true,
+        )
+
+        TunnelCredentialCleanupPolicy.apply(store, action)
+
+        assertEquals(TunnelCredentialCleanupAction.ClearAll, action)
+        assertNull(store.current)
     }
 
     @Test
@@ -261,6 +363,7 @@ class DurableTunnelCredentialsTest {
     private class FakeSessionApi(
         private val enrollment: EnrollmentResult,
         private val renewalError: Exception? = null,
+        private val renewedExpiry: Long = 4_000_000_000,
     ) : TunnelSessionApi {
         var enrollments = 0
         var renewals = 0
@@ -278,7 +381,7 @@ class DurableTunnelCredentialsTest {
             assertEquals(SERVER_URL, serverUrl)
             renewals += 1
             renewalError?.let { throw it }
-            return 4_000_000_000
+            return renewedExpiry
         }
 
         override fun release(serverUrl: String, token: String) {

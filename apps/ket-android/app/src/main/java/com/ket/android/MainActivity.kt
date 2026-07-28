@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val preferences = getSharedPreferences(APPEARANCE_PREFERENCES, MODE_PRIVATE)
         themeMode.value = KetThemeMode.fromStored(preferences.getString(THEME_MODE_KEY, null))
-        val savedCredentials = runCatching {
+        val savedCredentialsResult = runCatching {
             AndroidTunnelCredentialStore.get(this).load()?.let { credentials ->
                 if (credentials.accessExpired()) {
                     AndroidTunnelCredentialStore.get(this).clearAll()
@@ -76,7 +76,26 @@ class MainActivity : ComponentActivity() {
                     credentials
                 }
             }
-        }.getOrNull()
+        }
+        val savedCredentials = savedCredentialsResult.getOrNull()
+        savedCredentialsResult.exceptionOrNull()?.let { error ->
+            AndroidConnectionDiagnostics.begin(null, source = "profile_restore")
+            AndroidConnectionDiagnostics.record(
+                stage = "saved_profile_load",
+                outcome = DiagnosticOutcome.Failed,
+                phase = TunnelPhase.Failed,
+                code = "saved_profile_unavailable",
+                message = error.message,
+            )
+            if (KetTunnelRuntime.snapshot().phase == TunnelPhase.Disconnected) {
+                KetTunnelRuntime.publish(
+                    TunnelSnapshot(
+                        phase = TunnelPhase.Failed,
+                        message = "The saved server profile could not be opened. It was not deleted; restart Ket and open diagnostics if the problem continues.",
+                    ),
+                )
+            }
+        }
         subscription = KetTunnelRuntime.subscribe { snapshot ->
             runOnUiThread { tunnelState.value = snapshot }
         }
