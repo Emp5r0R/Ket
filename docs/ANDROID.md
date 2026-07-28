@@ -49,7 +49,7 @@ export KET_ANDROID_KEY_ALIAS=ket-release
 export KET_ANDROID_KEY_PASSWORD='<key password>'
 export KET_ANDROID_CERT_SHA256='<64-hex-digit certificate SHA-256>'
 export KET_ANDROID_VERSION_CODE=3
-export KET_ANDROID_VERSION_NAME=0.2.1
+export KET_ANDROID_VERSION_NAME=0.2.2
 ./packaging/build-android.sh release
 ```
 

@@ -143,7 +143,7 @@ function mockBridge(): DesktopBridge {
         status: "ready",
       },
       platform: "linux",
-      version: "0.2.1",
+      version: "0.2.2",
     }),
     enroll: async ({ serverUrl, accessCode }) => {
       if (!serverUrl.startsWith("https://") || !/^[A-Za-z0-9]{32}$/.test(accessCode)) {
