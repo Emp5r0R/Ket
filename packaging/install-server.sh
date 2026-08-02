@@ -3,22 +3,27 @@ set -euo pipefail
 
 readonly REPOSITORY_URL=https://github.com/Emp5r0R/Ket.git
 readonly XRAY_IMAGE='ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7'
+readonly DEFAULT_GIT_REF=v1.0.0
+readonly CLIENT_RELEASE_URL=https://github.com/Emp5r0R/Ket/releases/tag/v1.0.0
 
 usage() {
   cat <<'EOF'
-Install a complete Ket server on Debian 12+ or Ubuntu 22.04+.
+Install a complete Ket server on a fresh Debian 12+ or Ubuntu 22.04+ VPS.
 
 Usage:
-  install-server.sh --domain HOST --email EMAIL [options]
+  install-server.sh --email EMAIL [options]
 
 Required:
-  --domain HOST          HTTPS control/XHTTP/WireGuard hostname
   --email EMAIL          Let's Encrypt account email
 
 Modes:
-  --mode direct          Normal VPS; HOST resolves directly to this VPS (default)
+  --mode auto            No domain; use an automatic public-IP sslip.io hostname
+                         (default when --domain is omitted)
+  --mode direct          Your domain resolves directly to this VPS
   --mode cloudflare      HOST is Cloudflare-proxied; --direct-host is DNS-only
+  --domain HOST          Required in direct and Cloudflare modes
   --direct-host HOST     Raw Hysteria/REALITY/Shadowsocks/OpenVPN hostname
+  --public-ip IPv4       Override automatic public IPv4 detection
 
 Location and capacity:
   Location is detected from the VPS public IP by default. To override it,
@@ -33,10 +38,13 @@ Location and capacity:
                          First access-code lifetime, 1-525600 (default: 43200)
 
 Other:
-  --ref REF              Git tag or branch to install (default: main)
+  --ref REF              Git tag or branch to install (default: v1.0.0)
   --install-dir PATH     Installation directory (default: /opt/ket)
   --plan                 Validate and print the required ingress without changes
   --help                 Show this help
+
+Automatic mode needs no DNS account. It uses <public-ip>.sslip.io, an external
+wildcard DNS service. A domain you control is preferred for long-lived service.
 
 Cloudflare mode requires two DNS records before installation:
   1. --domain: proxied (orange cloud)
@@ -59,12 +67,104 @@ valid_hostname() {
   done
 }
 valid_display_text() {
-  [[ -n $1 && ${#1} -le 64 && $1 =~ ^[A-Za-z0-9][A-Za-z0-9.,_\ -]*$ ]]
+  [[ -n $1 && ${#1} -le 64 ]] || return 1
+  [[ $1 != [[:space:]]* && $1 != *[[:space:]] ]] || return 1
+  [[ ! $1 =~ [[:cntrl:]] ]] || return 1
+  [[ $1 != *'"'* && $1 != *'$'* && $1 != *'`'* ]]
+  [[ $1 != *\\* ]]
+}
+valid_public_ipv4() {
+  local value=$1 octet
+  local IFS=.
+  local -a octets
+  [[ $value =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  read -r -a octets <<<"$value"
+  [[ ${#octets[@]} -eq 4 ]] || return 1
+  for octet in "${octets[@]}"; do
+    [[ $octet =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+    ((octet <= 255)) || return 1
+  done
+  ((octets[0] != 0 && octets[0] != 10 && octets[0] != 127 && octets[0] < 224)) || return 1
+  ((!(octets[0] == 100 && octets[1] >= 64 && octets[1] <= 127))) || return 1
+  ((!(octets[0] == 169 && octets[1] == 254))) || return 1
+  ((!(octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31))) || return 1
+  ((!(octets[0] == 192 && (octets[1] == 168 || (octets[1] == 0 && (octets[2] == 0 || octets[2] == 2)))))) || return 1
+  ((!(octets[0] == 198 && (octets[1] == 18 || octets[1] == 19 || (octets[1] == 51 && octets[2] == 100))))) || return 1
+  ((!(octets[0] == 203 && octets[1] == 0 && octets[2] == 113))) || return 1
+}
+detect_public_ipv4() {
+  local endpoint candidate
+  for endpoint in https://api.ipify.org https://ipv4.icanhazip.com; do
+    candidate=$(curl -4fsS --connect-timeout 5 --max-time 10 "$endpoint" 2>/dev/null | tr -d '[:space:]') || continue
+    if valid_public_ipv4 "$candidate"; then
+      public_ip=$candidate
+      return 0
+    fi
+  done
+  return 1
+}
+automatic_hostname() {
+  printf 'ket-%s.sslip.io' "${1//./-}"
+}
+print_ingress() {
+  printf '  TCP 80                 ACME certificate issuance and renewal\n'
+  printf '  TCP 443                Control, REALITY, HTTPS Stealth, WireGuard TLS\n'
+  printf '  UDP 443                Hysteria2 and Hysteria XOR\n'
+  printf '  TCP 9443               OpenVPN over TLS\n'
+  printf '  TCP+UDP %s-%s     Shadowsocks 2022 lease ports\n' "$shadowsocks_start" "$shadowsocks_end"
+}
+print_operator_checklist() {
+  printf '\n=== Ket VPS checklist ===\n'
+  printf 'Mode: %s\nControl hostname: %s\nRaw transport hostname: %s\n' "$mode" "$domain" "$direct_host"
+  if [[ -n $public_ip ]]; then
+    printf 'Expected VPS public IPv4: %s\n' "$public_ip"
+  fi
+  printf '\nOpen these STATEFUL inbound rules in your cloud firewall/security group:\n'
+  print_ingress
+  printf '  Source: 0.0.0.0/0\n'
+  printf '\nKeep your existing SSH rule. Do NOT expose TCP 8787, 8445, or 8446; they remain loopback/private origins.\n'
+  case "$mode" in
+    auto)
+      printf 'DNS: none to configure. Ket will use the automatic hostname above.\n'
+      ;;
+    direct)
+      printf 'DNS: create an A record for %s pointing to %s. Do not proxy it.\n' "$domain" "${public_ip:-this VPS public IPv4}"
+      ;;
+    cloudflare)
+      printf 'Cloudflare DNS: %s = Proxied; %s = DNS only. Both point to %s.\n' \
+        "$domain" "$direct_host" "${public_ip:-this VPS public IPv4}"
+      printf 'Cloudflare SSL/TLS: Full (strict). Keep WebSockets enabled.\n'
+      ;;
+  esac
+  printf 'TCP 80 must be reachable before Certbot runs. Configure provider ingress before installing.\n'
+  printf '=========================\n\n'
+}
+listener_uses_port() {
+  local socket_type=$1 requested_start=$2 requested_end=${3:-$2}
+  local flag=-ltn sockets
+  [[ $socket_type == udp ]] && flag=-lun
+  sockets=$(ss -H "$flag" 2>/dev/null) || fail "could not inspect $socket_type listeners with ss"
+  awk '{ value=$4; sub(/^.*:/, "", value); print value }' <<<"$sockets" \
+    | awk -v first="$requested_start" -v last="$requested_end" \
+        '$1 ~ /^[0-9]+$/ && $1 >= first && $1 <= last { found=1 } END { exit !found }'
+}
+apply_host_firewall_rules() {
+  if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+    printf 'Adding Ket rules to active UFW firewall...\n'
+    ufw allow 80/tcp comment 'Ket ACME renewal'
+    ufw allow 443/tcp comment 'Ket HTTPS transports'
+    ufw allow 443/udp comment 'Ket Hysteria2'
+    ufw allow 9443/tcp comment 'Ket OpenVPN stunnel'
+    ufw allow "$shadowsocks_start:$shadowsocks_end/tcp" comment 'Ket Shadowsocks TCP'
+    ufw allow "$shadowsocks_start:$shadowsocks_end/udp" comment 'Ket Shadowsocks UDP'
+  else
+    printf 'UFW is absent or inactive; no host-firewall policy was changed. Provider firewall rules are still required.\n'
+  fi
 }
 validate_location() {
   [[ $country_code =~ ^[A-Z]{2}$ ]] || fail '--country-code must contain two letters'
-  valid_display_text "$country_name" || fail '--country-name contains unsupported characters'
-  valid_display_text "$city" || fail '--city contains unsupported characters'
+  valid_display_text "$country_name" || fail '--country-name must be 1-64 safe printable characters'
+  valid_display_text "$city" || fail '--city must be 1-64 safe printable characters'
   [[ $latitude =~ ^-?[0-9]+([.][0-9]+)?$ ]] || fail '--latitude must be numeric'
   [[ $longitude =~ ^-?[0-9]+([.][0-9]+)?$ ]] || fail '--longitude must be numeric'
   awk -v value="$latitude" 'BEGIN { exit !(value >= -90 && value <= 90) }' \
@@ -104,10 +204,12 @@ detect_location() {
 random_secret() { openssl rand -base64 48 | tr -d '\n'; }
 random_hex() { openssl rand -hex "$1"; }
 
-mode=direct
+mode=auto
+mode_set=false
 domain=
 direct_host=
 email=
+public_ip=
 country_code=
 country_name=
 city=
@@ -120,7 +222,7 @@ latitude_set=false
 longitude_set=false
 max_sessions=32
 first_code_valid_minutes=43200
-git_ref=main
+git_ref=$DEFAULT_GIT_REF
 install_dir=/opt/ket
 plan=false
 
@@ -129,7 +231,8 @@ while (($#)); do
     --domain) need_value "$@"; domain=$2; shift 2 ;;
     --direct-host) need_value "$@"; direct_host=$2; shift 2 ;;
     --email) need_value "$@"; email=$2; shift 2 ;;
-    --mode) need_value "$@"; mode=$2; shift 2 ;;
+    --mode) need_value "$@"; mode=$2; mode_set=true; shift 2 ;;
+    --public-ip) need_value "$@"; public_ip=$2; shift 2 ;;
     --country-code) need_value "$@"; country_code=${2^^}; country_code_set=true; shift 2 ;;
     --country-name) need_value "$@"; country_name=$2; country_name_set=true; shift 2 ;;
     --city) need_value "$@"; city=$2; city_set=true; shift 2 ;;
@@ -145,20 +248,39 @@ while (($#)); do
   esac
 done
 
-[[ -n $domain ]] || fail '--domain is required'
 [[ -n $email ]] || fail '--email is required'
-valid_hostname "$domain" || fail '--domain must be a valid hostname'
 [[ $email =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || fail '--email is invalid'
-case "$mode" in direct|cloudflare) ;; *) fail '--mode must be direct or cloudflare' ;; esac
+case "$mode" in auto|direct|cloudflare) ;; *) fail '--mode must be auto, direct, or cloudflare' ;; esac
+if [[ $mode_set == false && -n $domain ]]; then
+  mode=direct
+fi
+if [[ -n $public_ip ]]; then
+  valid_public_ipv4 "$public_ip" || fail '--public-ip must be a publicly routable IPv4 address'
+fi
 
-if [[ -z $direct_host ]]; then
-  [[ $mode == direct ]] || fail '--direct-host is required in cloudflare mode'
-  direct_host=$domain
-fi
+case "$mode" in
+  auto)
+    [[ -z $domain && -z $direct_host ]] || fail 'auto mode does not accept --domain or --direct-host'
+    command -v curl >/dev/null 2>&1 \
+      || fail 'curl is required; install it with: apt-get update && apt-get install -y curl'
+    [[ -n $public_ip ]] || detect_public_ipv4 \
+      || fail 'could not detect a public IPv4 address; use --public-ip or configure your own domain'
+    domain=$(automatic_hostname "$public_ip")
+    direct_host=$domain
+    ;;
+  direct)
+    [[ -n $domain ]] || fail '--domain is required in direct mode'
+    [[ -z $direct_host ]] || fail '--direct-host is only used in cloudflare mode'
+    direct_host=$domain
+    ;;
+  cloudflare)
+    [[ -n $domain ]] || fail '--domain is required in cloudflare mode'
+    [[ -n $direct_host ]] || fail '--direct-host is required in cloudflare mode'
+    [[ $direct_host != "$domain" ]] || fail 'cloudflare mode requires a separate DNS-only --direct-host'
+    ;;
+esac
+valid_hostname "$domain" || fail '--domain must be a valid hostname'
 valid_hostname "$direct_host" || fail '--direct-host must be a valid hostname'
-if [[ $mode == cloudflare && $direct_host == "$domain" ]]; then
-  fail 'cloudflare mode requires a separate DNS-only --direct-host'
-fi
 location_fields=0
 for supplied in "$country_code_set" "$country_name_set" "$city_set" "$latitude_set" "$longitude_set"; do
   $supplied && location_fields=$((location_fields + 1))
@@ -179,15 +301,16 @@ if [[ ! $first_code_valid_minutes =~ ^[1-9][0-9]*$ ]] || ((first_code_valid_minu
 fi
 [[ $git_ref =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ && $git_ref != *..* ]] \
   || fail '--ref is invalid'
-[[ $install_dir == /* && $install_dir != / && $install_dir != *$'\n'* ]] \
-  || fail '--install-dir must be a safe absolute path'
+[[ $install_dir =~ ^/[A-Za-z0-9._/-]{1,240}$ && $install_dir != / \
+  && $install_dir != *..* && $install_dir != *//* ]] \
+  || fail '--install-dir must be a safe absolute path without spaces or parent traversal'
 
 shadowsocks_start=20000
 shadowsocks_end=$((shadowsocks_start + max_sessions - 1))
 first_code_max_connections=$((max_sessions < 5 ? max_sessions : 5))
 
 if $plan; then
-  printf 'Mode: %s\nControl hostname: %s\nRaw transport hostname: %s\n' "$mode" "$domain" "$direct_host"
+  print_operator_checklist
   printf 'Required ingress: TCP 80,443,9443,%s-%s; UDP 443,%s-%s\n' \
     "$shadowsocks_start" "$shadowsocks_end" "$shadowsocks_start" "$shadowsocks_end"
   if [[ $location_mode == automatic ]]; then
@@ -211,10 +334,40 @@ fi
 # shellcheck disable=SC1091
 . /etc/os-release
 case "${ID:-}" in debian|ubuntu) ;; *) fail 'only Debian and Ubuntu are currently supported' ;; esac
+case "$ID" in
+  debian) dpkg --compare-versions "${VERSION_ID:-0}" ge 12 || fail 'Debian 12 or newer is required' ;;
+  ubuntu) dpkg --compare-versions "${VERSION_ID:-0}" ge 22.04 || fail 'Ubuntu 22.04 or newer is required' ;;
+esac
+arch=$(dpkg --print-architecture)
+case "$arch" in amd64|arm64) ;; *) fail 'only amd64 and arm64 servers are supported' ;; esac
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates certbot curl git gnupg iproute2 jq openssl wireguard-tools
+
+if [[ -z $public_ip ]]; then
+  detect_public_ipv4 || fail 'could not detect the VPS public IPv4 address; rerun with --public-ip'
+fi
+print_operator_checklist
+
+resolved_direct=$(getent ahostsv4 "$direct_host" 2>/dev/null | awk '{print $1}' | LC_ALL=C sort -u || true)
+if ! grep -Fqx -- "$public_ip" <<<"$resolved_direct"; then
+  fail "$direct_host must resolve directly to $public_ip before installation (resolved: ${resolved_direct:-nothing})"
+fi
+if [[ $mode == cloudflare ]] && ! getent ahosts "$domain" >/dev/null 2>&1; then
+  fail "$domain does not resolve; create and propagate the proxied Cloudflare DNS record first"
+fi
+
+for port in 80 443 9443; do
+  listener_uses_port tcp "$port" && fail "TCP port $port is already in use"
+done
+listener_uses_port udp 443 && fail 'UDP port 443 is already in use'
+listener_uses_port tcp "$shadowsocks_start" "$shadowsocks_end" \
+  && fail "a TCP port in $shadowsocks_start-$shadowsocks_end is already in use"
+listener_uses_port udp "$shadowsocks_start" "$shadowsocks_end" \
+  && fail "a UDP port in $shadowsocks_start-$shadowsocks_end is already in use"
+
+apply_host_firewall_rules
 
 if [[ $location_mode == automatic ]]; then
   detect_location || fail 'could not detect VPS location; rerun with all five location options'
@@ -223,29 +376,6 @@ if [[ $location_mode == automatic ]]; then
     "$city" "$country_name" "$country_code" "$latitude" "$longitude"
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL "https://download.docker.com/linux/$ID/gpg" \
-    | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
-  chmod a+r /etc/apt/keyrings/docker.gpg
-  arch=$(dpkg --print-architecture)
-  codename=${VERSION_CODENAME:?distribution codename is unavailable}
-  printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/%s %s stable\n' \
-    "$arch" "$ID" "$codename" > /etc/apt/sources.list.d/docker.list
-  apt-get update
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  systemctl enable --now docker
-fi
-
-if ss -H -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)(80)$'; then
-  fail 'TCP port 80 is already in use; it must be free for the initial certificate request and renewal'
-fi
-
-install_parent=$(dirname -- "$install_dir")
-install -d -m 0755 "$install_parent"
-git clone --depth 1 --branch "$git_ref" "$REPOSITORY_URL" "$install_dir"
-cd "$install_dir"
-
 certbot_args=(
   certonly --standalone --non-interactive --agree-tos --no-eff-email
   --preferred-challenges http --email "$email" --cert-name "$domain" -d "$domain"
@@ -253,7 +383,61 @@ certbot_args=(
 if [[ $direct_host != "$domain" ]]; then
   certbot_args+=(-d "$direct_host")
 fi
+printf 'Requesting the TLS certificate after DNS and listener preflight...\n'
 certbot "${certbot_args[@]}"
+
+if ! docker compose version >/dev/null 2>&1; then
+  if command -v docker >/dev/null 2>&1; then
+    fail 'Docker is installed without Compose v2; install docker-compose-plugin, then rerun'
+  fi
+  conflicting_packages=()
+  for package in docker.io docker-compose docker-compose-v2 docker-doc docker-buildx podman-docker containerd runc; do
+    if dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2>/dev/null | grep -q '^ii'; then
+      conflicting_packages+=("$package")
+    fi
+  done
+  if ((${#conflicting_packages[@]})); then
+    fail "Docker's official packages conflict with installed packages: ${conflicting_packages[*]}"
+  fi
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  codename=${UBUNTU_CODENAME:-${VERSION_CODENAME:?distribution codename is unavailable}}
+  cat > /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/$ID
+Suites: $codename
+Components: stable
+Architectures: $arch
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+  apt-get update
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+fi
+command -v systemctl >/dev/null 2>&1 || fail 'systemd is required to manage Docker on this server'
+systemctl enable --now docker
+docker info >/dev/null 2>&1 || fail 'Docker daemon is not available after installation'
+compose_version=$(docker compose version --short 2>/dev/null | sed 's/^v//') \
+  || fail 'could not read the Docker Compose version'
+[[ $compose_version =~ ^[0-9]+([.][0-9]+){1,2}$ ]] \
+  || fail "Docker Compose returned an unsupported version string: $compose_version"
+dpkg --compare-versions "$compose_version" ge 2.17 \
+  || fail "Docker Compose 2.17 or newer is required (found $compose_version)"
+
+install_parent=$(dirname -- "$install_dir")
+install -d -m 0755 "$install_parent"
+staging_dir=$(mktemp -d "$install_parent/.ket-install.XXXXXX")
+cleanup_staging() {
+  local status=$?
+  trap - EXIT
+  if [[ -n ${staging_dir:-} && -d $staging_dir ]]; then
+    rm -rf -- "$staging_dir"
+  fi
+  exit "$status"
+}
+trap cleanup_staging EXIT
+git clone --depth 1 --branch "$git_ref" "$REPOSITORY_URL" "$staging_dir"
+cd "$staging_dir"
 
 umask 077
 xray_keys=$(docker run --rm "$XRAY_IMAGE" x25519)
@@ -370,7 +554,7 @@ chmod 0644 secrets/openvpn/ca.crt secrets/openvpn/server.crt
 docker build --tag ket-control-plane:local .
 docker run --rm --user 0:0 \
   --entrypoint /usr/local/bin/openvpn \
-  -v "$install_dir/secrets/openvpn:/out" \
+  -v "$staging_dir/secrets/openvpn:/out" \
   ket-control-plane:local --genkey tls-crypt /out/tls-crypt.key
 chmod 0644 secrets/openvpn/tls-crypt.key
 
@@ -380,6 +564,12 @@ set -a
 set +a
 ./packaging/validate-env.sh
 ./packaging/server/compose.sh config --quiet
+
+cd "$install_parent"
+mv -- "$staging_dir" "$install_dir"
+staging_dir=
+trap - EXIT
+cd "$install_dir"
 ./packaging/server/compose.sh up --detach --no-build --remove-orphans
 
 install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
@@ -390,14 +580,11 @@ cd "$install_dir"
 exec ./packaging/server/refresh-certificates.sh --restart
 EOF
 chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/ket-server
-
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
-  ufw allow 80/tcp comment 'Ket ACME renewal'
-  ufw allow 443/tcp comment 'Ket HTTPS transports'
-  ufw allow 443/udp comment 'Ket Hysteria2'
-  ufw allow 9443/tcp comment 'Ket OpenVPN stunnel'
-  ufw allow "$shadowsocks_start:$shadowsocks_end/tcp" comment 'Ket Shadowsocks TCP'
-  ufw allow "$shadowsocks_start:$shadowsocks_end/udp" comment 'Ket Shadowsocks UDP'
+if systemctl list-unit-files --type=timer --no-legend certbot.timer 2>/dev/null \
+  | grep -q '^certbot[.]timer'; then
+  systemctl enable --now certbot.timer
+else
+  printf 'Certbot timer unit not found; verify this distribution schedules certbot renew through cron.\n'
 fi
 
 ready=false
@@ -435,6 +622,10 @@ printf 'First access code concurrent-connection limit: %s\n' "$first_code_max_co
 printf 'First access code expires at Unix time: %s (%s minutes after creation)\n' \
   "$first_code_expires_at" "$first_code_valid_minutes"
 printf 'Store that code now; the server never stores its plaintext value.\n'
-printf 'Open these cloud firewall ports: TCP 80,443,9443,%s-%s and UDP 443,%s-%s.\n' \
-  "$shadowsocks_start" "$shadowsocks_end" "$shadowsocks_start" "$shadowsocks_end"
+printf '\nClient setup:\n'
+printf '  1. Download Linux, Windows, or Android client: %s\n' "$CLIENT_RELEASE_URL"
+printf '  2. Server URL: https://%s\n' "$domain"
+printf '  3. Enter the access code printed above, then connect.\n'
+printf '\nRequired cloud ingress (verify it remains open):\n'
+print_ingress
 printf 'Manage the stack with: cd %s && ./packaging/server/compose.sh ps\n' "$install_dir"

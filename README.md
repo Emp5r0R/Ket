@@ -8,6 +8,59 @@ Ket is an anti-censorship connectivity platform with a Rust server, native Linux
 
 > **Project status:** the v1.0 implementation scope is complete as of 2026-07-28. The Docker server and Linux/Windows/Android clients implement six authenticated, revocable data planes plus selectable Hysteria XOR obfuscation: Hysteria2, VLESS + REALITY, CDN-carried VLESS + XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard over WebSocket/TLS, and OpenVPN over stunnel-compatible TLS. REALITY, XHTTP/TLS Stealth, and Shadowsocks 2022 have passed the routed HTTPS gate on a restricted network using an owner-signed physical arm64 Android client. Remaining hardware, wider-network, soak, and future IKEv2 work is tracked separately and is not represented as completed evidence.
 
+## Bring your own server
+
+Ket needs one public VPS and one Ket client. Start with a fresh `amd64` or `arm64` server running Debian 12+ or Ubuntu 22.04+; 2 CPU cores, 2 GiB RAM, and 10 GiB free disk are recommended. Keep SSH access, then add these **stateful inbound** rules in the VPS provider's firewall or security group:
+
+| Protocol | Port | Used by |
+| --- | --- | --- |
+| TCP | `80` | Let's Encrypt issuance and renewal |
+| TCP | `443` | Control API, VLESS + REALITY, HTTPS Stealth, WireGuard TLS |
+| UDP | `443` | Hysteria2 and Hysteria XOR |
+| TCP | `9443` | OpenVPN over TLS |
+| TCP+UDP | `20000-20031` | Shadowsocks 2022 with the default 32-session capacity |
+
+Use source `0.0.0.0/0`. Do not expose TCP `8787`, `8445`, or `8446`. Ket adds matching rules when UFW is already active, but it cannot edit an Oracle Cloud security list, AWS security group, Google Cloud firewall, or another provider firewall.
+
+On a fresh VPS, install `curl` once:
+
+```bash
+sudo apt-get update && sudo apt-get install -y ca-certificates curl
+```
+
+Then choose exactly one setup.
+
+**No domain:** Ket detects the public IPv4 address and creates a certificate-backed `sslip.io` hostname automatically. This needs no DNS account, but a domain you control is preferred for a long-lived server because automatic mode depends on an external wildcard DNS service. Restricted DNS resolvers may block wildcard-IP hostnames; use your own domain when that affects intended clients.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+  --mode auto \
+  --email operator@example.com
+```
+
+**Your own domain, without Cloudflare proxying:** create an `A` record such as `ket.example.com` pointing directly to the VPS, wait for it to resolve, then run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+  --mode direct \
+  --domain ket.example.com \
+  --email operator@example.com
+```
+
+**Cloudflare:** create `ket.example.com` as a **Proxied** record and `direct-ket.example.com` as a **DNS only** record, both pointing to the VPS. Set SSL/TLS to **Full (strict)** and keep WebSockets enabled, then run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+  --mode cloudflare \
+  --domain ket.example.com \
+  --direct-host direct-ket.example.com \
+  --email operator@example.com
+```
+
+The installer validates DNS, ports, OS, CPU architecture, Docker, certificates, and every rendered transport before starting Ket. It prints the exact provider-firewall checklist before provisioning and returns one 32-character access code after readiness passes. Preview without changing the server by adding `--plan`; use `--max-sessions 64` when a larger Shadowsocks port range is already open.
+
+After setup, download the appropriate signed client from the [latest stable Ket release](https://github.com/Emp5r0R/Ket/releases/tag/v1.0.0): `.deb` for Debian/Ubuntu desktop, `.exe` for Windows, or the universal `.apk` for Android. Open the client, enter the printed `https://...` server URL and access code, then connect. Verify downloads with the release's signed `SHA256SUMS` using the [release-signing guide](docs/RELEASE_SIGNING.md).
+
 ## Implemented now
 
 - Rust workspace with shared, serializable client/server contracts.
@@ -47,28 +100,9 @@ The completed v1.0 boundary and remaining qualification/protocol work are tracke
 
 Stable artifact checksums, Android ownership signing, and detached OpenPGP verification are covered by the [release-signing guide](docs/RELEASE_SIGNING.md).
 
-## One-command server install
+## Server installation details
 
-The installer provisions Docker, certificates, renewal, all six implemented transports, the hardened HTTPS edge, host-firewall rules, and a first 32-character access code on Debian 12+ or Ubuntu 22.04+. For a normal VPS, point the hostname directly at the server, open the listed cloud-firewall ports, then run:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
-  --mode direct \
-  --domain ket.example.com \
-  --email operator@example.com
-```
-
-For Cloudflare, create `ket.example.com` as a proxied record and `direct-ket.example.com` as a DNS-only record to the same VPS. The direct record is required because ordinary Cloudflare HTTP proxying cannot carry raw Hysteria2, REALITY, Shadowsocks, or OpenVPN traffic:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
-  --mode cloudflare \
-  --domain ket.example.com \
-  --direct-host direct-ket.example.com \
-  --email operator@example.com
-```
-
-The installer detects the node city, country, and map coordinates from the VPS public IP. Cloudflare SSL/TLS mode must be **Full (strict)** and WebSockets must remain enabled. Before making changes, append `--plan` to validate arguments and print the exact TCP/UDP ingress range. The complete prerequisites, location override, port map, certificate lifecycle, operations, and limitations are in the [server installation guide](docs/SERVER_INSTALL.md).
+The one-command installer provisions the official Docker Engine packages when needed, certificates and renewal, all six transports, the hardened HTTPS edge, active-UFW rules, automatic node geography, and a first time-bounded access code. The complete prerequisites, DNS modes, provider ingress examples, location override, certificate lifecycle, operations, and failure recovery are in the [server installation guide](docs/SERVER_INSTALL.md).
 
 ## Run with Docker manually
 

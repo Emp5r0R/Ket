@@ -87,13 +87,14 @@ RUN archive="stunnel-${STUNNEL_VERSION}.tar.gz" \
     && strip /out/usr/local/bin/stunnel
 
 FROM rust:1.88-bookworm AS builder
+ARG CARGO_BUILD_JOBS=2
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY apps/ket-desktop/src-tauri ./apps/ket-desktop/src-tauri
 COPY crates ./crates
 COPY vendor ./vendor
-RUN cargo build --locked --release --package ket-server --bins
+RUN cargo build --locked --release --package ket-server --bins --jobs "$CARGO_BUILD_JOBS"
 
 FROM debian:bookworm-slim AS runtime
 
