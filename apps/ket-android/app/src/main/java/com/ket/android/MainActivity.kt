@@ -36,6 +36,8 @@ private object PendingPermissionRequest {
 class MainActivity : ComponentActivity() {
     private val tunnelState = mutableStateOf(KetTunnelRuntime.snapshot())
     private val themeMode = mutableStateOf(KetThemeMode.System)
+    private val startupMode = mutableStateOf(KetStartupMode.Ready)
+    private var startupRestoreStarted = false
     private var subscription: AutoCloseable? = null
     private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val request = PendingPermissionRequest.clear()
@@ -96,40 +98,67 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        val startupDecision = KetStartupPolicy.initial(
+            hasSavedProfile = savedCredentials != null,
+            phase = tunnelState.value.phase,
+        )
+        startupMode.value = startupDecision.mode
+        startupRestoreStarted = startupDecision.observeExistingConnection
         subscription = KetTunnelRuntime.subscribe { snapshot ->
-            runOnUiThread { tunnelState.value = snapshot }
+            runOnUiThread {
+                tunnelState.value = snapshot
+                if (KetStartupPolicy.restoreFinished(startupRestoreStarted, snapshot.phase)) {
+                    startupMode.value = KetStartupMode.Ready
+                }
+            }
         }
         setContent {
             KetTheme(
                 connected = tunnelState.value.phase == TunnelPhase.Connected,
                 mode = themeMode.value,
             ) {
-                KetApp(
-                    snapshot = tunnelState.value,
-                    initialServerUrl = savedCredentials?.profile?.serverUrl.orEmpty(),
-                    initialAccessCode = savedCredentials?.profile?.accessCode.orEmpty(),
-                    initialPreferredProtocol = savedCredentials?.profile?.preferredProtocol,
-                    initialAccessExpiresAtEpochSeconds = savedCredentials?.accessExpiresAtEpochSeconds,
-                    onAccessExpired = {
-                        runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
-                    },
-                    themeMode = themeMode.value,
-                    onThemeModeChange = { selected ->
-                        themeMode.value = selected
-                        preferences.edit()
-                            .putString(THEME_MODE_KEY, selected.storedName)
-                            .apply()
-                    },
-                    onForgetProfile = {
-                        runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
-                    },
-                    diagnosticReport = AndroidConnectionDiagnostics.report(
-                        BuildConfig.VERSION_NAME,
-                        tunnelState.value,
-                    ),
-                    onConnect = ::requestConnection,
-                    onDisconnect = { KetTunnelController.disconnect(this) },
-                )
+                if (startupMode.value == KetStartupMode.RestoringProfile) {
+                    KetStartupScreen()
+                } else {
+                    KetApp(
+                        snapshot = tunnelState.value,
+                        initialServerUrl = savedCredentials?.profile?.serverUrl.orEmpty(),
+                        initialAccessCode = savedCredentials?.profile?.accessCode.orEmpty(),
+                        initialPreferredProtocol = savedCredentials?.profile?.preferredProtocol,
+                        initialAccessExpiresAtEpochSeconds = savedCredentials?.accessExpiresAtEpochSeconds,
+                        onAccessExpired = {
+                            runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
+                        },
+                        themeMode = themeMode.value,
+                        onThemeModeChange = { selected ->
+                            themeMode.value = selected
+                            preferences.edit()
+                                .putString(THEME_MODE_KEY, selected.storedName)
+                                .apply()
+                        },
+                        onForgetProfile = {
+                            runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
+                        },
+                        diagnosticReport = AndroidConnectionDiagnostics.report(
+                            BuildConfig.VERSION_NAME,
+                            tunnelState.value,
+                        ),
+                        onConnect = ::requestConnection,
+                        onDisconnect = { KetTunnelController.disconnect(this) },
+                    )
+                }
+            }
+        }
+        if (startupDecision.requestSavedProfileConnection && savedCredentials != null) {
+            startupRestoreStarted = true
+            window.decorView.post {
+                if (!isFinishing && !isDestroyed) {
+                    requestConnection(
+                        savedCredentials.profile.serverUrl,
+                        savedCredentials.profile.accessCode,
+                        savedCredentials.profile.preferredProtocol,
+                    )
+                }
             }
         }
     }

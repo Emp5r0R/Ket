@@ -2,7 +2,6 @@ package com.ket.android
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -18,6 +17,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -29,8 +29,13 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -60,6 +65,12 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.NetworkCheck
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
@@ -76,10 +87,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -118,6 +137,67 @@ internal enum class KetAppDestination(val storedName: String, val displayName: S
     companion object {
         fun fromStored(value: String?): KetAppDestination =
             entries.firstOrNull { it.storedName == value } ?: Connection
+    }
+}
+
+@Composable
+internal fun KetStartupScreen() {
+    val presentation = KetStartupPolicy.presentation()
+    val transition = rememberInfiniteTransition(label = "Ket startup")
+    val pulse by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1_800), RepeatMode.Restart),
+        label = "Ket startup pulse",
+    )
+    val breathe by transition.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(tween(1_100), RepeatMode.Reverse),
+        label = "Ket startup mark",
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .semantics {
+                contentDescription = "Ket is restoring the saved server"
+                liveRegion = LiveRegionMode.Polite
+            },
+        contentAlignment = androidx.compose.ui.Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(Modifier.size(132.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                Canvas(Modifier.fillMaxSize()) {
+                    repeat(2) { index ->
+                        val progress = (pulse + index * 0.5f) % 1f
+                        drawCircle(
+                            color = KetCoral.copy(alpha = (1f - progress) * 0.20f),
+                            radius = size.minDimension * (0.20f + progress * 0.30f),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx()),
+                        )
+                    }
+                }
+                Image(
+                    painter = painterResource(R.drawable.ket_mark),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(72.dp)
+                        .graphicsLayer {
+                            scaleX = breathe
+                            scaleY = breathe
+                        },
+                )
+            }
+            Text(presentation.title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                presentation.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 
@@ -307,43 +387,24 @@ internal fun KetApp(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
         bottomBar = {
-            Column {
-                if (destination == KetAppDestination.Connection) {
-                    Surface(color = MaterialTheme.colorScheme.background) {
-                        ConnectionActionButton(
-                            phase = snapshot.phase,
-                            busy = busy,
-                            enabled = snapshot.phase != TunnelPhase.Stopping &&
-                                (connected || busy || (serverUrl.isNotBlank() && accessCode.length == 32)),
-                            onClick = {
-                                if (connected || busy) {
-                                    onDisconnect()
-                                } else {
-                                    onConnect(serverUrl, accessCode, preferredProtocol)
-                                }
-                            },
-                        )
-                    }
-                }
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    KetAppDestination.entries.forEach { item ->
-                        NavigationBarItem(
-                            selected = destination == item,
-                            onClick = { destinationWireName = item.storedName },
-                            icon = {
-                                Icon(
-                                    when (item) {
-                                        KetAppDestination.Connection -> Icons.Filled.Shield
-                                        KetAppDestination.Metrics -> Icons.Filled.Analytics
-                                        KetAppDestination.Protocols -> Icons.Filled.Book
-                                        KetAppDestination.Settings -> Icons.Filled.Settings
-                                    },
-                                    contentDescription = null,
-                                )
-                            },
-                            label = { Text(item.displayName) },
-                        )
-                    }
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                KetAppDestination.entries.forEach { item ->
+                    NavigationBarItem(
+                        selected = destination == item,
+                        onClick = { destinationWireName = item.storedName },
+                        icon = {
+                            Icon(
+                                when (item) {
+                                    KetAppDestination.Connection -> Icons.Filled.Shield
+                                    KetAppDestination.Metrics -> Icons.Filled.Analytics
+                                    KetAppDestination.Protocols -> Icons.Filled.Book
+                                    KetAppDestination.Settings -> Icons.Filled.Settings
+                                },
+                                contentDescription = null,
+                            )
+                        },
+                        label = { Text(item.displayName) },
+                    )
                 }
             }
         },
@@ -388,43 +449,41 @@ internal fun KetApp(
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     when (currentDestination) {
                         KetAppDestination.Connection -> {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                PhaseStatus(snapshot.phase)
-                            }
-                            Text(phaseHeadline(snapshot.phase), style = MaterialTheme.typography.headlineMedium)
-                            AnimatedVisibility(visible = !connected && !busy) {
-                                SurveillanceNotice(disconnectedVariant)
-                            }
-                            if (!connected && !busy) {
-                                if (profileSaved) {
-                                    SavedProfile(serverUrl, accessRemainingSeconds, forgetProfile)
-                                } else {
-                                    OutlinedTextField(
-                                        value = serverUrl,
-                                        onValueChange = { serverUrl = it },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        label = { Text("Server URL") },
-                                        singleLine = true,
-                                    )
-                                    OutlinedTextField(
-                                        value = accessCode,
-                                        onValueChange = { accessCode = it },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        label = { Text("32-character access code") },
-                                        visualTransformation = PasswordVisualTransformation(),
-                                        singleLine = true,
-                                    )
-                                }
-                                ProtocolPreferenceSelector(
-                                    selected = preferredProtocol,
-                                    onSelect = { preferredProtocolWireName = it?.wireName },
+                            ConnectionRouteHeader(snapshot, disconnectedVariant)
+                            ServerMap(snapshot, connected)
+                            if (!profileSaved && !connected && !busy) {
+                                EnrollmentControls(
+                                    serverUrl = serverUrl,
+                                    accessCode = accessCode,
+                                    onServerUrlChange = { serverUrl = it },
+                                    onAccessCodeChange = { value ->
+                                        accessCode = value.filter(Char::isLetterOrDigit).take(32)
+                                    },
+                                    onEnroll = { onConnect(serverUrl, accessCode, null) },
+                                )
+                            } else {
+                                ConnectionControlPanel(
+                                    snapshot = snapshot,
+                                    serverUrl = serverUrl,
+                                    accessRemainingSeconds = accessRemainingSeconds,
+                                    preferredProtocol = preferredProtocol,
+                                    busy = busy,
+                                    canStartConnection = serverUrl.isNotBlank() &&
+                                        accessCode.matches(Regex("^[A-Za-z0-9]{32}$")),
+                                    onPreferredProtocolChange = { preferredProtocolWireName = it?.wireName },
                                     onLearnMore = {
                                         guideProtocolWireName = (preferredProtocol ?: KetProtocol.Stealth).wireName
                                         destinationWireName = KetAppDestination.Protocols.storedName
                                     },
+                                    onToggle = {
+                                        if (connected || busy) {
+                                            onDisconnect()
+                                        } else {
+                                            onConnect(serverUrl, accessCode, preferredProtocol)
+                                        }
+                                    },
                                 )
                             }
-                            ServerMap(snapshot.node, connected)
                             ConnectionMessage(snapshot) { diagnosticsVisible = true }
                         }
                         KetAppDestination.Metrics -> {
@@ -470,53 +529,277 @@ internal fun KetApp(
 }
 
 @Composable
-private fun ConnectionActionButton(
-    phase: TunnelPhase,
-    busy: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    Button(
-        enabled = enabled,
-        onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 10.dp)
-            .height(50.dp),
+private fun ConnectionRouteHeader(snapshot: TunnelSnapshot, disconnectedVariant: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
-        AnimatedContent(
-            targetState = phase,
-            transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(100)) },
-            label = "connection action",
-        ) { currentPhase ->
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                if (busy && currentPhase != TunnelPhase.Stopping) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                "SECURE ROUTE",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Text(
+                connectionLocationHeading(snapshot.node),
+                style = MaterialTheme.typography.headlineMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        PhaseStatus(
+            phase = snapshot.phase,
+            disconnectedLabel = disconnectedSurveillanceLabel(disconnectedVariant),
+        )
+    }
+}
+
+@Composable
+private fun EnrollmentControls(
+    serverUrl: String,
+    accessCode: String,
+    onServerUrlChange: (String) -> Unit,
+    onAccessCodeChange: (String) -> Unit,
+    onEnroll: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(7.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    "NEW CONNECTION",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Text("Add a Ket server", style = MaterialTheme.typography.titleLarge)
+            }
+            OutlinedTextField(
+                value = serverUrl,
+                onValueChange = onServerUrlChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Server URL") },
+                leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = accessCode,
+                onValueChange = onAccessCodeChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Access code") },
+                supportingText = { Text("${accessCode.length}/32") },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                singleLine = true,
+            )
+            Button(
+                onClick = onEnroll,
+                enabled = serverUrl.isNotBlank() && accessCode.matches(Regex("^[A-Za-z0-9]{32}$")),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Text("Add server")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionControlPanel(
+    snapshot: TunnelSnapshot,
+    serverUrl: String,
+    accessRemainingSeconds: Long?,
+    preferredProtocol: KetProtocol?,
+    busy: Boolean,
+    canStartConnection: Boolean,
+    onPreferredProtocolChange: (KetProtocol?) -> Unit,
+    onLearnMore: () -> Unit,
+    onToggle: () -> Unit,
+) {
+    val node = snapshot.node
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(7.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.Top,
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        "CURRENT NODE",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(
+                        node?.displayName ?: "Saved server",
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                node?.let { NodeHealthPill(it.health) }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                NodeFact(
+                    Icons.Filled.LocationOn,
+                    node?.location?.displayName ?: serverUrl,
+                )
+                NodeFact(
+                    Icons.Filled.Schedule,
+                    "${formatDuration(accessRemainingSeconds)} access left",
+                )
+                NodeFact(
+                    Icons.Filled.NetworkCheck,
+                    snapshot.transportName.ifBlank { "Automatic transport" },
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
+            ProtocolPreferenceSelector(
+                selected = preferredProtocol,
+                onSelect = onPreferredProtocolChange,
+                onLearnMore = onLearnMore,
+                enabled = !busy && snapshot.phase != TunnelPhase.Connected,
+            )
+            PowerControl(
+                phase = snapshot.phase,
+                enabled = snapshot.phase != TunnelPhase.Stopping &&
+                    (snapshot.phase == TunnelPhase.Connected || busy || canStartConnection),
+                onClick = onToggle,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NodeHealthPill(health: AndroidNodeHealth) {
+    val tone = when (health) {
+        AndroidNodeHealth.Healthy -> KetHealthy
+        AndroidNodeHealth.Degraded -> KetDegraded
+        AndroidNodeHealth.Saturated -> KetSaturated
+    }
+    Surface(
+        color = tone.copy(alpha = 0.14f),
+        contentColor = tone,
+        shape = CircleShape,
+    ) {
+        Text(
+            health.displayName,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+@Composable
+private fun NodeFact(icon: ImageVector, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(17.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            value,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun PowerControl(phase: TunnelPhase, enabled: Boolean, onClick: () -> Unit) {
+    val connected = phase == TunnelPhase.Connected
+    val cancellable = phase in setOf(
+        TunnelPhase.Enrolling,
+        TunnelPhase.Connecting,
+        TunnelPhase.Reconnecting,
+    )
+    val container = when {
+        connected -> MaterialTheme.colorScheme.primary
+        cancellable -> MaterialTheme.colorScheme.errorContainer
+        else -> MaterialTheme.colorScheme.background
+    }
+    val content = when {
+        connected -> MaterialTheme.colorScheme.onPrimary
+        cancellable -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier
+                .size(88.dp)
+                .border(1.dp, content.copy(alpha = 0.55f), CircleShape)
+                .semantics { contentDescription = connectionActionLabel(phase) },
+            shape = CircleShape,
+            contentPadding = PaddingValues(0.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = container,
+                contentColor = content,
+                disabledContainerColor = container.copy(alpha = 0.55f),
+                disabledContentColor = content.copy(alpha = 0.55f),
+            ),
+        ) {
+            AnimatedContent(
+                targetState = phase,
+                transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(100)) },
+                label = "connection power",
+            ) { currentPhase ->
+                if (currentPhase in setOf(
+                        TunnelPhase.Enrolling,
+                        TunnelPhase.Connecting,
+                        TunnelPhase.Reconnecting,
+                        TunnelPhase.Stopping,
+                    )
+                ) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(29.dp),
+                        color = content,
+                        strokeWidth = 2.2.dp,
                     )
                 } else {
                     Icon(
                         Icons.Filled.PowerSettingsNew,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(31.dp),
                     )
                 }
-                Text(
-                    when {
-                        currentPhase == TunnelPhase.Stopping -> "Disconnecting"
-                        currentPhase == TunnelPhase.Connected -> "Disconnect"
-                        currentPhase in setOf(
-                            TunnelPhase.Enrolling,
-                            TunnelPhase.Connecting,
-                            TunnelPhase.Reconnecting,
-                        ) -> "Cancel"
-                        else -> "Connect"
-                    },
-                )
             }
         }
+        Text(connectionPowerHeadline(phase), style = MaterialTheme.typography.titleMedium)
+        Text(
+            connectionPowerDetail(phase),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -559,45 +842,6 @@ private fun EmptyDestination(message: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
         )
-    }
-}
-
-@Composable
-private fun SurveillanceNotice(variant: Int) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(6.dp),
-        tonalElevation = 1.dp,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(11.dp),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Filled.Visibility,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                AnimatedContent(
-                    targetState = variant,
-                    transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
-                    label = "surveillance notice",
-                ) { current ->
-                    Text(
-                        if (current == 0) "You are being watched" else "You are under surveillance",
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                }
-                Text(
-                    "Connect to get liberated",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
     }
 }
 
@@ -709,6 +953,7 @@ private fun ProtocolPreferenceSelector(
     selected: KetProtocol?,
     onSelect: (KetProtocol?) -> Unit,
     onLearnMore: () -> Unit,
+    enabled: Boolean = true,
 ) {
     var expanded by androidx.compose.runtime.remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -718,11 +963,12 @@ private fun ProtocolPreferenceSelector(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall,
             )
-            TextButton(onClick = onLearnMore) { Text("Learn more") }
+            TextButton(onClick = onLearnMore, enabled = enabled) { Text("Learn more") }
         }
         Box(Modifier.fillMaxWidth()) {
             OutlinedButton(
                 onClick = { expanded = true },
+                enabled = enabled,
                 modifier = Modifier.fillMaxWidth().height(48.dp),
             ) {
                 Text(selected?.displayName ?: "Automatic")
@@ -819,7 +1065,10 @@ private fun ProtocolGuideList(title: String, items: List<String>) {
 }
 
 @Composable
-private fun PhaseStatus(phase: TunnelPhase) {
+private fun PhaseStatus(
+    phase: TunnelPhase,
+    disconnectedLabel: String = phaseStatusLabel(TunnelPhase.Disconnected),
+) {
     val watchTransition = rememberInfiniteTransition(label = "watched status")
     val watchedAlpha by watchTransition.animateFloat(
         initialValue = 0.58f,
@@ -872,7 +1121,11 @@ private fun PhaseStatus(phase: TunnelPhase) {
                 )
             }
             Text(
-                phaseStatusLabel(currentPhase),
+                if (currentPhase == TunnelPhase.Disconnected) {
+                    disconnectedLabel
+                } else {
+                    phaseStatusLabel(currentPhase)
+                },
                 color = tone,
                 style = MaterialTheme.typography.labelMedium,
             )
@@ -899,44 +1152,125 @@ internal fun phaseHeadline(phase: TunnelPhase): String = when (phase) {
     TunnelPhase.Disconnected -> "Connect to get liberated"
 }
 
+internal fun disconnectedSurveillanceLabel(variant: Int): String =
+    if (variant % 2 == 0) "You are being watched" else "You are under surveillance"
+
+internal fun connectionLocationHeading(node: AndroidNodeStatus?): String = node?.location?.let { location ->
+    if (location.city.isNullOrBlank()) location.countryName else "${location.city}, ${location.countryName}"
+} ?: "Choose your node"
+
+internal fun connectionActionLabel(phase: TunnelPhase): String = when (phase) {
+    TunnelPhase.Connected -> "Disconnect tunnel"
+    TunnelPhase.Enrolling, TunnelPhase.Connecting, TunnelPhase.Reconnecting -> "Cancel connection attempt"
+    TunnelPhase.Stopping -> "Disconnecting tunnel"
+    TunnelPhase.Disconnected, TunnelPhase.Failed -> "Connect tunnel"
+}
+
+internal fun connectionPowerHeadline(phase: TunnelPhase): String = when (phase) {
+    TunnelPhase.Connected -> "Liberated"
+    TunnelPhase.Enrolling -> "Adding server"
+    TunnelPhase.Connecting -> "Connecting"
+    TunnelPhase.Reconnecting -> "Reconnecting"
+    TunnelPhase.Stopping -> "Disconnecting"
+    TunnelPhase.Failed -> "Connection failed"
+    TunnelPhase.Disconnected -> "Connect to get liberated"
+}
+
+internal fun connectionPowerDetail(phase: TunnelPhase): String = when (phase) {
+    TunnelPhase.Connected -> "Protected route active"
+    TunnelPhase.Enrolling, TunnelPhase.Connecting, TunnelPhase.Reconnecting -> "Testing available routes"
+    TunnelPhase.Stopping -> "Stopping tunnel and restoring network"
+    TunnelPhase.Failed -> "Open diagnostics, then try again"
+    TunnelPhase.Disconnected -> "You are under surveillance"
+}
+
 @Composable
-private fun ServerMap(node: AndroidNodeStatus?, connected: Boolean) {
+private fun ServerMap(snapshot: TunnelSnapshot, connected: Boolean) {
+    val node = snapshot.node
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(7.dp),
         color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
-        Column(
-            Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Column {
+            KetMap(node?.location, connected)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.LocationOn,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
-                    "SERVER MAP",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall,
+                    node?.displayName ?: "No server selected",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     node?.location?.countryCode ?: "--",
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
                 )
             }
-            KetMap(node?.location, connected)
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
-            Text(
-                node?.location?.displayName ?: "No server selected",
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                node?.displayName ?: "Enter a server URL and access code",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            RouteStatStrip(snapshot, node)
+        }
+    }
+}
+
+@Composable
+private fun RouteStatStrip(snapshot: TunnelSnapshot, node: AndroidNodeStatus?) {
+    val metrics = listOf(
+        Triple(Icons.Filled.CloudDownload, "Received", formatBytes(snapshot.receivedBytes)),
+        Triple(Icons.Filled.CloudUpload, "Sent", formatBytes(snapshot.sentBytes)),
+        Triple(Icons.Filled.NetworkCheck, "Latency", snapshot.handshakeLatencyMs?.let { "$it ms" } ?: "--"),
+        Triple(Icons.Filled.Speed, "Node load", node?.capacityPercent?.let { "${it.toInt()}%" } ?: "--"),
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().height(76.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        metrics.forEachIndexed { index, (icon, label, value) ->
+            if (index > 0) {
+                Spacer(
+                    Modifier
+                        .width(1.dp)
+                        .height(48.dp)
+                        .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f).padding(horizontal = 7.dp),
+                horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    label,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                )
+                Text(
+                    value,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

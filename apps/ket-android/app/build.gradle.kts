@@ -63,6 +63,12 @@ android { namespace = "com.ket.android"; compileSdk = 34
         compose = true
         buildConfig = true
     }
+    lint {
+        abortOnError = true
+        warningsAsErrors = true
+        checkReleaseBuilds = true
+        disable += "GradleDependency"
+    }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.11" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }

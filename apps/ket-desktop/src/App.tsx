@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Binoculars, MapPin, ShieldCheck } from "lucide-react";
+import { Binoculars, MapPin, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { bridge } from "./lib/bridge";
 import type {
   ClientIssue,
@@ -27,6 +27,11 @@ import {
   type ProtocolId,
   type ProtocolPreference,
 } from "./lib/protocols";
+import {
+  savedProfileCanRestore,
+  startupPresentation,
+  type StartupStage,
+} from "./lib/startup";
 
 const SERVER_KEY = "ket.server-url";
 const ACCESS_CODE_KEY = "ket.access-code";
@@ -70,11 +75,14 @@ function loadSavedEnrollment(): SavedEnrollment {
     localStorage.removeItem(ACCESS_CODE_KEY);
     localStorage.removeItem(ACCESS_EXPIRY_KEY);
   }
-  return {
-    serverUrl: localStorage.getItem(SERVER_KEY) ?? "",
-    accessCode: validExpiry === null ? "" : (localStorage.getItem(ACCESS_CODE_KEY) ?? ""),
-    accessExpiresAt: validExpiry,
-  };
+  const serverUrl = localStorage.getItem(SERVER_KEY) ?? "";
+  const accessCode = validExpiry === null ? "" : (localStorage.getItem(ACCESS_CODE_KEY) ?? "");
+  if (!savedProfileCanRestore(serverUrl, accessCode, validExpiry)) {
+    localStorage.removeItem(ACCESS_CODE_KEY);
+    localStorage.removeItem(ACCESS_EXPIRY_KEY);
+    return { serverUrl, accessCode: "", accessExpiresAt: null };
+  }
+  return { serverUrl, accessCode, accessExpiresAt: validExpiry };
 }
 
 export function shouldRetrySavedEnrollment(issue: ClientIssue): boolean {
@@ -135,10 +143,17 @@ const initialState: DesktopState = {
 
 export default function App() {
   const [initialEnrollment] = useState(loadSavedEnrollment);
+  const [hasSavedProfileAtLaunch] = useState(() => savedProfileCanRestore(
+    initialEnrollment.serverUrl,
+    initialEnrollment.accessCode,
+    initialEnrollment.accessExpiresAt,
+  ));
   const [state, setState] = useState<DesktopState>(initialState);
   const [view, setView] = useState<AppView>("connection");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [startupStage, setStartupStage] = useState<StartupStage>("runtime");
+  const [restoreGeneration, setRestoreGeneration] = useState(0);
   const [localIssue, setLocalIssue] = useState<ClientIssue | null>(null);
   const [serverUrl, setServerUrl] = useState(initialEnrollment.serverUrl);
   const [savedAccessCode, setSavedAccessCode] = useState(initialEnrollment.accessCode);
@@ -165,6 +180,7 @@ export default function App() {
   const accessExpiresAtRef = useRef(accessExpiresAt);
   const connectionRequestedRef = useRef(false);
   const previousPhaseRef = useRef(emptySnapshot.phase);
+  const startupProfilePendingRef = useRef(hasSavedProfileAtLaunch);
 
   const recordDiagnostic = (diagnostic: ConnectionDiagnostic) => {
     setDiagnostics((current) => appendDiagnostic(current, diagnostic));
@@ -274,6 +290,12 @@ export default function App() {
           setState(next);
           previousPhaseRef.current = next.snapshot.phase;
           if (next.snapshot.phase === "connected") connectionRequestedRef.current = true;
+          if (next.configured || !startupProfilePendingRef.current) {
+            startupProfilePendingRef.current = false;
+            setStartupStage("ready");
+          } else {
+            setStartupStage("restoring");
+          }
           const traffic = next.snapshot.traffic;
           if (traffic?.available) {
             setHistory([
@@ -287,7 +309,11 @@ export default function App() {
         }
       })
       .catch((error) => {
-        if (active) setLocalIssue(normalizeIssue(error));
+        if (active) {
+          const issue = normalizeIssue(error);
+          setLocalIssue(issue);
+          setStartupStage(startupProfilePendingRef.current ? "restoring" : "ready");
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -320,19 +346,32 @@ export default function App() {
     const restore = async () => {
       if (!active || attempting) return;
       attempting = true;
+      if (startupProfilePendingRef.current) {
+        setStartupStage("restoring");
+      }
       try {
         const snapshot = await bridge.enroll({
           serverUrl,
           accessCode: savedAccessCode,
           deviceName,
         });
-        if (active) applyRestoredEnrollment(snapshot);
+        if (active) {
+          applyRestoredEnrollment(snapshot);
+          startupProfilePendingRef.current = false;
+          setStartupStage("ready");
+        }
       } catch (error) {
         if (!active) return;
         const issue = handleRestoreFailure(error);
         if (shouldRetrySavedEnrollment(issue)) {
+          if (startupProfilePendingRef.current) setStartupStage("retrying");
           timer = window.setTimeout(() => void restore(), retryDelay);
           retryDelay = nextRestoreRetryDelay(retryDelay);
+        } else if (savedEnrollmentIsTerminal(issue)) {
+          startupProfilePendingRef.current = false;
+          setStartupStage("ready");
+        } else if (startupProfilePendingRef.current) {
+          setStartupStage("blocked");
         }
       } finally {
         attempting = false;
@@ -343,7 +382,15 @@ export default function App() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [accessExpiresAt, deviceName, loading, savedAccessCode, serverUrl, state.configured]);
+  }, [
+    accessExpiresAt,
+    deviceName,
+    loading,
+    restoreGeneration,
+    savedAccessCode,
+    serverUrl,
+    state.configured,
+  ]);
 
   useEffect(() => {
     protocolPreferenceRef.current = protocolPreference;
@@ -522,6 +569,17 @@ export default function App() {
     });
   };
 
+  const forgetBlockedStartupProfile = async () => {
+    connectionRequestedRef.current = false;
+    clearSavedEnrollment();
+    setServerUrl("");
+    setSavedAccessCode("");
+    setAccessExpiresAt(null);
+    startupProfilePendingRef.current = false;
+    setStartupStage("ready");
+    await bridge.forget().catch(() => undefined);
+  };
+
   const chooseProtocol = (preference: ProtocolPreference) => {
     setProtocolPreference(preference);
     localStorage.setItem(PROTOCOL_KEY, preference);
@@ -569,11 +627,34 @@ export default function App() {
     activeTransportId: state.snapshot.active_transport?.id ?? null,
   }, diagnostics), [diagnostics, protocolPreference, state]);
 
-  if (loading) {
+  if (startupStage !== "ready") {
+    const startup = startupPresentation(startupStage);
     return (
-      <main className={`boot-screen ${dark ? "theme-dark" : ""}`}>
-        <img src="/ket-mark.svg" alt="Ket" />
-        <span>Starting Ket</span>
+      <main
+        className={`boot-screen ${dark ? "theme-dark" : ""}`}
+        role="status"
+        aria-live="polite"
+        aria-busy={startup.busy}
+      >
+        <span className="boot-mark" aria-hidden="true">
+          <i />
+          <i />
+          <img src="/ket-mark.svg" alt="" />
+        </span>
+        <strong>{startup.title}</strong>
+        <span>{startup.detail}</span>
+        {startupStage === "blocked" ? (
+          <span className="boot-actions">
+            <button type="button" onClick={() => setRestoreGeneration((value) => value + 1)}>
+              <RotateCcw size={16} aria-hidden="true" />
+              Retry
+            </button>
+            <button type="button" onClick={() => void forgetBlockedStartupProfile()}>
+              <Trash2 size={16} aria-hidden="true" />
+              Forget server
+            </button>
+          </span>
+        ) : null}
       </main>
     );
   }

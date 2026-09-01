@@ -53,7 +53,7 @@ describe("Ket desktop shell", () => {
     expect(nextRestoreRetryDelay(30_000)).toBe(30_000);
   });
 
-  it("immediately retries a saved profile without deleting it on a timeout", async () => {
+  it("keeps a retryable saved profile behind the branded restore screen", async () => {
     const expiry = Math.floor(Date.now() / 1_000) + 3_600;
     localStorage.setItem("ket.server-url", "https://saved.example.test");
     localStorage.setItem("ket.access-code", "R".repeat(32));
@@ -69,10 +69,82 @@ describe("Ket desktop shell", () => {
     render(<App />);
 
     await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("alert")).toHaveTextContent("request timed out");
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Restoring saved server");
+      expect(screen.getByRole("status")).toHaveTextContent("Retrying automatically");
+      expect(screen.getByRole("status")).not.toHaveTextContent("request timed out");
+    });
+    expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Access code")).not.toBeInTheDocument();
+    expect(screen.queryByText("https://saved.example.test")).not.toBeInTheDocument();
+    expect(screen.queryByText("R".repeat(32))).not.toBeInTheDocument();
     expect(localStorage.getItem("ket.server-url")).toBe("https://saved.example.test");
     expect(localStorage.getItem("ket.access-code")).toBe("R".repeat(32));
     expect(localStorage.getItem("ket.access-expires-at")).toBe(expiry.toString());
+  });
+
+  it("never mounts stored profile fields while the first restore is pending", async () => {
+    const expiry = Math.floor(Date.now() / 1_000) + 3_600;
+    const secret = "P".repeat(32);
+    localStorage.setItem("ket.server-url", "https://private.example.test");
+    localStorage.setItem("ket.access-code", secret);
+    localStorage.setItem("ket.access-expires-at", expiry.toString());
+    localStorage.setItem("ket.device-name", "Private workstation");
+    const { bridge } = await import("./lib/bridge");
+    const pendingRestore = new Promise<ClientSnapshot>(() => undefined);
+    const enroll = vi.spyOn(bridge, "enroll").mockReturnValue(pendingRestore);
+    const { default: App } = await import("./App");
+    const { container } = render(<App />);
+
+    await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("status")).toHaveTextContent("Restoring saved server");
+    expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Access code")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Device name")).not.toBeInTheDocument();
+    expect(container).not.toHaveTextContent("https://private.example.test");
+    expect(container).not.toHaveTextContent("Private workstation");
+    expect(container).not.toHaveTextContent(secret);
+
+  });
+
+  it("clears a terminal saved profile before exposing blank enrollment", async () => {
+    const expiry = Math.floor(Date.now() / 1_000) + 3_600;
+    localStorage.setItem("ket.server-url", "https://revoked.example.test");
+    localStorage.setItem("ket.access-code", "T".repeat(32));
+    localStorage.setItem("ket.access-expires-at", expiry.toString());
+    const { bridge } = await import("./lib/bridge");
+    vi.spyOn(bridge, "enroll").mockRejectedValue({
+      code: "unauthorized",
+      message: "access was revoked",
+      retryable: false,
+    });
+    const { default: App } = await import("./App");
+
+    render(<App />);
+
+    expect(await screen.findByLabelText("Server URL")).toHaveValue("");
+    expect(screen.getByLabelText("Access code")).toHaveValue("");
+    expect(localStorage.getItem("ket.server-url")).toBeNull();
+    expect(localStorage.getItem("ket.access-code")).toBeNull();
+    expect(localStorage.getItem("ket.access-expires-at")).toBeNull();
+  });
+
+  it("rejects malformed persisted access codes before attempting restore", async () => {
+    const expiry = Math.floor(Date.now() / 1_000) + 3_600;
+    localStorage.setItem("ket.server-url", "https://saved.example.test");
+    localStorage.setItem("ket.access-code", `${"M".repeat(31)}-`);
+    localStorage.setItem("ket.access-expires-at", expiry.toString());
+    const { bridge } = await import("./lib/bridge");
+    const enroll = vi.spyOn(bridge, "enroll");
+    const { default: App } = await import("./App");
+
+    render(<App />);
+
+    expect(await screen.findByLabelText("Server URL")).toHaveValue("https://saved.example.test");
+    expect(screen.getByLabelText("Access code")).toHaveValue("");
+    expect(enroll).not.toHaveBeenCalled();
+    expect(localStorage.getItem("ket.access-code")).toBeNull();
+    expect(localStorage.getItem("ket.access-expires-at")).toBeNull();
   });
 
   it("retains a successful profile and access expiry", async () => {
@@ -211,7 +283,7 @@ describe("Ket desktop shell", () => {
     const connect = vi.spyOn(bridge, "connect").mockResolvedValue(connected);
     const { default: App } = await import("./App");
     render(<App />);
-    expect(await screen.findByRole("status")).toHaveTextContent("Liberated");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Liberated"));
 
     await act(async () => {
       publish?.({
@@ -249,7 +321,7 @@ describe("Ket desktop shell", () => {
     const { default: App } = await import("./App");
     render(<App />);
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Liberated");
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Liberated"));
     expect(screen.getByRole("img", { name: /Server location: Frankfurt/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Metrics" }));
     expect(screen.getByRole("heading", { name: "Network metrics" })).toBeInTheDocument();

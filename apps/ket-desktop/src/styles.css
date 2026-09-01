@@ -1438,15 +1438,71 @@ input:disabled {
   height: 100%;
   place-content: center;
   justify-items: center;
-  gap: 12px;
+  gap: 7px;
   color: var(--muted);
   background: var(--canvas);
   font-size: 12px;
 }
 
-.boot-screen img {
-  width: 64px;
-  height: 64px;
+.boot-screen > strong {
+  margin-top: 10px;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.boot-screen > span:not(.boot-mark, .boot-actions) {
+  max-width: min(360px, calc(100vw - 48px));
+  line-height: 1.5;
+  text-align: center;
+}
+
+.boot-mark {
+  position: relative;
+  display: grid;
+  width: 132px;
+  height: 132px;
+  place-items: center;
+}
+
+.boot-mark img {
+  z-index: 1;
+  width: 68px;
+  height: 68px;
+  animation: boot-mark-breathe 1.8s ease-in-out infinite;
+}
+
+.boot-mark i {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  border: 1px solid rgb(242 79 94 / 26%);
+  border-radius: 50%;
+  animation: boot-wave 1.8s ease-out infinite;
+}
+
+.boot-mark i:nth-child(2) {
+  animation-delay: 900ms;
+}
+
+.boot-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.boot-actions button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid var(--secondary-border);
+  border-radius: 6px;
+  color: var(--secondary-ink);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .diagnostics-backdrop {
@@ -1623,6 +1679,34 @@ input:disabled {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes boot-wave {
+  from {
+    opacity: 0.55;
+    transform: scale(0.65);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.3);
+  }
+}
+
+@keyframes boot-mark-breathe {
+  0%,
+  100% {
+    transform: scale(0.97);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-mark img,
+  .boot-mark i {
+    animation: none;
   }
 }
 
