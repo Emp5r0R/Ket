@@ -15,3 +15,13 @@
 /data/
 /secrets/
 *.log
+
+# codex-workflow-managed-start
+agent_docs/
+.codex_workflow_hidden_resources/
+AGENTS.md
+# codex-workflow-managed-end
+
+# codex-workflow legacy and interrupted-install staging paths
+.codex_workflow_hidden_resource/
+Codex_Workflow/
