@@ -24,7 +24,7 @@ export KET_APT_ALLOW_UNPRIVILEGED=1
 export KET_APT_SOURCE_PARTS_DIR="$sources"
 export KET_APT_GET="$fake_apt"
 export KET_APT_LOG="$scratch/apt.log"
-"$installer" package-one package-two
+env -u DEBIAN_FRONTEND "$installer" package-one package-two
 
 [[ -f $sources/ubuntu.sources && -f $sources/vendor.txt ]]
 [[ ! -e $sources/azure-cli.list && -f $sources/azure-cli.list.ket-disabled ]]
