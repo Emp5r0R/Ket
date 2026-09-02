@@ -273,7 +273,7 @@ describe("Ket desktop shell", () => {
         status: "ready",
       },
       platform: "linux",
-      version: "1.0.0",
+      version: "1.0.1",
     });
     vi.spyOn(bridge, "subscribe").mockImplementation(async (listener) => {
       publish = listener;

@@ -8,9 +8,10 @@ output=${2:-}
   exit 2
 }
 
-version=5.79
-source_sha256=8ea0de6e5ea76f38ea987fa831c7fd47f7a1f1e7dd465fd6fa8622edf30d3a45
-windows_sha256=3d946e9759d5a6c6fc5aadb6b56e7de1a81d210ad028235340616e471afeb6f6
+version=5.80
+source_sha256=6d0841d48de07cbbaf4a055919065bf7bb5ebc63cc15c97a2c76caa2bf285513
+windows_sha256=25947bd268e2e670e1c7f915cefd54585aaa440d09eb20c6109cdbeaf3140bc4
+archive_base=https://www.stunnel.org/downloads/archive/5.x
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
@@ -39,7 +40,7 @@ case ${platform} in
       --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 \
       --speed-limit 1024 --speed-time 30 \
       --output "$archive" \
-      "https://www.stunnel.org/downloads/stunnel-${version}-win64-installer.exe"
+      "${archive_base}/stunnel-${version}-win64-installer.exe"
     printf '%s  %s\n' "$windows_sha256" "$archive" | sha256sum --check --strict -
     (
       cd "$work"
@@ -75,7 +76,7 @@ curl --fail --location --proto '=https' --tlsv1.2 \
   --connect-timeout 15 --max-time 600 --retry 3 --retry-all-errors --retry-delay 2 \
   --speed-limit 1024 --speed-time 30 \
   --output "$archive" \
-  "https://www.stunnel.org/downloads/stunnel-${version}.tar.gz"
+  "${archive_base}/stunnel-${version}.tar.gz"
 printf '%s  %s\n' "$source_sha256" "$archive" | sha256sum --check --strict -
 tar --extract --gzip --file "$archive" --directory "$work"
 (

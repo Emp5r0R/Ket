@@ -3,8 +3,8 @@ set -euo pipefail
 
 readonly REPOSITORY_URL=https://github.com/Emp5r0R/Ket.git
 readonly XRAY_IMAGE='ghcr.io/xtls/xray-core:26.3.27@sha256:592ec4d11f656db95598d01e76dbcc6e002d67360b96a5436500a938230f52c7'
-readonly DEFAULT_GIT_REF=v1.0.0
-readonly CLIENT_RELEASE_URL=https://github.com/Emp5r0R/Ket/releases/tag/v1.0.0
+readonly DEFAULT_GIT_REF=v1.0.1
+readonly CLIENT_RELEASE_URL=https://github.com/Emp5r0R/Ket/releases/tag/v1.0.1
 
 usage() {
   cat <<'EOF'
@@ -38,7 +38,7 @@ Location and capacity:
                          First access-code lifetime, 1-525600 (default: 43200)
 
 Other:
-  --ref REF              Git tag or branch to install (default: v1.0.0)
+  --ref REF              Git tag or branch to install (default: v1.0.1)
   --install-dir PATH     Installation directory (default: /opt/ket)
   --plan                 Validate and print the required ingress without changes
   --help                 Show this help

@@ -71,13 +71,13 @@ RUN archive="openvpn-${OPENVPN_VERSION}.tar.gz" \
     && make install-strip DESTDIR=/out
 
 FROM native-builder AS stunnel
-ARG STUNNEL_VERSION=5.79
+ARG STUNNEL_VERSION=5.80
 RUN archive="stunnel-${STUNNEL_VERSION}.tar.gz" \
     && curl --fail --location --proto '=https' --tlsv1.2 \
          --output "/tmp/${archive}" \
-         "https://www.stunnel.org/downloads/${archive}" \
+         "https://www.stunnel.org/downloads/archive/5.x/${archive}" \
     && printf '%s  %s\n' \
-         '8ea0de6e5ea76f38ea987fa831c7fd47f7a1f1e7dd465fd6fa8622edf30d3a45' \
+         '6d0841d48de07cbbaf4a055919065bf7bb5ebc63cc15c97a2c76caa2bf285513' \
          "/tmp/${archive}" | sha256sum --check --strict - \
     && tar --extract --gzip --file "/tmp/${archive}" --directory /tmp \
     && cd "/tmp/stunnel-${STUNNEL_VERSION}" \

@@ -4,7 +4,7 @@ Ket carries OpenVPN TCP inside a certificate-verified stunnel TLS connection. Th
 
 ## Security model
 
-- stunnel 5.79 provides the outer TLS 1.2-or-newer connection, verifies the advertised hostname, and trusts only the CA material delivered in the authenticated session manifest.
+- stunnel 5.80 provides the outer TLS 1.2-or-newer connection, verifies the advertised hostname, and trusts only the CA material delivered in the authenticated session manifest.
 - OpenVPN 2.7.5 independently verifies the inner server certificate, requires `remote-cert-tls server`, uses `tls-crypt`, disables compression, and permits only AEAD data ciphers.
 - The client receives a lease-scoped 12-character username and a distinct 44-character data-plane password. Releasing, expiring, or revoking the lease makes authentication fail and the agent removes any matching connected client.
 - The OpenVPN management socket is Unix-only inside the capability-limited agent container. Its bearer-authenticated reconciliation API and the control-plane auth callback exist only on the private `openvpn-control` network.

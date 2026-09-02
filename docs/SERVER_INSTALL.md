@@ -1,6 +1,6 @@
 # Server installation
 
-`packaging/install-server.sh` provides a fail-fast installation path for a fresh Debian 12+ or Ubuntu 22.04+ VPS on `amd64` or `arm64`. It installs Docker Engine and Compose from Docker's official apt repository when needed, obtains a Let's Encrypt certificate, detects node location from the public IP, creates independent protocol keys and OpenVPN PKI, enables all six implemented transports, installs certificate renewal, applies rules when UFW is already active, and returns one access code exactly once. The default installed source is the stable `v1.0.0` tag; `--ref` deliberately selects another release or branch.
+`packaging/install-server.sh` provides a fail-fast installation path for a fresh Debian 12+ or Ubuntu 22.04+ VPS on `amd64` or `arm64`. It installs Docker Engine and Compose from Docker's official apt repository when needed, obtains a Let's Encrypt certificate, detects node location from the public IP, creates independent protocol keys and OpenVPN PKI, enables all six implemented transports, installs certificate renewal, applies rules when UFW is already active, and returns one access code exactly once. The default installed source is the stable `v1.0.1` tag; `--ref` deliberately selects another release or branch.
 
 The first code is valid for 43,200 minutes (30 days) by default. Set `--first-code-valid-minutes` to any value from `1` through `525600`; the installer prints the server-derived absolute expiry with the code.
 
@@ -64,7 +64,7 @@ Set Cloudflare SSL/TLS encryption to **Full (strict)** and leave WebSockets enab
 
 Cloudflare must forward `/.well-known/acme-challenge/` over HTTP during initial issuance and renewal. Temporarily disable an account-level HTTP-to-HTTPS redirect if it prevents the standalone Certbot challenge from reaching TCP `80` on the VPS.
 
-The streamed installer defaults the server checkout to `v1.0.0`. Pass `--ref <release-tag>` to select another published server version explicitly.
+The streamed installer defaults the server checkout to `v1.0.1`. Pass `--ref <release-tag>` to select another published server version explicitly.
 
 ## Node location
 
@@ -127,11 +127,11 @@ If Certbot fails, verify TCP `80`, DNS propagation, NAT, provider ingress, and a
 
 ## Client handoff
 
-After the readiness check, the installer prints the server URL and one plaintext access code. Store the code immediately; only its protected verifier remains on the server. Download the matching package from the [stable v1.0.0 release](https://github.com/Emp5r0R/Ket/releases/tag/v1.0.0):
+After the readiness check, the installer prints the server URL and one plaintext access code. Store the code immediately; only its protected verifier remains on the server. Download the matching package from the [stable v1.0.1 release](https://github.com/Emp5r0R/Ket/releases/tag/v1.0.1):
 
-- Linux Debian/Ubuntu: `Ket_1.0.0_amd64.deb`
-- Windows x64: `Ket_1.0.0_x64-setup.exe`
-- Android: `Ket_1.0.0_android-universal.apk`
+- Linux Debian/Ubuntu: `Ket_1.0.1_amd64.deb`
+- Windows x64: `Ket_1.0.1_x64-setup.exe`
+- Android: `Ket_1.0.1_android-universal.apk`
 
 Verify `SHA256SUMS.asc` and the package signature as described in [release signing](RELEASE_SIGNING.md), install the client, and enter the printed server URL and access code. The client keeps the profile until it expires or the user chooses Forget.
 

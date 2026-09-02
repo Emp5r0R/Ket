@@ -22,15 +22,15 @@ if (releaseSigningConfigured && !releaseSigningComplete) {
 val configuredVersionCode = System.getenv("KET_ANDROID_VERSION_CODE")?.let { value ->
     value.toIntOrNull()?.takeIf { it > 0 }
         ?: throw GradleException("KET_ANDROID_VERSION_CODE must be a positive integer")
-} ?: 5
+} ?: 6
 val configuredVersionName = System.getenv("KET_ANDROID_VERSION_NAME")
     ?.takeIf { it.isNotBlank() }
-    ?: "1.0.0"
+    ?: "1.0.1"
 
-android { namespace = "com.ket.android"; compileSdk = 34
+android { namespace = "com.ket.android"; compileSdk = 36
     ndkVersion = "27.3.13750724"
     defaultConfig {
-        applicationId = "com.ket.android"; minSdk = 26; targetSdk = 34
+        applicationId = "com.ket.android"; minSdk = 26; targetSdk = 36
         versionCode = configuredVersionCode
         versionName = configuredVersionName
         ndk { abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64") }

@@ -131,6 +131,8 @@ server_contracts() {
   run_step 'All-transport environment preflight tests' "$ROOT/packaging/test-validate-env.sh"
   run_step 'Release checksum and OpenPGP signing tests' "$ROOT/packaging/test-sign-release.sh"
   run_step 'CI change-classifier tests' "$ROOT/.github/scripts/test-ci-changes.sh"
+  run_step 'CI Ubuntu dependency installer tests' \
+    "$ROOT/.github/scripts/test-install-ubuntu-dependencies.sh"
   if command -v shellcheck >/dev/null 2>&1; then
     run_step 'ShellCheck static analysis' shellcheck "${scripts[@]}"
   else

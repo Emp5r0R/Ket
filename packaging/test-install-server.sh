@@ -16,7 +16,7 @@ grep -Fq 'Control hostname: ket-8-8-8-8.sslip.io' <<<"$automatic"
 grep -Fq 'DNS: none to configure.' <<<"$automatic"
 grep -Fq 'Do NOT expose TCP 8787, 8445, or 8446' <<<"$automatic"
 grep -Fq 'TCP+UDP 20000-20031' <<<"$automatic"
-grep -Fq 'Git ref: v1.0.0' <<<"$automatic"
+grep -Fq 'Git ref: v1.0.1' <<<"$automatic"
 
 direct=$(
   "$installer" \

@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 
 private data class PendingConnectionRequest(
     val serverUrl: String,
@@ -132,9 +133,9 @@ class MainActivity : ComponentActivity() {
                         themeMode = themeMode.value,
                         onThemeModeChange = { selected ->
                             themeMode.value = selected
-                            preferences.edit()
-                                .putString(THEME_MODE_KEY, selected.storedName)
-                                .apply()
+                            preferences.edit {
+                                putString(THEME_MODE_KEY, selected.storedName)
+                            }
                         },
                         onForgetProfile = {
                             runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }

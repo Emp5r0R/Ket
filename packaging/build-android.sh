@@ -48,9 +48,9 @@ if [[ -z "$sdk" || ! -d "$sdk/platforms" ]]; then
 fi
 
 printf 'sdk.dir=%s\n' "$sdk" > "$project_dir/local.properties"
-apksigner="$sdk/build-tools/34.0.0/apksigner"
+apksigner="$sdk/build-tools/36.0.0/apksigner"
 if [[ ! -x "$apksigner" ]]; then
-  printf 'Android Build Tools 34.0.0 apksigner was not found under %s.\n' "$sdk" >&2
+  printf 'Android Build Tools 36.0.0 apksigner was not found under %s.\n' "$sdk" >&2
   exit 1
 fi
 "$repo_root/packaging/prepare-android-engines.sh" "$project_dir/app"

@@ -67,7 +67,7 @@ export function testDesktopState(overrides: Partial<DesktopState> = {}): Desktop
     configured: true,
     engine: readyEngine,
     platform: "linux",
-    version: "1.0.0",
+    version: "1.0.1",
     ...overrides,
   };
 }

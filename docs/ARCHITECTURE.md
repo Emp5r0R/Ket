@@ -13,7 +13,7 @@ This separation keeps the API and user experience consistent while allowing a no
 | `ket-core` | Shared API models, protocol identifiers, secret primitives | Rust | Implemented |
 | `ket-server` | Control API, access grants, sessions, telemetry | Rust/Axum | Implemented |
 | Data-plane control | Scoped credentials, engine configuration, auth, traffic, health, kicks | Rust | Hysteria2, VLESS + REALITY, XHTTP/TLS Stealth, Shadowsocks 2022, WireGuard TLS, and OpenVPN/stunnel implemented |
-| Transport engines | VLESS Reality, VLESS XHTTP/TLS, Hysteria2, Shadowsocks 2022, WireGuard over WebSocket/TLS, OpenVPN over stunnel, future maintained adapters | Maintained upstream engines | Hysteria2 2.10, Xray-core 26.3.27, shadowsocks-rust 1.24.0, Linux WireGuard, wstunnel 10.6.2, OpenVPN 2.7.5, and stunnel 5.79 integrated |
+| Transport engines | VLESS Reality, VLESS XHTTP/TLS, Hysteria2, Shadowsocks 2022, WireGuard over WebSocket/TLS, OpenVPN over stunnel, future maintained adapters | Maintained upstream engines | Hysteria2 2.10, Xray-core 26.3.27, shadowsocks-rust 1.24.0, Linux WireGuard, wstunnel 10.6.2, OpenVPN 2.7.5, and stunnel 5.80 integrated |
 | Desktop client core | Node enrollment, strategy selection, tunnel lifecycle, metrics | Rust | Six implemented transports with bounded fallback |
 | Desktop privilege broker | Authenticated TUN/route ownership and engine supervision | Rust system service | Implemented for Linux/Windows |
 | Linux/Windows desktop | Map-first connection UI and native packaging | Tauri 2 plus shared Rust core | UI, service installers, and unsigned lifecycle gates implemented; signed bundles pending |
