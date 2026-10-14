@@ -117,6 +117,16 @@ android_quality() {
     ./gradlew --no-daemon --console=plain lintDebug
 }
 
+git_tracked_scripts_are_executable() {
+  # Some checkouts (core.fileMode=false) hide a missing executable bit locally.
+  local non_executable
+  non_executable=$(git -C "$ROOT" ls-files -s -- '*.sh' | awk '$1 != "100755" {print $4}')
+  [[ -z "$non_executable" ]] || {
+    printf 'Shell scripts are not executable in Git (git update-index --chmod=+x):\n%s\n' "$non_executable" >&2
+    return 1
+  }
+}
+
 server_contracts() {
   require_command bash
   require_command gpg
@@ -126,6 +136,9 @@ server_contracts() {
       -type f -name '*.sh' -print | LC_ALL=C sort
   )
   run_step 'Shell syntax for every maintained Bash script' bash -n "${scripts[@]}"
+  if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    run_step 'Tracked shell scripts are executable in Git' git_tracked_scripts_are_executable
+  fi
   run_step 'Server installer argument and rendering tests' "$ROOT/packaging/test-install-server.sh"
   run_step 'Public edge renderer and template contract tests' "$ROOT/packaging/test-render-edge.sh"
   run_step 'Certificate trust-bundle tests' "$ROOT/packaging/test-certificate-trust-bundle.sh"
