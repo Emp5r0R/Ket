@@ -48,8 +48,17 @@ pub enum ClientError {
 }
 
 impl ClientError {
+    /// True when the server rejected the access code or session token. The
+    /// public edge reports that as its neutral `404`; direct control-plane
+    /// deployments still return `401`.
     pub fn is_unauthorized(&self) -> bool {
-        matches!(self, Self::Api { status: 401, .. })
+        matches!(
+            self,
+            Self::Api {
+                status: 401 | 404,
+                ..
+            }
+        )
     }
 
     pub fn issue(&self) -> ClientIssue {
@@ -200,6 +209,7 @@ mod tests {
             (400, false),
             (401, false),
             (403, false),
+            (404, false),
             (429, true),
             (500, true),
         ] {
@@ -208,7 +218,7 @@ mod tests {
                 code: "server_code".to_owned(),
                 message: "bounded server message".to_owned(),
             };
-            assert_eq!(error.is_unauthorized(), status == 401);
+            assert_eq!(error.is_unauthorized(), matches!(status, 401 | 404));
             assert_eq!(
                 error.issue(),
                 ClientIssue {

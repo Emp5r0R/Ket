@@ -14,7 +14,24 @@ class KetControlApiTest {
     fun `authorization status codes are terminal`() {
         assertTrue(KetControlException(401, "unauthorized").authorizationLost)
         assertTrue(KetControlException(403, "forbidden").authorizationLost)
+        assertTrue(KetControlException(404, "masked edge rejection").authorizationLost)
         assertFalse(KetControlException(500, "server error").authorizationLost)
+    }
+
+    @Test
+    fun `masked edge rejections never surface decoy text`() {
+        val decoy = "<!doctype html><html><body><p>Not Found</p></body></html>"
+        val rejectedJson = JSONObject().put("code", "unauthorized").put("message", "credentials are invalid").toString()
+
+        for ((code, body) in listOf(404 to decoy, 401 to rejectedJson, 404 to "")) {
+            assertEquals(
+                KetControlApi.CREDENTIALS_REJECTED_MESSAGE,
+                KetControlApi.failureMessage(code, body, "Enrollment failed"),
+            )
+        }
+        val expired = JSONObject().put("code", "grant_expired").put("message", "access grant has expired").toString()
+        assertEquals("access grant has expired", KetControlApi.failureMessage(403, expired, "Enrollment failed"))
+        assertEquals("Enrollment failed", KetControlApi.failureMessage(502, decoy, "Enrollment failed"))
     }
 
     @Test

@@ -41,14 +41,14 @@ openssl rand -base64 48
 openssl rand -hex 24
 ```
 
-Put the private and public key in `KET_WIREGUARD_SERVER_PRIVATE_KEY` and `KET_WIREGUARD_SERVER_PUBLIC_KEY`. Put the two independent base64 values in `KET_WIREGUARD_MANAGER_TOKEN` and `KET_WIREGUARD_CREDENTIAL_KEY`. Use the hexadecimal value in a path prefix such as `ket-<value>`, then set:
+Put the private and public key in `KET_WIREGUARD_SERVER_PRIVATE_KEY` and `KET_WIREGUARD_SERVER_PUBLIC_KEY`. Put the two independent base64 values in `KET_WIREGUARD_MANAGER_TOKEN` and `KET_WIREGUARD_CREDENTIAL_KEY`. Use the hexadecimal value itself as the path prefix (avoid product-identifying words), then set:
 
 ```dotenv
 KET_WIREGUARD_ENABLED=true
 KET_WIREGUARD_PUBLIC_HOST=wg.example.com
 KET_WIREGUARD_PUBLIC_PORT=443
 KET_WIREGUARD_SNI=wg.example.com
-KET_WIREGUARD_WS_PATH_PREFIX=ket-replace-with-the-random-prefix
+KET_WIREGUARD_WS_PATH_PREFIX=replace-with-32-random-hex-characters
 KET_WIREGUARD_ORIGIN_BIND_ADDRESS=127.0.0.1
 KET_WIREGUARD_ORIGIN_PORT=8446
 KET_WIREGUARD_SERVER_PRIVATE_KEY=<private key>
@@ -80,14 +80,15 @@ ingress:
   - service: http_status:404
 ```
 
-When sharing a hostname with another service, put the WireGuard rule first and restrict it to the configured prefix:
+When sharing the control hostname, route only the exact WireGuard prefix and the two session routes, never the whole hostname, so operational endpoints stay private (or route the hostname to the Ket edge as described in [XHTTP_STEALTH.md](XHTTP_STEALTH.md#route-cloudflare-tunnel)):
 
 ```yaml
 ingress:
   - hostname: ket.example.com
-    path: ^/ket-replace-with-the-random-prefix
+    path: ^/replace-with-32-random-hex-characters(?:/.*)?$
     service: http://localhost:8446
   - hostname: ket.example.com
+    path: ^/v1/sessions(?:/current)?$
     service: http://localhost:8787
   - service: http_status:404
 ```
@@ -97,7 +98,7 @@ Validate the effective rule before restarting cloudflared:
 ```bash
 sudo cloudflared --config /etc/cloudflared/config.yml tunnel ingress validate
 sudo cloudflared --config /etc/cloudflared/config.yml tunnel ingress rule \
-  'https://wg.example.com/ket-replace-with-the-random-prefix'
+  'https://wg.example.com/replace-with-32-random-hex-characters'
 sudo systemctl restart cloudflared
 ```
 

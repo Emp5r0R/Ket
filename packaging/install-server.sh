@@ -495,7 +495,7 @@ KET_XHTTP_ENABLED=true
 KET_XHTTP_PUBLIC_HOST=$domain
 KET_XHTTP_PUBLIC_PORT=443
 KET_XHTTP_SNI=$domain
-KET_XHTTP_PATH=/ket-xhttp-$(random_hex 16)
+KET_XHTTP_PATH=/assets/$(random_hex 16)
 KET_XHTTP_FINGERPRINT=chrome
 KET_XHTTP_ORIGIN_BIND_ADDRESS=127.0.0.1
 KET_XHTTP_ORIGIN_PORT=8445
@@ -510,7 +510,7 @@ KET_WIREGUARD_ENABLED=true
 KET_WIREGUARD_PUBLIC_HOST=$domain
 KET_WIREGUARD_PUBLIC_PORT=443
 KET_WIREGUARD_SNI=$domain
-KET_WIREGUARD_WS_PATH_PREFIX=ket-wg-$(random_hex 16)
+KET_WIREGUARD_WS_PATH_PREFIX=$(random_hex 16)
 KET_WIREGUARD_ORIGIN_BIND_ADDRESS=127.0.0.1
 KET_WIREGUARD_ORIGIN_PORT=8446
 KET_WIREGUARD_SERVER_PRIVATE_KEY=$wireguard_private
@@ -587,10 +587,13 @@ else
   printf 'Certbot timer unit not found; verify this distribution schedules certbot renew through cron.\n'
 fi
 
+# Readiness is checked on the host-loopback control port; the public edge
+# deliberately serves only a neutral page, which also proves its certificate.
 ready=false
 for _ in $(seq 1 60); do
-  if curl --fail --silent --show-error \
-    --resolve "$domain:443:127.0.0.1" "https://$domain/readyz" >/dev/null 2>&1; then
+  if curl --fail --silent --show-error http://127.0.0.1:8787/readyz >/dev/null 2>&1 \
+    && curl --fail --silent --show-error \
+      --resolve "$domain:443:127.0.0.1" "https://$domain/" >/dev/null 2>&1; then
     ready=true
     break
   fi

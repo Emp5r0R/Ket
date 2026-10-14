@@ -2,7 +2,17 @@
 
 The base URL is the configured `KET_PUBLIC_URL`. JSON requests use `Content-Type: application/json`. Admin and session endpoints authenticate with `Authorization: Bearer <token>`.
 
-## Public endpoints
+## Public exposure
+
+Only the client session routes are public. The HTTPS edge (`packaging/server/nginx.conf`) forwards exactly `/v1/sessions` and `/v1/sessions/current` to the control plane, forwards the exact deployment-secret XHTTP and WireGuard paths to their origins, serves a neutral page at `/`, and returns one fixed neutral `404` page for everything else.
+
+On the session routes the edge replaces `400`, `401`, `404`, `405`, `411`, `413`, `414`, `415`, `422`, and `431` with that same neutral `404`, so a request without a valid access code or session token is indistinguishable from a request for an unknown page. `403 grant_expired`, `409 grant_capacity_reached`, `429 server_busy`, and `5xx` pass through unchanged because enrolled clients need them to choose between expiry, capacity, back-off, and retry. Desktop and Android therefore treat `401` and `404` from the session routes as rejected credentials.
+
+Residual exposure: during startup (`503 data_plane_unavailable`) or Argon2 overload (`429 server_busy`), an unauthenticated enrollment attempt can still receive a Ket JSON body.
+
+## Operational endpoints (host loopback only)
+
+These remain on the control listener, which Compose publishes only on `127.0.0.1:8787`. Never route them through the public edge, cloudflared, or another reverse proxy.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -10,6 +20,11 @@ The base URL is the configured `KET_PUBLIC_URL`. JSON requests use `Content-Type
 | `GET` | `/readyz` | Readiness |
 | `GET` | `/metrics` | Prometheus session, capacity, crypto-pressure, overload, and data-plane authentication metrics |
 | `GET` | `/v1/node/status` | Location, health, system load, and session capacity |
+
+## Enrollment endpoint
+
+| Method | Path | Purpose |
+| --- | --- | --- |
 | `POST` | `/v1/sessions` | Exchange a 32-character access code for a short-lived session |
 
 Create a session:
@@ -60,6 +75,8 @@ An OpenVPN/stunnel profile uses `protocol=open_vpn_stunnel`, `network=tcp`, and 
 | `DELETE` | `/v1/sessions/current` | Release the current lease |
 
 ## Admin endpoints
+
+Admin endpoints are operational and reachable only on the host-loopback control listener.
 
 | Method | Path | Purpose |
 | --- | --- | --- |

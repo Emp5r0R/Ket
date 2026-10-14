@@ -18,7 +18,7 @@ included automatically.
 | --- | --- |
 | `./scripts/test-all.sh` | Every portable unit and contract suite |
 | `./scripts/test-all.sh quality` | Rust formatting and Clippy, desktop production build, Android lint, patch integrity |
-| `./scripts/test-all.sh integration` | Real local OpenVPN/stunnel, Shadowsocks 2022, and XHTTP/TLS engine lifecycles |
+| `./scripts/test-all.sh integration` | Docker edge probe-resistance harness plus real local OpenVPN/stunnel, Shadowsocks 2022, and XHTTP/TLS engine lifecycles |
 | `./scripts/test-all.sh all` | Unit, quality, and local engine integration gates |
 | `./scripts/test-all.sh rust` | Rust tests plus formatting and strict Clippy |
 | `./scripts/test-all.sh desktop-ui` | Vitest interactions plus the TypeScript/Vite production build |
@@ -58,6 +58,7 @@ sudo apt-get install --no-install-recommends -y \
 | Privileged tunnel service | Framing limits, authentication, loopback-only broker policy, lease expiry, heartbeat/status/stop behavior, DNS restoration, and desktop exchange |
 | Desktop client | Saved/expired profiles, reconnect policy, theme, every view/component, every lifecycle state, protocol guides, availability, maps, telemetry, diagnostics copying, engine warnings, and Tauri protocol commands |
 | Android client | Strict node/session parsing, durable authenticated credentials, all maintained transport parsers/configs plus Hysteria XOR mode, ranking/recovery, route/DNS ownership, network transitions, runtime subscriptions, pending launch ownership, diagnostics, map geometry, and UI status copy |
+| Public edge | Renderer validation and injection rejection, exact transport routing, operational routes absent from the public vhost, masked versus pass-through status lists (`packaging/test-render-edge.sh`); pinned nginx image probed as a scanner and as a client against stub upstreams, byte-identical decoy responses (`packaging/verify-edge-proxy.sh`, needs Docker) |
 | Server installation and CI | Installer arguments/templates, certificate trust rotation, every transport preflight with negative cases, shell syntax, and conservative affected-job routing |
 
 ## Required Test Design

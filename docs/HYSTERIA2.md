@@ -68,6 +68,7 @@ ingress:
     path: "^/.well-known/acme-challenge/.+$"
     service: http://127.0.0.1:8888
   - hostname: ket.example.com
+    path: "^/v1/sessions(?:/current)?$"
     service: http://127.0.0.1:8787
   - service: http_status:404
 ```

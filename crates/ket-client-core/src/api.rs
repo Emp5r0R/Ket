@@ -270,7 +270,19 @@ async fn read_bounded(mut response: reqwest::Response) -> Result<Vec<u8>, Client
     Ok(body)
 }
 
+/// Maps a non-success control response to a client error.
+///
+/// The public edge answers rejected credentials with the same neutral `404`
+/// page it serves to scanners, so on the session routes a `404` means the
+/// access code or session token was not accepted.
 fn api_error(status: StatusCode, body: &[u8]) -> ClientError {
+    if status == StatusCode::NOT_FOUND {
+        return ClientError::Api {
+            status: status.as_u16(),
+            code: "unauthorized".to_owned(),
+            message: "the server address or access code was not accepted".to_owned(),
+        };
+    }
     let response = serde_json::from_slice::<ErrorResponse>(body).ok();
     let code = response
         .as_ref()
@@ -347,6 +359,28 @@ mod tests {
         assert_eq!(code, "http_400");
         assert!(!message.contains('\n'));
         assert_eq!(message.chars().count(), 256);
+    }
+
+    #[test]
+    fn masked_edge_rejection_is_reported_as_unauthorized() {
+        let decoy = b"<!doctype html><html><body><p>Not Found</p></body></html>\n";
+        let error = api_error(StatusCode::NOT_FOUND, decoy);
+        assert!(error.is_unauthorized());
+        let ClientError::Api {
+            status,
+            code,
+            message,
+        } = error
+        else {
+            panic!("expected API error");
+        };
+        assert_eq!(status, 404);
+        assert_eq!(code, "unauthorized");
+        assert_eq!(
+            message,
+            "the server address or access code was not accepted"
+        );
+        assert!(!message.contains("Not Found"));
     }
 
     #[tokio::test]

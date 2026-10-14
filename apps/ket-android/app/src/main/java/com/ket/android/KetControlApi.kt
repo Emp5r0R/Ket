@@ -46,6 +46,7 @@ object KetControlApi : TunnelSessionApi {
     private const val SESSION_ID_LENGTH = 12
     private const val MAX_RESPONSE_BYTES = 128 * 1024
     private const val MAX_ERROR_MESSAGE_CHARS = 256
+    internal const val CREDENTIALS_REJECTED_MESSAGE = "Server address or access code was not accepted"
 
     override fun enroll(serverUrl: String, accessCode: String, clientName: String): EnrollmentResult {
         val base = normalizeBaseUrl(serverUrl)
@@ -224,8 +225,19 @@ object KetControlApi : TunnelSessionApi {
     }
 
     private fun requireSuccess(code: Int, expected: Int, body: String, fallback: String) {
-        if (code != expected) throw KetControlException(code, errorMessage(body, fallback))
+        if (code != expected) throw KetControlException(code, failureMessage(code, body, fallback))
     }
+
+    /**
+     * The public edge answers rejected credentials with the same neutral 404 page it serves
+     * to scanners, so 401 and 404 carry no useful server text on the session routes.
+     */
+    internal fun failureMessage(code: Int, body: String, fallback: String): String =
+        if (code == HttpURLConnection.HTTP_UNAUTHORIZED || code == HttpURLConnection.HTTP_NOT_FOUND) {
+            CREDENTIALS_REJECTED_MESSAGE
+        } else {
+            errorMessage(body, fallback)
+        }
 
     private fun nonNegativeLong(json: JSONObject, key: String): Long = json.getLong(key).also {
         require(it >= 0) { "$key is invalid" }

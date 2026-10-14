@@ -20,7 +20,7 @@ KET_XHTTP_ENABLED=true
 KET_XHTTP_PUBLIC_HOST=stealth.example.com
 KET_XHTTP_PUBLIC_PORT=443
 KET_XHTTP_SNI=stealth.example.com
-KET_XHTTP_PATH=/ket-replace-with-32-random-hex-characters
+KET_XHTTP_PATH=/assets/replace-with-32-random-hex-characters
 KET_XHTTP_FINGERPRINT=chrome
 KET_XHTTP_ORIGIN_BIND_ADDRESS=127.0.0.1
 KET_XHTTP_ORIGIN_PORT=8445
@@ -47,19 +47,31 @@ docker compose -f compose.yaml -f compose.xray.yaml -f compose.xhttp.yaml -f com
 
 ## Route Cloudflare Tunnel
 
-The Compose overlay publishes the XHTTP origin as `127.0.0.1:8445`; it must never be bound to a public address. Put the path-specific rule before the control API rule. XHTTP appends session routing segments to the configured prefix, so the ingress regular expression must include descendants:
+The Compose overlay publishes the XHTTP origin as `127.0.0.1:8445`; it must never be bound to a public address. When the Ket edge overlay is deployed, route the tunnel hostname to the edge so it applies the same path allowlist and rejection masking as direct clients:
 
 ```yaml
 ingress:
   - hostname: ket.example.com
-    path: ^/ket-replace-with-32-random-hex-characters(?:/.*)?$
+    service: https://127.0.0.1:443
+    originRequest:
+      originServerName: ket.example.com
+  - service: http_status:404
+```
+
+Without the edge, route only the exact XHTTP path and the two session routes, never the whole hostname. XHTTP appends session routing segments to the configured path, so its expression must include descendants:
+
+```yaml
+ingress:
+  - hostname: ket.example.com
+    path: ^/assets/replace-with-32-random-hex-characters(?:/.*)?$
     service: http://127.0.0.1:8445
   - hostname: ket.example.com
+    path: ^/v1/sessions(?:/current)?$
     service: http://127.0.0.1:8787
   - service: http_status:404
 ```
 
-Xray packet-up permits up to 1 MiB in each upload POST by default. Ket's Nginx edge therefore overrides `client_max_body_size` to `2m` only for `/ket-xhttp-` while leaving the smaller control-plane limit in place. A custom intermediary must accept at least 1 MiB request bodies and must not buffer either direction.
+Xray packet-up permits up to 1 MiB in each upload POST by default. Ket's Nginx edge therefore overrides `client_max_body_size` to `2m` only for the exact XHTTP path while leaving the smaller control-plane limit in place. A custom intermediary must accept at least 1 MiB request bodies and must not buffer either direction.
 
 A dedicated hostname such as `stealth.example.com` is also valid; keep the path rule anyway so unrelated requests do not reach Xray. For a remotely managed tunnel, create the equivalent path-specific public-hostname route in the Cloudflare dashboard and ensure it takes precedence over the hostname-wide control route.
 
@@ -68,7 +80,7 @@ Validate and test locally managed ingress before restarting `cloudflared`:
 ```bash
 sudo cloudflared tunnel ingress validate
 sudo cloudflared tunnel ingress rule \
-  'https://ket.example.com/ket-replace-with-32-random-hex-characters/test'
+  'https://ket.example.com/assets/replace-with-32-random-hex-characters/test'
 ```
 
 Do not put Cloudflare Access browser authentication in front of the XHTTP path because the Xray client cannot complete an interactive Access flow. Keep `/internal/` denied and do not route it to the control plane. Provider request limits and acceptable-use rules still apply; the release gate must include a sustained transfer test through the selected Cloudflare plan.

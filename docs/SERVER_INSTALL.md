@@ -149,7 +149,8 @@ Common checks:
 cd /opt/ket
 sudo ./packaging/server/compose.sh ps
 sudo ./packaging/server/compose.sh logs --tail=100
-curl --fail https://ket.example.com/readyz
+curl --fail http://127.0.0.1:8787/readyz   # on the server
+curl --fail https://ket.example.com/         # neutral public page
 sudo certbot renew --dry-run
 ```
 
@@ -173,4 +174,4 @@ Review release notes before checkout when a version declares a state or configur
 
 ## Security boundary
 
-The edge is the only public TCP `443` listener. It prereads SNI and passes the configured REALITY disguise name to Xray without TLS termination; all other names continue to the HTTPS edge. Control remains host-loopback on `8787`, XHTTP on `8445`, and WireGuard WebSocket on `8446`. `/internal` always returns `404` at the HTTP edge. The WireGuard and OpenVPN manager APIs remain on private Compose networks. Hysteria2 independently shares public port `443` over UDP.
+The edge is the only public TCP `443` listener. It prereads SNI and passes the configured REALITY disguise name to Xray without TLS termination; all other names continue to the HTTPS edge. The HTTPS edge forwards only the client session routes and the exact deployment-secret XHTTP and WireGuard paths; every other request, including `/healthz`, `/readyz`, `/metrics`, `/v1/node/status`, `/v1/admin`, and `/internal`, receives one neutral `404` page, and unauthenticated session requests receive the same page (see [CONTROL_API.md](CONTROL_API.md#public-exposure)). Control remains host-loopback on `8787`, XHTTP on `8445`, and WireGuard WebSocket on `8446`; the edge health check uses a container-loopback listener. New installs generate transport paths without a product-identifying prefix. The WireGuard and OpenVPN manager APIs remain on private Compose networks. Hysteria2 independently shares public port `443` over UDP.

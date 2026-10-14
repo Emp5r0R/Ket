@@ -1,13 +1,11 @@
 services:
   edge-proxy:
     image: nginx:1.29.5-alpine-slim@sha256:032dcd5e58c2a6e767fa8b7bbaa74554fd62e8fd5614fe4f019a05dfba7be8d9
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        envsubst '$$KET_XRAY_SNI' < /etc/nginx/templates/ket.conf.template > /tmp/nginx.conf
-        exec /usr/sbin/nginx -c /tmp/nginx.conf -g 'daemon off;'
+    entrypoint: ["/bin/sh", "/etc/nginx/ket/render-edge.sh"]
     environment:
       KET_XRAY_SNI: "${KET_XRAY_SNI:?KET_XRAY_SNI is required}"
+      KET_XHTTP_PATH: "${KET_XHTTP_PATH:-}"
+      KET_WIREGUARD_WS_PATH_PREFIX: "${KET_WIREGUARD_WS_PATH_PREFIX:-}"
     depends_on:
       control-plane:
         condition: service_healthy
@@ -28,6 +26,8 @@ services:
       - /tmp:size=8m,mode=1777
     volumes:
       - ./packaging/server/nginx.conf:/etc/nginx/templates/ket.conf.template:ro
+      - ./packaging/server/nginx-session-proxy.conf:/etc/nginx/ket/session-proxy.conf:ro
+      - ./packaging/server/render-edge.sh:/etc/nginx/ket/render-edge.sh:ro
       - "${KET_HYSTERIA_TLS_DIR:-./secrets/tls}:/etc/nginx/tls:ro"
     cap_drop:
       - ALL
@@ -39,7 +39,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider --no-check-certificate https://127.0.0.1/healthz"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8449/healthz"]
       interval: 15s
       timeout: 5s
       start_period: 10s

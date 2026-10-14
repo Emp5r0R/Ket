@@ -12,7 +12,7 @@ Usage: ./scripts/test-all.sh [unit|quality|integration|all|rust|desktop-ui|deskt
 
   unit           Run every portable unit/contract suite (default).
   quality        Run formatting, lint, and compile/build gates.
-  integration    Run real local OpenVPN, Shadowsocks, and XHTTP engine harnesses.
+  integration    Run the Docker edge probe harness and real local OpenVPN, Shadowsocks, and XHTTP engine harnesses.
   all            Run unit, quality, and integration gates.
   rust           Run Rust formatting, all-target tests, and strict Clippy.
   desktop-ui     Run desktop UI tests and its production build.
@@ -127,6 +127,7 @@ server_contracts() {
   )
   run_step 'Shell syntax for every maintained Bash script' bash -n "${scripts[@]}"
   run_step 'Server installer argument and rendering tests' "$ROOT/packaging/test-install-server.sh"
+  run_step 'Public edge renderer and template contract tests' "$ROOT/packaging/test-render-edge.sh"
   run_step 'Certificate trust-bundle tests' "$ROOT/packaging/test-certificate-trust-bundle.sh"
   run_step 'All-transport environment preflight tests' "$ROOT/packaging/test-validate-env.sh"
   run_step 'Release checksum and OpenPGP signing tests' "$ROOT/packaging/test-sign-release.sh"
@@ -158,6 +159,7 @@ quality() {
 }
 
 integration() {
+  run_step 'Public edge probe resistance (Docker)' "$ROOT/packaging/verify-edge-proxy.sh"
   run_step 'OpenVPN over stunnel engine lifecycle' "$ROOT/packaging/verify-openvpn-handshake.sh"
   run_step 'Shadowsocks 2022 engine traffic lifecycle' "$ROOT/packaging/verify-shadowsocks-traffic.sh"
   run_step 'XHTTP TLS Stealth engine traffic lifecycle' "$ROOT/packaging/verify-xhttp-tls-traffic.sh"
