@@ -152,6 +152,18 @@ function Wait-KetServiceRemoved {
     Fail "the Ket tunnel service remains registered"
 }
 
+# The silent NSIS uninstaller relaunches itself from a temporary copy, so the
+# process we wait on exits before the registration is removed at the end.
+function Wait-KetUninstallRegistrationRemoved {
+    for ($Attempt = 0; $Attempt -lt 40; $Attempt++) {
+        if ((@(Get-KetUninstallEntries)).Count -eq 0) {
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    Fail "the Ket uninstall registration remains after uninstall"
+}
+
 function Wait-PathRemoved {
     param([string]$Path)
 
@@ -315,9 +327,7 @@ try {
     Invoke-CheckedProcess $Uninstaller @("/S")
     Wait-KetServiceRemoved
     Wait-PathRemoved $InstallDir
-    if ((@(Get-KetUninstallEntries)).Count -ne 0) {
-        Fail "the Ket uninstall registration remains after uninstall"
-    }
+    Wait-KetUninstallRegistrationRemoved
     if (-not (Test-Path -LiteralPath $TokenFile -PathType Leaf)) {
         Fail "uninstall deleted persistent broker state"
     }
