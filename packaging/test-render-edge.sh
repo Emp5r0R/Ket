@@ -39,6 +39,7 @@ config="$work/full/nginx.conf"
 locations="$work/full/transport-locations.conf"
 grep -Fq 'www.cloudflare.com ket_reality;' "$config"
 grep -Fq "include $work/full/transport-locations.conf;" "$config"
+# shellcheck disable=SC2016 # literal placeholder text, not an expansion
 if grep -Fq '${' "$config"; then
   printf 'FAIL: unrendered template placeholder remains\n' >&2
   exit 1
@@ -46,6 +47,7 @@ fi
 grep -Fxq "location ~ \"^$xhttp_path(/|\$)\" {" "$locations"
 grep -Fxq "location ~ \"^/$wireguard_prefix(/|\$)\" {" "$locations"
 grep -Fq 'proxy_pass http://ket_xhttp;' "$locations"
+# shellcheck disable=SC2016 # literal nginx variable, not a shell expansion
 grep -Fq 'proxy_pass http://$ket_wireguard_upstream;' "$locations"
 if grep -Eq 'ket-(xhttp|wg)-' "$config" "$locations"; then
   printf 'FAIL: a Ket-branded transport prefix is still routed\n' >&2
