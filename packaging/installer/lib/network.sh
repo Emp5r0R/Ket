@@ -29,8 +29,10 @@ automatic_hostname() {
 }
 
 # Prints the IPv4 addresses a name resolves to, one per line. Tests replace it.
+# resolve_ipv4 NAME: the name's IPv4 addresses, one per line; nothing (and
+# success) when it does not resolve, so callers can explain what to fix.
 resolve_ipv4() {
-  getent ahostsv4 "$1" 2>/dev/null | awk '{print $1}' | LC_ALL=C sort -u
+  { getent ahostsv4 "$1" 2>/dev/null || true; } | awk '{print $1}' | LC_ALL=C sort -u
 }
 
 ipv4_to_int() {

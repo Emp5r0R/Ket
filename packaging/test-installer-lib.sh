@@ -47,6 +47,19 @@ for address in 8.8.8.8 173.245.64.0 104.32.0.1 1.1.1.1 not-an-address; do
   refute "non-Cloudflare address $address" is_cloudflare_ipv4 "$address"
 done
 
+# --- DNS lookups -----------------------------------------------------------------
+# getent fails (status 2) for names that do not resolve; under pipefail that
+# must still yield an empty answer, not end the installer silently. The getent
+# stubs are called by resolve_ipv4 (SC2317).
+# shellcheck disable=SC2317
+(
+  getent() { return 2; }
+  addresses=$(resolve_ipv4 nowhere.invalid) || { printf 'FAIL: an unresolvable name ended the lookup\n' >&2; exit 1; }
+  equals 'unresolvable name has no addresses' "$addresses" ''
+  getent() { printf '8.8.8.8 STREAM x\n8.8.8.8 DGRAM\n1.1.1.1 RAW\n'; }
+  equals 'addresses are unique and sorted' "$(resolve_ipv4 x)" $'1.1.1.1\n8.8.8.8'
+)
+
 # --- mode detection ---------------------------------------------------------------
 resolve_ipv4() {
   case $1 in
