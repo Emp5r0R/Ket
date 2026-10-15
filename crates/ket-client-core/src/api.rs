@@ -79,8 +79,25 @@ impl ControlEndpoint {
         self
     }
 
+    /// Parses a saved profile: the URL plus the optional pinned node key in
+    /// its persisted Base64URL form.
+    pub fn parse_pinned(value: &str, node_key: Option<&str>) -> Result<Self, ClientError> {
+        let endpoint = Self::parse(value)?;
+        match node_key {
+            None => Ok(endpoint),
+            Some(text) => NodePublicKey::from_base64url(text)
+                .map(|key| endpoint.with_node_key(key))
+                .map_err(ClientError::Invite),
+        }
+    }
+
     pub fn node_key(&self) -> Option<&NodePublicKey> {
         self.node_key.as_ref()
+    }
+
+    /// The pinned node key in its persisted Base64URL form.
+    pub fn node_key_text(&self) -> Option<String> {
+        self.node_key.as_ref().map(NodePublicKey::to_base64url)
     }
 
     pub fn as_str(&self) -> &str {
@@ -385,6 +402,20 @@ mod tests {
         assert!(ControlEndpoint::parse("http://ket.example.com").is_err());
         assert!(ControlEndpoint::parse("https://user:pass@ket.example.com").is_err());
         assert!(ControlEndpoint::parse("https://ket.example.com?token=nope").is_err());
+    }
+
+    #[test]
+    fn saved_profiles_restore_the_pinned_node_key() {
+        let key = ket_invite::NodeSigningKey::from_seed(&[8; 32]).public_key();
+        let text = key.to_base64url();
+        let pinned = ControlEndpoint::parse_pinned("https://ket.example.com", Some(&text)).unwrap();
+        assert_eq!(pinned.node_key(), Some(&key));
+        assert_eq!(pinned.node_key_text(), Some(text));
+        let plain = ControlEndpoint::parse_pinned("https://ket.example.com", None).unwrap();
+        assert_eq!(plain.node_key(), None);
+        let error =
+            ControlEndpoint::parse_pinned("https://ket.example.com", Some("bad key")).unwrap_err();
+        assert_eq!(error.issue().code, "invalid_node_key");
     }
 
     #[test]

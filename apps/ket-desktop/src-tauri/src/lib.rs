@@ -1,8 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use ket_client_core::{
     BrokerConfig, BrokerTransportAdapter, ClientIssue, ClientSnapshot, ControlEndpoint,
-    HttpControlPlane, KetClient, MaintenanceTask, SelectionPolicy,
+    HttpControlPlane, InviteEnrollment, KetClient, MaintenanceTask, SelectionPolicy,
 };
 use ket_core::TransportProtocol;
 use serde::Serialize;
@@ -36,6 +39,17 @@ struct EngineReadiness {
     broker_available: bool,
     mode: &'static str,
     status: &'static str,
+}
+
+/// What the UI needs to enroll from a verified invite. Holds the bearer
+/// access code, so it is only returned to the local webview.
+#[derive(Clone, Serialize)]
+struct InviteDetails {
+    server_url: String,
+    access_code: String,
+    access_expires_at_epoch_seconds: Option<u64>,
+    node_key: String,
+    node_fingerprint: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -131,6 +145,37 @@ async fn desktop_state(
     })
 }
 
+/// Verifies invite text locally (signature, structure, expiry); no network.
+#[tauri::command]
+fn inspect_invite(invite: String) -> Result<InviteDetails, ClientIssue> {
+    invite_details(&invite, unix_now())
+}
+
+fn invite_details(invite: &str, now_epoch_seconds: u64) -> Result<InviteDetails, ClientIssue> {
+    let enrollment = InviteEnrollment::from_text(invite, now_epoch_seconds).map_err(issue)?;
+    let node_key = enrollment
+        .endpoint
+        .node_key_text()
+        .ok_or_else(|| issue(ket_client_core::ClientError::NodeIdentityMismatch))?;
+    Ok(InviteDetails {
+        server_url: enrollment
+            .endpoint
+            .as_str()
+            .trim_end_matches('/')
+            .to_owned(),
+        access_code: enrollment.access_code.expose_secret().to_owned(),
+        access_expires_at_epoch_seconds: enrollment.access_expires_at_epoch_seconds,
+        node_key,
+        node_fingerprint: enrollment.node_fingerprint,
+    })
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 #[tauri::command]
 async fn enroll(
     app: AppHandle,
@@ -138,9 +183,11 @@ async fn enroll(
     server_url: String,
     access_code: String,
     device_name: String,
+    node_key: Option<String>,
 ) -> Result<ClientSnapshot, ClientIssue> {
     let _lifecycle = controller.lifecycle.lock().await;
-    let endpoint = ControlEndpoint::parse(server_url.trim()).map_err(issue)?;
+    let endpoint =
+        ControlEndpoint::parse_pinned(server_url.trim(), node_key.as_deref()).map_err(issue)?;
     let api = Arc::new(HttpControlPlane::new().map_err(issue)?);
     retire_current_session(&controller).await?;
     let adapter = Arc::new(controller.adapter.clone());
@@ -316,6 +363,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             desktop_state,
+            inspect_invite,
             enroll,
             connect,
             stop_tunnel,
@@ -357,6 +405,45 @@ mod command_contract_tests {
                 assert!(!issue.message.contains(invalid));
             }
         }
+    }
+
+    #[test]
+    fn invites_are_verified_locally_into_enrollment_details() {
+        use ket_invite::{
+            ControlLocator, InviteCapsuleV1, NodeSigningKey, SignedInviteCapsule,
+            encode_invite_text,
+        };
+        let key = NodeSigningKey::from_seed(&[0x31; 32]);
+        let capsule = InviteCapsuleV1::new(
+            key.public_key(),
+            vec![ControlLocator::https("ket.example.com", 443).unwrap()],
+            "Abcdefghijklmnopqrstuvwxyz012345",
+            Some(2_000_000_000),
+        )
+        .unwrap();
+        let text = encode_invite_text(&SignedInviteCapsule::sign(capsule, &key).unwrap()).unwrap();
+
+        let details = invite_details(&text, 1_900_000_000).unwrap();
+        assert_eq!(details.server_url, "https://ket.example.com");
+        assert_eq!(details.access_code, "Abcdefghijklmnopqrstuvwxyz012345");
+        assert_eq!(details.access_expires_at_epoch_seconds, Some(2_000_000_000));
+        assert_eq!(details.node_key, key.public_key().to_base64url());
+        assert_eq!(details.node_fingerprint, key.public_key().fingerprint());
+        let pinned =
+            ControlEndpoint::parse_pinned(&details.server_url, Some(&details.node_key)).unwrap();
+        assert_eq!(pinned.node_key(), Some(&key.public_key()));
+
+        assert_eq!(
+            invite_details(&text, 2_000_000_000).err().unwrap().code,
+            "invite_expired"
+        );
+        let tampered = format!("{}A", text.as_str());
+        let rejected = invite_details(&tampered, 1).err().unwrap();
+        assert!(
+            !rejected
+                .message
+                .contains("Abcdefghijklmnopqrstuvwxyz012345")
+        );
     }
 
     #[test]

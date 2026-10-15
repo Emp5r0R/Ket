@@ -2,18 +2,25 @@ package com.ket.android
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,15 +35,29 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.NetworkCheck
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,7 +69,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -56,26 +76,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.Analytics
-import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.Computer
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.NetworkCheck
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.CloudUpload
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -84,22 +84,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import com.ket.android.invite.InviteReader
+import com.ket.android.invite.NodePublicKey
 import kotlinx.coroutines.delay
 
 private val KetDarkInk = Color(0xFF101311)
@@ -290,17 +288,22 @@ internal fun KetApp(
     initialServerUrl: String = "",
     initialAccessCode: String = "",
     initialPreferredProtocol: KetProtocol? = null,
+    initialNodeKey: NodePublicKey? = null,
     initialAccessExpiresAtEpochSeconds: Long? = null,
     onAccessExpired: () -> Unit = {},
     themeMode: KetThemeMode = KetThemeMode.System,
     onThemeModeChange: (KetThemeMode) -> Unit = {},
     onForgetProfile: () -> Unit = {},
     diagnosticReport: String = "Ket Android connection diagnostics\nevents:\nnone\n",
-    onConnect: (String, String, KetProtocol?) -> Unit,
+    inviteReader: InviteReader = appInviteReader,
+    onConnect: (String, String, KetProtocol?, NodePublicKey?) -> Unit,
     onDisconnect: () -> Unit,
 ) {
     var serverUrl by rememberSaveable { mutableStateOf(initialServerUrl) }
     var accessCode by rememberSaveable { mutableStateOf(initialAccessCode) }
+    // The node key is public; it pins every enrollment of an invite-based profile.
+    var nodeKeyText by rememberSaveable { mutableStateOf(initialNodeKey?.base64Url) }
+    var inviteIssue by remember { mutableStateOf<String?>(null) }
     var preferredProtocolWireName by rememberSaveable {
         mutableStateOf(initialPreferredProtocol?.wireName)
     }
@@ -333,6 +336,7 @@ internal fun KetApp(
             if (remaining == 0L) {
                 serverUrl = ""
                 accessCode = ""
+                nodeKeyText = null
                 accessExpiresAtEpochSeconds = null
                 profileSaved = false
                 onAccessExpired()
@@ -378,6 +382,7 @@ internal fun KetApp(
     val forgetProfile = {
         serverUrl = ""
         accessCode = ""
+        nodeKeyText = null
         accessExpiresAtEpochSeconds = null
         accessRemainingSeconds = null
         profileSaved = false
@@ -455,11 +460,30 @@ internal fun KetApp(
                                 EnrollmentControls(
                                     serverUrl = serverUrl,
                                     accessCode = accessCode,
+                                    inviteIssue = inviteIssue,
+                                    acceptsInvite = { text ->
+                                        runCatching { inviteReader.read(text, System.currentTimeMillis() / 1_000) }.isSuccess
+                                    },
                                     onServerUrlChange = { serverUrl = it },
                                     onAccessCodeChange = { value ->
                                         accessCode = value.filter(Char::isLetterOrDigit).take(32)
                                     },
-                                    onEnroll = { onConnect(serverUrl, accessCode, null) },
+                                    onEnrollInvite = { text ->
+                                        runCatching { inviteReader.read(text, System.currentTimeMillis() / 1_000) }
+                                            .onSuccess { target ->
+                                                inviteIssue = null
+                                                serverUrl = target.serverUrl
+                                                accessCode = target.accessCode
+                                                nodeKeyText = target.nodeKey.base64Url
+                                                onConnect(target.serverUrl, target.accessCode, null, target.nodeKey)
+                                            }
+                                            .onFailure { inviteIssue = inviteFailureMessage(it) }
+                                    },
+                                    onEnrollManual = {
+                                        inviteIssue = null
+                                        nodeKeyText = null
+                                        onConnect(serverUrl, accessCode, null, null)
+                                    },
                                 )
                             } else {
                                 ConnectionControlPanel(
@@ -479,7 +503,12 @@ internal fun KetApp(
                                         if (connected || busy) {
                                             onDisconnect()
                                         } else {
-                                            onConnect(serverUrl, accessCode, preferredProtocol)
+                                            onConnect(
+                                                serverUrl,
+                                                accessCode,
+                                                preferredProtocol,
+                                                nodeKeyText?.let(NodePublicKey::fromBase64Url),
+                                            )
                                         }
                                     },
                                 )
@@ -552,62 +581,6 @@ private fun ConnectionRouteHeader(snapshot: TunnelSnapshot, disconnectedVariant:
             phase = snapshot.phase,
             disconnectedLabel = disconnectedSurveillanceLabel(disconnectedVariant),
         )
-    }
-}
-
-@Composable
-private fun EnrollmentControls(
-    serverUrl: String,
-    accessCode: String,
-    onServerUrlChange: (String) -> Unit,
-    onAccessCodeChange: (String) -> Unit,
-    onEnroll: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(7.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(
-                    "NEW CONNECTION",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall,
-                )
-                Text("Add a Ket server", style = MaterialTheme.typography.titleLarge)
-            }
-            OutlinedTextField(
-                value = serverUrl,
-                onValueChange = onServerUrlChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Server URL") },
-                leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = accessCode,
-                onValueChange = onAccessCodeChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Access code") },
-                supportingText = { Text("${accessCode.length}/32") },
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                singleLine = true,
-            )
-            Button(
-                onClick = onEnroll,
-                enabled = serverUrl.isNotBlank() && accessCode.matches(Regex("^[A-Za-z0-9]{32}$")),
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-            ) {
-                Text("Add server")
-            }
-        }
     }
 }
 

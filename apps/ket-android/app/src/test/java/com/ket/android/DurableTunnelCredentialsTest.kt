@@ -272,6 +272,50 @@ class DurableTunnelCredentialsTest {
     }
 
     @Test
+    fun `pinned profiles persist their node key and legacy records stay unpinned`() {
+        val pinned = credentials(testSessionManifest(EXISTING_TOKEN), nodeKey = NODE_KEY)
+        val encoded = DurableTunnelCredentialsCodec.encode(pinned)
+        assertEquals(NODE_KEY.base64Url, JSONObject(String(encoded)).getString("node_public_key"))
+        assertEquals(NODE_KEY, DurableTunnelCredentialsCodec.decode(encoded).profile.nodeKey)
+        assertTrue(pinned.profile.toString().contains(NODE_KEY.fingerprint))
+
+        val legacy = DurableTunnelCredentialsCodec.encode(credentials(null))
+        assertFalse(JSONObject(String(legacy)).has("node_public_key"))
+        assertNull(DurableTunnelCredentialsCodec.decode(legacy).profile.nodeKey)
+
+        val corrupt = JSONObject(String(encoded)).put("node_public_key", "not a key")
+        assertThrows(IllegalArgumentException::class.java) {
+            DurableTunnelCredentialsCodec.decode(corrupt.toString().toByteArray())
+        }
+    }
+
+    @Test
+    fun `always on start re-enrolls a pinned profile with its node key`() {
+        val store = FakeCredentialStore(credentials(null, nodeKey = NODE_KEY))
+        val api = FakeSessionApi(enrollment(FRESH_TOKEN), expectedNodeKey = NODE_KEY)
+
+        val resolved = DurableTunnelSessionResolver(api, store).resolve(null)
+
+        assertEquals(FRESH_TOKEN, resolved.sessionToken)
+        assertEquals(1, api.enrollments)
+        assertEquals(NODE_KEY, store.current?.profile?.nodeKey)
+    }
+
+    @Test
+    fun `a different pinned node never reuses the saved session`() {
+        val store = FakeCredentialStore(credentials(testSessionManifest(EXISTING_TOKEN), nodeKey = NODE_KEY))
+        val otherNode = NodePublicKey.fromBytes(ByteArray(32) { 9 })
+        val api = FakeSessionApi(enrollment(FRESH_TOKEN), expectedNodeKey = otherNode)
+
+        val resolved = DurableTunnelSessionResolver(api, store)
+            .resolveForApp(TunnelEnrollmentProfile(SERVER_URL, ACCESS_CODE, nodeKey = otherNode))
+
+        assertEquals(FRESH_TOKEN, resolved.sessionToken)
+        assertEquals(0, api.renewals)
+        assertEquals(1, api.enrollments)
+    }
+
+    @Test
     fun `always on start creates a session when only enrollment is stored`() {
         val store = FakeCredentialStore(credentials(null))
         val api = FakeSessionApi(enrollment(FRESH_TOKEN))
@@ -365,13 +409,14 @@ class DurableTunnelCredentialsTest {
         private val enrollment: EnrollmentResult,
         private val renewalError: Exception? = null,
         private val renewedExpiry: Long = 4_000_000_000,
+        private val expectedNodeKey: NodePublicKey? = null,
     ) : TunnelSessionApi {
         var enrollments = 0
         var renewals = 0
         val releasedTokens = mutableListOf<String>()
 
         override fun enroll(serverUrl: String, accessCode: String, clientName: String, nodeKey: NodePublicKey?): EnrollmentResult {
-            assertEquals(null, nodeKey)
+            assertEquals(expectedNodeKey, nodeKey)
             assertEquals(SERVER_URL, serverUrl)
             assertEquals(ACCESS_CODE, accessCode)
             assertEquals("Ket Android", clientName)
@@ -395,9 +440,10 @@ class DurableTunnelCredentialsTest {
     private fun credentials(
         manifest: String?,
         preferredProtocol: KetProtocol? = null,
+        nodeKey: NodePublicKey? = null,
     ): DurableTunnelCredentials =
         DurableTunnelCredentials(
-            TunnelEnrollmentProfile(SERVER_URL, ACCESS_CODE, preferredProtocol),
+            TunnelEnrollmentProfile(SERVER_URL, ACCESS_CODE, preferredProtocol, nodeKey),
             manifest,
         )
 
@@ -406,6 +452,7 @@ class DurableTunnelCredentialsTest {
 
     companion object {
         private const val SERVER_URL = "https://ket.example.test"
+        private val NODE_KEY = NodePublicKey.fromBytes(ByteArray(32) { 7 })
         private val ACCESS_CODE = "A".repeat(32)
         private val OLD_TOKEN = testSessionToken('O')
         private val SEALED_TOKEN = testSessionToken('S')

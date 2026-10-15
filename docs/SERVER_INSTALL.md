@@ -127,13 +127,22 @@ If Certbot fails, verify TCP `80`, DNS propagation, NAT, provider ingress, and a
 
 ## Client handoff
 
-After the readiness check, the installer prints the server URL, one plaintext access code, and the same grant as a signed invite (`ket:invite:...`). Store them immediately; only the code's protected verifier remains on the server. The installer also generates the node signing key (`KET_NODE_SIGNING_KEY` in `.env`) that signs invites; never rotate or share it. Download the matching package from the [stable v1.0.1 release](https://github.com/Emp5r0R/Ket/releases/tag/v1.0.1):
+After the readiness check, the installer prints the first invite (`ket:invite:...`) as text and as a terminal QR code, plus the same grant as a server URL and access code for older apps. Store it immediately; only the code's protected verifier remains on the server. The installer also generates the node signing key (`KET_NODE_SIGNING_KEY` in `.env`) that signs invites; never rotate or share it. Download the matching package from the [stable v1.0.1 release](https://github.com/Emp5r0R/Ket/releases/tag/v1.0.1):
 
 - Linux Debian/Ubuntu: `Ket_1.0.1_amd64.deb`
 - Windows x64: `Ket_1.0.1_x64-setup.exe`
 - Android: `Ket_1.0.1_android-universal.apk`
 
-Verify `SHA256SUMS.asc` and the package signature as described in [release signing](RELEASE_SIGNING.md), install the client, and enter the printed server URL and access code. The client keeps the profile until it expires or the user chooses Forget.
+Verify `SHA256SUMS.asc` and the package signature as described in [release signing](RELEASE_SIGNING.md), install the client, and paste or scan the invite (Android can scan the terminal QR code or a screenshot of it). The URL and access code remain available under **Advanced**. The client keeps the profile, including the node key it pins, until it expires or the user chooses Forget.
+
+Create more invites at any time on the server:
+
+```bash
+cd /opt/ket
+sudo ./packaging/server/create-invite.sh --label "Family" --devices 3 --days 30
+```
+
+`--devices` limits simultaneous connections for that invite and `--days` (or `--minutes`) sets its lifetime. Each run creates a new, independently revocable grant.
 
 ## Installed layout
 

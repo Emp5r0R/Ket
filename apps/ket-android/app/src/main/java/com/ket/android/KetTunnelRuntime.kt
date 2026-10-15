@@ -3,6 +3,7 @@ package com.ket.android
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.ket.android.invite.NodePublicKey
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
@@ -115,6 +116,7 @@ object KetTunnelController {
         serverUrl: String,
         accessCode: String,
         preferredProtocol: KetProtocol? = null,
+        nodeKey: NodePublicKey? = null,
     ) {
         val attempt = synchronized(lifecycleLock) {
             generation.incrementAndGet().also {
@@ -133,6 +135,7 @@ object KetTunnelController {
                     KetControlApi.normalizeBaseUrl(serverUrl),
                     KetControlApi.validateAccessCode(accessCode),
                     preferredProtocol,
+                    nodeKey,
                 )
                 val store = AndroidTunnelCredentialStore.get(appContext)
                 val preparedSpec = DurableTunnelSessionResolver(KetControlApi, store).resolveForApp(profile)

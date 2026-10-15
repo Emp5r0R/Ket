@@ -149,6 +149,18 @@ valid replacement. Possession of an invite grants the access code it contains.
   node key that is 32 nonzero bytes but not a valid curve point is reported as
   `invalid_node_key` by Rust and `invalid_invite_signature` by Android; both reject it.
 
+## Client experience
+
+- Desktop: the Add server panel takes an invite (masked, whitespace-stripped).
+  The native `inspect_invite` command verifies it without network access; the
+  saved profile keeps the node key (`ket.node-key`) for every restore.
+- Android: paste, camera scan (ZXing + CameraX, same as Abyssal), or open a QR
+  image. Text is verified before it fills the field and again on submit. The
+  encrypted profile stores `node_public_key`.
+- Server: `packaging/server/create-invite.sh` issues invites with a terminal QR
+  code; the installer uses it for the first invite.
+- URL + access code entry stays under Advanced and never pins a node key.
+
 ## Conformance vectors
 
 Fixed, non-production vectors live in

@@ -664,6 +664,29 @@ input:disabled {
   background: var(--disabled);
 }
 
+.text-button {
+  align-self: center;
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.text-button:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.text-button:disabled {
+  color: var(--disabled);
+  cursor: default;
+}
+
 .inline-issue,
 .engine-warning {
   padding: 10px 12px;

@@ -93,6 +93,17 @@ export interface EnrollmentInput {
   serverUrl: string;
   accessCode: string;
   deviceName: string;
+  /** Node key pinned from an invite (unpadded Base64URL); null for URL + code entry. */
+  nodeKey: string | null;
+}
+
+/** A locally verified invite, as returned by the native `inspect_invite` command. */
+export interface InviteDetails {
+  server_url: string;
+  access_code: string;
+  access_expires_at_epoch_seconds: number | null;
+  node_key: string;
+  node_fingerprint: string;
 }
 
 export interface TrafficPoint {

@@ -78,6 +78,25 @@ impl NodePublicKey {
         &self.0
     }
 
+    /// Unpadded Base64URL, the form clients persist with a saved profile.
+    pub fn to_base64url(&self) -> String {
+        URL_SAFE_NO_PAD.encode(self.0)
+    }
+
+    pub fn from_base64url(value: &str) -> Result<Self, InviteError> {
+        let decoded = URL_SAFE_NO_PAD
+            .decode(value)
+            .map_err(|_| InviteError::InvalidNodeKey)?;
+        let bytes: [u8; 32] = decoded
+            .as_slice()
+            .try_into()
+            .map_err(|_| InviteError::InvalidNodeKey)?;
+        if URL_SAFE_NO_PAD.encode(bytes) != value {
+            return Err(InviteError::InvalidNodeKey);
+        }
+        Self::from_bytes(bytes)
+    }
+
     /// A short, human-comparable identity such as `1A2B:3C4D:...` (16 bytes).
     pub fn fingerprint(&self) -> String {
         let mut digest = Sha256::new();
@@ -157,6 +176,26 @@ mod tests {
         let debug = format!("{key:?}");
         assert!(debug.contains(&fingerprint));
         assert!(!debug.contains(&URL_SAFE_NO_PAD.encode([9_u8; 32])));
+    }
+
+    #[test]
+    fn public_key_text_round_trips_and_rejects_noncanonical_forms() {
+        let key = NodeSigningKey::from_seed(&[5; 32]).public_key();
+        let text = key.to_base64url();
+        assert_eq!(text.len(), 43);
+        assert_eq!(NodePublicKey::from_base64url(&text), Ok(key));
+        for invalid in [
+            format!("{text}="),
+            text[1..].to_owned(),
+            URL_SAFE_NO_PAD.encode([0_u8; 32]),
+            "not base64!".to_owned(),
+        ] {
+            assert_eq!(
+                NodePublicKey::from_base64url(&invalid),
+                Err(InviteError::InvalidNodeKey),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]

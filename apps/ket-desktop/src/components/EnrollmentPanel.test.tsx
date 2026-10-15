@@ -15,9 +15,11 @@ describe("server enrollment", () => {
         initialAccessCode=""
         accessExpiresAtEpochSeconds={null}
         initialDeviceName="Workstation"
+        initialMode="manual"
         busy={false}
         issue={null}
         onEnroll={onEnroll}
+        onEnrollInvite={vi.fn(async () => undefined)}
       />,
     );
     const input = screen.getByLabelText("Access code") as HTMLInputElement;
@@ -37,6 +39,7 @@ describe("server enrollment", () => {
       serverUrl: "https://ket.example.test",
       deviceName: "Workstation",
       accessCode: "A".repeat(32),
+      nodeKey: null,
     });
     expect(input).toHaveValue("");
   });
@@ -48,9 +51,11 @@ describe("server enrollment", () => {
         initialAccessCode={"A".repeat(31)}
         accessExpiresAtEpochSeconds={null}
         initialDeviceName="Ket desktop"
+        initialMode="manual"
         busy={false}
         issue={null}
         onEnroll={vi.fn(async () => undefined)}
+        onEnrollInvite={vi.fn(async () => undefined)}
       />,
     );
     expect(screen.getByRole("button", { name: "Add server" })).toBeDisabled();
@@ -61,9 +66,11 @@ describe("server enrollment", () => {
         initialAccessCode={"A".repeat(32)}
         accessExpiresAtEpochSeconds={null}
         initialDeviceName="Ket desktop"
+        initialMode="manual"
         busy
         issue={null}
         onEnroll={vi.fn(async () => undefined)}
+        onEnrollInvite={vi.fn(async () => undefined)}
       />,
     );
     expect(screen.getByLabelText("Server URL")).toBeDisabled();
@@ -85,9 +92,64 @@ describe("server enrollment", () => {
         busy={false}
         issue={{ code: "grant_expired", message: "Access code expired", retryable: false }}
         onEnroll={vi.fn(async () => undefined)}
+        onEnrollInvite={vi.fn(async () => undefined)}
       />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("1h 1m access left");
     expect(screen.getByRole("alert")).toHaveTextContent("Access code expired");
+  });
+
+  it("defaults to a masked invite and hands it over once, then clears it", async () => {
+    const onEnroll = vi.fn(async () => undefined);
+    const onEnrollInvite = vi.fn(async () => undefined);
+    render(
+      <EnrollmentPanel
+        initialServerUrl=""
+        initialAccessCode=""
+        accessExpiresAtEpochSeconds={null}
+        initialDeviceName="Laptop"
+        busy={false}
+        issue={null}
+        onEnroll={onEnroll}
+        onEnrollInvite={onEnrollInvite}
+      />,
+    );
+    expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
+    const invite = screen.getByLabelText("Invite") as HTMLInputElement;
+    expect(invite).toHaveAttribute("type", "password");
+    expect(screen.getByRole("button", { name: "Add server" })).toBeDisabled();
+
+    const text = `ket:invite:${"Ab_-".repeat(40)}`;
+    fireEvent.change(invite, { target: { value: ` ${text.slice(0, 50)}\n${text.slice(50)} ` } });
+    expect(invite).toHaveValue(text);
+    fireEvent.click(screen.getByRole("button", { name: "Show invite" }));
+    expect(invite).toHaveAttribute("type", "text");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add server" }));
+    await waitFor(() => expect(onEnrollInvite).toHaveBeenCalledOnce());
+    expect(onEnrollInvite).toHaveBeenCalledWith(text, "Laptop");
+    expect(onEnroll).not.toHaveBeenCalled();
+    expect(invite).toHaveValue("");
+  });
+
+  it("switches between invite and advanced URL entry", () => {
+    render(
+      <EnrollmentPanel
+        initialServerUrl=""
+        initialAccessCode=""
+        accessExpiresAtEpochSeconds={null}
+        initialDeviceName="Laptop"
+        busy={false}
+        issue={null}
+        onEnroll={vi.fn(async () => undefined)}
+        onEnrollInvite={vi.fn(async () => undefined)}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Advanced: use a server URL and access code" }));
+    expect(screen.getByLabelText("Server URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Access code")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Invite")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use an invite instead" }));
+    expect(screen.getByLabelText("Invite")).toBeInTheDocument();
   });
 });

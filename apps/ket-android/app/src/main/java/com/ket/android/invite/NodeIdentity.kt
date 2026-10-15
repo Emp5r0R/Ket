@@ -38,6 +38,9 @@ internal object Base64Url {
 class NodePublicKey private constructor(private val bytes: ByteArray) {
     val encoded: ByteArray get() = bytes.copyOf()
 
+    /** Unpadded Base64URL, the form persisted with a saved profile. */
+    val base64Url: String get() = Base64Url.encode(bytes)
+
     /** A short, human-comparable identity such as `1A2B:3C4D:...` (16 bytes). */
     val fingerprint: String by lazy {
         val digest = MessageDigest.getInstance("SHA-256").run {
@@ -70,6 +73,15 @@ class NodePublicKey private constructor(private val bytes: ByteArray) {
         fun fromBytes(value: ByteArray): NodePublicKey {
             ensure(value.size == PUBLIC_KEY_BYTES && value.any { it != 0.toByte() }, InviteFailure.InvalidNodeKey)
             return NodePublicKey(value.copyOf())
+        }
+
+        fun fromBase64Url(value: String): NodePublicKey {
+            val decoded = try {
+                Base64Url.decode(value)
+            } catch (_: InviteException) {
+                fail(InviteFailure.InvalidNodeKey)
+            }
+            return fromBytes(decoded)
         }
     }
 }

@@ -19,12 +19,14 @@ internal class TunnelEnrollmentProfile(
     val serverUrl: String,
     val accessCode: String,
     val preferredProtocol: KetProtocol? = null,
+    /** Pinned from an invite: every enrollment for this profile must be signed by this node. */
+    val nodeKey: NodePublicKey? = null,
 ) {
     fun matches(other: TunnelEnrollmentProfile): Boolean =
-        serverUrl == other.serverUrl && accessCode == other.accessCode
+        serverUrl == other.serverUrl && accessCode == other.accessCode && nodeKey == other.nodeKey
 
     override fun toString(): String =
-        "TunnelEnrollmentProfile(serverUrl=$serverUrl, accessCode=[REDACTED])"
+        "TunnelEnrollmentProfile(serverUrl=$serverUrl, accessCode=[REDACTED], node=${nodeKey?.fingerprint})"
 }
 
 internal class DurableTunnelCredentials(
@@ -95,6 +97,7 @@ internal object DurableTunnelCredentialsCodec {
         "server_url",
         "access_code",
         "preferred_protocol",
+        "node_public_key",
         "session_manifest",
         "access_expires_at_epoch_seconds",
         "session_expires_at_epoch_seconds",
@@ -106,6 +109,7 @@ internal object DurableTunnelCredentialsCodec {
             .put("server_url", credentials.profile.serverUrl)
             .put("access_code", credentials.profile.accessCode)
         credentials.profile.preferredProtocol?.let { root.put("preferred_protocol", it.wireName) }
+        credentials.profile.nodeKey?.let { root.put("node_public_key", it.base64Url) }
         credentials.sessionManifest?.let { root.put("session_manifest", JSONObject(it)) }
         credentials.accessExpiresAtEpochSeconds?.let { root.put("access_expires_at_epoch_seconds", it) }
         credentials.sessionExpiresAtEpochSeconds?.let { root.put("session_expires_at_epoch_seconds", it) }
@@ -129,6 +133,9 @@ internal object DurableTunnelCredentialsCodec {
             preferredProtocol = root.optString("preferred_protocol")
                 .takeIf(String::isNotEmpty)
                 ?.let { KetProtocol.fromWireName(it) ?: throw IllegalArgumentException("Saved protocol is unsupported") },
+            nodeKey = root.optString("node_public_key")
+                .takeIf(String::isNotEmpty)
+                ?.let(NodePublicKey::fromBase64Url),
         )
         val manifest = root.optJSONObject("session_manifest")?.toString()
         val enrollment = manifest?.let(KetControlApi::parseEnrollment)
@@ -369,7 +376,7 @@ internal class DurableTunnelSessionResolver(
     }
 
     private fun enroll(profile: TunnelEnrollmentProfile): TunnelLaunchSpec {
-        val result = api.enroll(profile.serverUrl, profile.accessCode, CLIENT_NAME)
+        val result = api.enroll(profile.serverUrl, profile.accessCode, CLIENT_NAME, profile.nodeKey)
         val next = DurableTunnelCredentials(
             profile,
             result.manifestJson,

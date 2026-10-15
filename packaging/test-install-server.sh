@@ -123,5 +123,6 @@ for _ in 1 2 3 4 5 6 7 8; do
 done
 # shellcheck disable=SC2016 # literal installer text, not an expansion
 grep -Fq 'KET_NODE_SIGNING_KEY=$(random_base64url_32)' "$installer"
-grep -Fq "first_invite=\$(jq -er '.invite'" "$installer"
+grep -Fq './packaging/server/create-invite.sh' "$installer"
+grep -Eq 'apt-get install -y .*qrencode' "$installer"
 printf 'Installer node-key generation tests passed.\n'

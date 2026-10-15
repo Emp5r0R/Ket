@@ -345,7 +345,7 @@ case "$arch" in amd64|arm64) ;; *) fail 'only amd64 and arm64 servers are suppor
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates certbot curl git gnupg iproute2 jq openssl wireguard-tools
+apt-get install -y ca-certificates certbot curl git gnupg iproute2 jq openssl qrencode wireguard-tools
 
 if [[ -z $public_ip ]]; then
   detect_public_ipv4 || fail 'could not detect the VPS public IPv4 address; rerun with --public-ip'
@@ -605,36 +605,17 @@ for _ in $(seq 1 60); do
 done
 $ready || { ./packaging/server/compose.sh ps; fail 'Ket did not become ready within 120 seconds'; }
 
-grant_file=$(mktemp /run/ket-first-grant.XXXXXX)
-trap 'rm -f "$grant_file"' EXIT
-jq -n \
-  --argjson max_connections "$first_code_max_connections" \
-  --argjson valid_for_minutes "$first_code_valid_minutes" \
-  '{label:"First devices",max_connections:$max_connections,valid_for_minutes:$valid_for_minutes}' \
-  | curl --fail --silent --show-error \
-      --request POST \
-      --header "Authorization: Bearer $KET_ADMIN_TOKEN" \
-      --header 'Content-Type: application/json' \
-      --data-binary @- \
-      http://127.0.0.1:8787/v1/admin/access-grants \
-  > "$grant_file"
-first_code=$(jq -er '.access_code' "$grant_file")
-first_invite=$(jq -er '.invite' "$grant_file")
-first_code_expires_at=$(jq -er '.expires_at_epoch_seconds' "$grant_file")
-rm -f "$grant_file"
-trap - EXIT
-
 printf '\nKet is ready at https://%s\n' "$domain"
-printf 'First 32-character access code: %s\n' "$first_code"
-printf 'First access code concurrent-connection limit: %s\n' "$first_code_max_connections"
-printf 'First access code expires at Unix time: %s (%s minutes after creation)\n' \
-  "$first_code_expires_at" "$first_code_valid_minutes"
-printf 'First invite (server URL + access code in one signed string):\n%s\n' "$first_invite"
-printf 'Store the code and invite now; the server never stores their plaintext value.\n'
+KET_ADMIN_TOKEN=$KET_ADMIN_TOKEN ./packaging/server/create-invite.sh \
+  --label 'First devices' \
+  --devices "$first_code_max_connections" \
+  --minutes "$first_code_valid_minutes" \
+  || fail 'Ket is running, but the first invite could not be created; run ./packaging/server/create-invite.sh'
+printf 'Save the invite now; the server never stores it.\n'
 printf '\nClient setup:\n'
-printf '  1. Download Linux, Windows, or Android client: %s\n' "$CLIENT_RELEASE_URL"
-printf '  2. Paste the invite, or enter Server URL https://%s and the access code.\n' "$domain"
-printf '  3. Connect.\n'
+printf '  1. Download the Linux, Windows, or Android app: %s\n' "$CLIENT_RELEASE_URL"
+printf '  2. Paste or scan the invite, then connect.\n'
+printf '  More invites later: cd %s && sudo ./packaging/server/create-invite.sh --devices 2 --days 30\n' "$install_dir"
 printf '\nRequired cloud ingress (verify it remains open):\n'
 print_ingress
 printf 'Manage the stack with: cd %s && ./packaging/server/compose.sh ps\n' "$install_dir"

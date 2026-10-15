@@ -112,6 +112,7 @@ describe("Ket desktop shell", () => {
     localStorage.setItem("ket.server-url", "https://revoked.example.test");
     localStorage.setItem("ket.access-code", "T".repeat(32));
     localStorage.setItem("ket.access-expires-at", expiry.toString());
+    localStorage.setItem("ket.node-key", `${"K".repeat(42)}E`);
     const { bridge } = await import("./lib/bridge");
     vi.spyOn(bridge, "enroll").mockRejectedValue({
       code: "unauthorized",
@@ -122,11 +123,12 @@ describe("Ket desktop shell", () => {
 
     render(<App />);
 
-    expect(await screen.findByLabelText("Server URL")).toHaveValue("");
-    expect(screen.getByLabelText("Access code")).toHaveValue("");
+    expect(await screen.findByLabelText("Invite")).toHaveValue("");
+    expect(screen.queryByLabelText("Access code")).not.toBeInTheDocument();
     expect(localStorage.getItem("ket.server-url")).toBeNull();
     expect(localStorage.getItem("ket.access-code")).toBeNull();
     expect(localStorage.getItem("ket.access-expires-at")).toBeNull();
+    expect(localStorage.getItem("ket.node-key")).toBeNull();
   });
 
   it("rejects malformed persisted access codes before attempting restore", async () => {
@@ -153,6 +155,7 @@ describe("Ket desktop shell", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Choose your node" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced: use a server URL and access code" }));
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://de-fra.ket.example" },
     });
@@ -174,15 +177,76 @@ describe("Ket desktop shell", () => {
     localStorage.setItem("ket.server-url", "https://expired.example.test");
     localStorage.setItem("ket.access-code", "Z".repeat(32));
     localStorage.setItem("ket.access-expires-at", "1");
+    localStorage.setItem("ket.node-key", `${"K".repeat(42)}E`);
 
     const { default: App } = await import("./App");
     render(<App />);
 
-    expect(await screen.findByLabelText("Server URL")).toHaveValue("");
-    expect(screen.getByLabelText("Access code")).toHaveValue("");
+    expect(await screen.findByLabelText("Invite")).toHaveValue("");
+    expect(localStorage.getItem("ket.node-key")).toBeNull();
     expect(localStorage.getItem("ket.server-url")).toBeNull();
     expect(localStorage.getItem("ket.access-code")).toBeNull();
     expect(localStorage.getItem("ket.access-expires-at")).toBeNull();
+  });
+
+  it("enrolls from a verified invite and pins its node key", async () => {
+    const { bridge } = await import("./lib/bridge");
+    const enroll = vi.spyOn(bridge, "enroll");
+    const { default: App } = await import("./App");
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Invite"), {
+      target: { value: `ket:invite:${"Q".repeat(40)}` },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add server" }));
+
+    expect(await screen.findByRole("heading", { name: "Frankfurt, Germany" })).toBeInTheDocument();
+    expect(enroll).toHaveBeenCalledWith({
+      serverUrl: "https://de-fra.ket.example",
+      accessCode: "D".repeat(32),
+      deviceName: "Ket desktop",
+      nodeKey: `${"A".repeat(42)}E`,
+    });
+    expect(localStorage.getItem("ket.server-url")).toBe("https://de-fra.ket.example");
+    expect(localStorage.getItem("ket.access-code")).toBe("D".repeat(32));
+    expect(localStorage.getItem("ket.node-key")).toBe(`${"A".repeat(42)}E`);
+  });
+
+  it("rejects an invalid invite without contacting a server", async () => {
+    const { bridge } = await import("./lib/bridge");
+    const enroll = vi.spyOn(bridge, "enroll");
+    const { default: App } = await import("./App");
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Invite"), {
+      target: { value: `not-an-invite-${"Q".repeat(40)}` },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add server" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("invalid invite");
+    expect(enroll).not.toHaveBeenCalled();
+    expect(localStorage.getItem("ket.node-key")).toBeNull();
+  });
+
+  it("restores a pinned profile with its node key", async () => {
+    const expiry = Math.floor(Date.now() / 1_000) + 3_600;
+    const nodeKey = `${"N".repeat(42)}E`;
+    localStorage.setItem("ket.server-url", "https://pinned.example.test");
+    localStorage.setItem("ket.access-code", "S".repeat(32));
+    localStorage.setItem("ket.access-expires-at", expiry.toString());
+    localStorage.setItem("ket.node-key", nodeKey);
+    const { bridge } = await import("./lib/bridge");
+    const enroll = vi.spyOn(bridge, "enroll");
+    const { default: App } = await import("./App");
+    render(<App />);
+
+    await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
+    expect(enroll).toHaveBeenCalledWith({
+      serverUrl: "https://pinned.example.test",
+      accessCode: "S".repeat(32),
+      deviceName: "Ket desktop",
+      nodeKey,
+    });
   });
 
   it("restores an unexpired profile without asking for the server again", async () => {
@@ -334,7 +398,10 @@ describe("Ket desktop shell", () => {
     const { default: App } = await import("./App");
     render(<App />);
 
-    fireEvent.change(await screen.findByLabelText("Server URL"), {
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Advanced: use a server URL and access code" }),
+    );
+    fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://de-fra.ket.example" },
     });
     fireEvent.change(screen.getByLabelText("Access code"), {

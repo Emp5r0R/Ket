@@ -6,6 +6,7 @@ import type {
   ClientSnapshot,
   DesktopState,
   EnrollmentInput,
+  InviteDetails,
   TrafficPoint,
 } from "./types";
 import { ConnectionPanel } from "./components/ConnectionPanel";
@@ -38,6 +39,7 @@ const ACCESS_CODE_KEY = "ket.access-code";
 const DEVICE_KEY = "ket.device-name";
 const PROTOCOL_KEY = "ket.protocol-preference";
 const ACCESS_EXPIRY_KEY = "ket.access-expires-at";
+const NODE_KEY_KEY = "ket.node-key";
 const THEME_KEY = "ket.theme";
 const RESTORE_RETRY_INITIAL_DELAY_MS = 2_000;
 const RESTORE_RETRY_MAX_DELAY_MS = 30_000;
@@ -53,12 +55,21 @@ interface SavedEnrollment {
   serverUrl: string;
   accessCode: string;
   accessExpiresAt: number | null;
+  /** Pinned from an invite; restores must stay verified against this node. */
+  nodeKey: string | null;
 }
 
 function clearSavedEnrollment() {
   localStorage.removeItem(SERVER_KEY);
   localStorage.removeItem(ACCESS_CODE_KEY);
   localStorage.removeItem(ACCESS_EXPIRY_KEY);
+  localStorage.removeItem(NODE_KEY_KEY);
+}
+
+function clearSavedAccess() {
+  localStorage.removeItem(ACCESS_CODE_KEY);
+  localStorage.removeItem(ACCESS_EXPIRY_KEY);
+  localStorage.removeItem(NODE_KEY_KEY);
 }
 
 function loadSavedEnrollment(): SavedEnrollment {
@@ -66,23 +77,22 @@ function loadSavedEnrollment(): SavedEnrollment {
   const expiresAt = savedExpiry === null ? null : Number(savedExpiry);
   if (expiresAt !== null && Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now() / 1000) {
     clearSavedEnrollment();
-    return { serverUrl: "", accessCode: "", accessExpiresAt: null };
+    return { serverUrl: "", accessCode: "", accessExpiresAt: null, nodeKey: null };
   }
   const validExpiry = expiresAt !== null && Number.isFinite(expiresAt) && expiresAt > 0
     ? expiresAt
     : null;
   if (validExpiry === null) {
-    localStorage.removeItem(ACCESS_CODE_KEY);
-    localStorage.removeItem(ACCESS_EXPIRY_KEY);
+    clearSavedAccess();
   }
   const serverUrl = localStorage.getItem(SERVER_KEY) ?? "";
   const accessCode = validExpiry === null ? "" : (localStorage.getItem(ACCESS_CODE_KEY) ?? "");
   if (!savedProfileCanRestore(serverUrl, accessCode, validExpiry)) {
-    localStorage.removeItem(ACCESS_CODE_KEY);
-    localStorage.removeItem(ACCESS_EXPIRY_KEY);
-    return { serverUrl, accessCode: "", accessExpiresAt: null };
+    clearSavedAccess();
+    return { serverUrl, accessCode: "", accessExpiresAt: null, nodeKey: null };
   }
-  return { serverUrl, accessCode, accessExpiresAt: validExpiry };
+  const nodeKey = localStorage.getItem(NODE_KEY_KEY);
+  return { serverUrl, accessCode, accessExpiresAt: validExpiry, nodeKey };
 }
 
 export function shouldRetrySavedEnrollment(issue: ClientIssue): boolean {
@@ -158,6 +168,7 @@ export default function App() {
   const [serverUrl, setServerUrl] = useState(initialEnrollment.serverUrl);
   const [savedAccessCode, setSavedAccessCode] = useState(initialEnrollment.accessCode);
   const [accessExpiresAt, setAccessExpiresAt] = useState(initialEnrollment.accessExpiresAt);
+  const [savedNodeKey, setSavedNodeKey] = useState(initialEnrollment.nodeKey);
   const [deviceName, setDeviceName] = useState(
     () => localStorage.getItem(DEVICE_KEY) ?? "Ket desktop",
   );
@@ -184,6 +195,14 @@ export default function App() {
 
   const recordDiagnostic = (diagnostic: ConnectionDiagnostic) => {
     setDiagnostics((current) => appendDiagnostic(current, diagnostic));
+  };
+
+  const resetSavedProfile = () => {
+    clearSavedEnrollment();
+    setServerUrl("");
+    setSavedAccessCode("");
+    setAccessExpiresAt(null);
+    setSavedNodeKey(null);
   };
 
   const applySnapshot = (snapshot: ClientSnapshot) => {
@@ -272,10 +291,7 @@ export default function App() {
     setLocalIssue(issue);
     if (savedEnrollmentIsTerminal(issue)) {
       connectionRequestedRef.current = false;
-      clearSavedEnrollment();
-      setServerUrl("");
-      setSavedAccessCode("");
-      setAccessExpiresAt(null);
+      resetSavedProfile();
     }
     return issue;
   };
@@ -354,6 +370,7 @@ export default function App() {
           serverUrl,
           accessCode: savedAccessCode,
           deviceName,
+          nodeKey: savedNodeKey,
         });
         if (active) {
           applyRestoredEnrollment(snapshot);
@@ -388,6 +405,7 @@ export default function App() {
     loading,
     restoreGeneration,
     savedAccessCode,
+    savedNodeKey,
     serverUrl,
     state.configured,
   ]);
@@ -440,10 +458,7 @@ export default function App() {
   useEffect(() => {
     if (accessExpiresAt === null) return;
     const expire = () => {
-      clearSavedEnrollment();
-      setServerUrl("");
-      setSavedAccessCode("");
-      setAccessExpiresAt(null);
+      resetSavedProfile();
       setState((current) => ({ ...current, configured: false, snapshot: emptySnapshot }));
       void bridge.forget().catch(() => undefined);
     };
@@ -541,16 +556,39 @@ export default function App() {
           ACCESS_EXPIRY_KEY,
           snapshot.access_expires_at_epoch_seconds.toString(),
         );
+        if (input.nodeKey === null) {
+          localStorage.removeItem(NODE_KEY_KEY);
+        } else {
+          localStorage.setItem(NODE_KEY_KEY, input.nodeKey);
+        }
         setSavedAccessCode(input.accessCode);
         setAccessExpiresAt(snapshot.access_expires_at_epoch_seconds);
+        setSavedNodeKey(input.nodeKey);
       } else {
-        localStorage.removeItem(ACCESS_CODE_KEY);
-        localStorage.removeItem(ACCESS_EXPIRY_KEY);
+        clearSavedAccess();
         setSavedAccessCode("");
         setAccessExpiresAt(null);
+        setSavedNodeKey(null);
       }
       setState((current) => ({ ...current, configured: true }));
       return snapshot;
+    });
+  };
+
+  /** Verifies the invite locally, then enrolls pinned to its node. */
+  const enrollInvite = async (invite: string, inviteDeviceName: string) => {
+    let details: InviteDetails;
+    try {
+      details = await bridge.inspectInvite(invite);
+    } catch (error) {
+      setLocalIssue(normalizeIssue(error));
+      return;
+    }
+    await enroll({
+      serverUrl: details.server_url,
+      accessCode: details.access_code,
+      deviceName: inviteDeviceName,
+      nodeKey: details.node_key,
     });
   };
 
@@ -559,10 +597,7 @@ export default function App() {
     await run("forget", async () => {
       const snapshot = await bridge.forget();
       setState((current) => ({ ...current, configured: false }));
-      clearSavedEnrollment();
-      setServerUrl("");
-      setSavedAccessCode("");
-      setAccessExpiresAt(null);
+      resetSavedProfile();
       setHistory([]);
       setView("connection");
       return snapshot;
@@ -571,10 +606,7 @@ export default function App() {
 
   const forgetBlockedStartupProfile = async () => {
     connectionRequestedRef.current = false;
-    clearSavedEnrollment();
-    setServerUrl("");
-    setSavedAccessCode("");
-    setAccessExpiresAt(null);
+    resetSavedProfile();
     startupProfilePendingRef.current = false;
     setStartupStage("ready");
     await bridge.forget().catch(() => undefined);
@@ -725,9 +757,11 @@ export default function App() {
                   initialAccessCode={savedAccessCode}
                   accessExpiresAtEpochSeconds={accessExpiresAt}
                   initialDeviceName={deviceName}
+                  initialMode={serverUrl !== "" && savedNodeKey === null ? "manual" : "invite"}
                   busy={busy}
                   issue={localIssue}
                   onEnroll={enroll}
+                  onEnrollInvite={enrollInvite}
                 />
               )}
             </div>

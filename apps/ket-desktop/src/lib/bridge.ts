@@ -5,6 +5,7 @@ import type {
   ClientSnapshot,
   DesktopState,
   EnrollmentInput,
+  InviteDetails,
 } from "../types";
 import type { ProtocolId } from "./protocols";
 
@@ -12,6 +13,7 @@ type SnapshotListener = (snapshot: ClientSnapshot) => void;
 
 export interface DesktopBridge {
   state(): Promise<DesktopState>;
+  inspectInvite(invite: string): Promise<InviteDetails>;
   enroll(input: EnrollmentInput): Promise<ClientSnapshot>;
   connect(preferredProtocol: ProtocolId | null): Promise<ClientSnapshot>;
   stop(): Promise<ClientSnapshot>;
@@ -22,11 +24,13 @@ export interface DesktopBridge {
 
 const tauriBridge: DesktopBridge = {
   state: () => invoke<DesktopState>("desktop_state"),
+  inspectInvite: (invite) => invoke<InviteDetails>("inspect_invite", { invite }),
   enroll: (input) =>
     invoke<ClientSnapshot>("enroll", {
       serverUrl: input.serverUrl,
       accessCode: input.accessCode,
       deviceName: input.deviceName,
+      nodeKey: input.nodeKey,
     }),
   connect: (preferredProtocol) => invoke<ClientSnapshot>("connect", { preferredProtocol }),
   stop: () => invoke<ClientSnapshot>("stop_tunnel"),
@@ -146,6 +150,22 @@ function mockBridge(): DesktopBridge {
       platform: "linux",
       version: "1.0.1",
     }),
+    inspectInvite: async (invite) => {
+      if (!invite.startsWith("ket:invite:")) {
+        throw {
+          code: "invalid_invite",
+          message: "invalid invite",
+          retryable: false,
+        } satisfies ClientIssue;
+      }
+      return {
+        server_url: "https://de-fra.ket.example",
+        access_code: "D".repeat(32),
+        access_expires_at_epoch_seconds: now() + 86_400,
+        node_key: "A".repeat(42) + "E",
+        node_fingerprint: "DEMO:0000:0000:0000:0000:0000:0000:0000",
+      };
+    },
     enroll: async ({ serverUrl, accessCode }) => {
       if (!serverUrl.startsWith("https://") || !/^[A-Za-z0-9]{32}$/.test(accessCode)) {
         throw {

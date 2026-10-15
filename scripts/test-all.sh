@@ -141,6 +141,7 @@ server_contracts() {
   fi
   run_step 'Server installer argument and rendering tests' "$ROOT/packaging/test-install-server.sh"
   run_step 'Public edge renderer and template contract tests' "$ROOT/packaging/test-render-edge.sh"
+  run_step 'Invite helper contract tests' "$ROOT/packaging/test-create-invite.sh"
   run_step 'Certificate trust-bundle tests' "$ROOT/packaging/test-certificate-trust-bundle.sh"
   run_step 'All-transport environment preflight tests' "$ROOT/packaging/test-validate-env.sh"
   run_step 'Release checksum and OpenPGP signing tests' "$ROOT/packaging/test-sign-release.sh"

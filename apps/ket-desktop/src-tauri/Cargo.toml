@@ -25,5 +25,8 @@ tauri = { version = "2.11.5", features = [] }
 tokio.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+ket-invite = { path = "../../../crates/ket-invite" }
+
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 glib = "=0.18.5"
