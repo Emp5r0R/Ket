@@ -163,7 +163,7 @@ Everything else waits for `sudo ket update`. An update:
 
 `sudo ket rollback` switches back to the previous release later. A release that changed the stored state may not be readable by the older release; restore the backup taken before the update in that case.
 
-Servers installed by the v1.0.1 installer have no `ket` command yet. Update them once with the bootstrap; afterwards they have `ket` and the daily check, and keep renewing their certificate through the host certbot:
+Servers installed with v1.0.0 or v1.0.1 have no `ket` command yet. Update them once with the bootstrap; afterwards they have `ket` and the daily check, and keep renewing their certificate through the host certbot:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/install.sh | sudo bash -s -- update

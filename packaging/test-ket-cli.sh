@@ -152,6 +152,18 @@ set_env_value C added
 equals 'appended value' "$(env_value C)" added
 equals 'env file mode' "$(stat -c %a "$install_dir/.env")" 600
 equals 'public host' "$(printf 'KET_PUBLIC_URL=https://vpn.example.com:8443/\n' > "$install_dir/.env"; public_host)" vpn.example.com
+# The control plane is reached on the installation's KET_CONTROL_PORT (some
+# hand-made v1.0 servers publish it on another port), never a fixed 8787.
+printf 'KET_CONTROL_PORT=18787\n' > "$install_dir/.env"
+equals 'control port from .env' "$(control_url /readyz)" http://127.0.0.1:18787/readyz
+: > "$install_dir/.env"
+equals 'default control port' "$(control_url /readyz)" http://127.0.0.1:8787/readyz
+mkdir -p "$work/other-tree"
+printf 'KET_CONTROL_PORT=9000\n' > "$work/other-tree/.env"
+equals 'control port of another tree' "$(control_url /metrics "$work/other-tree")" http://127.0.0.1:9000/metrics
+if grep -n '127\.0\.0\.1:8787' "$root"/packaging/server/cli/*.sh; then
+  fail_test 'a ket command calls the control plane on a fixed port'
+fi
 
 # --- prompts -------------------------------------------------------------------------
 printf 'Family\n' > "$KET_TTY"

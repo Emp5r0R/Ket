@@ -37,9 +37,9 @@ cmd_status() {
   info 'Services:'
   service_states | sed 's/^/  /' || warn 'could not list the services; is Docker running?'
   info ''
-  if curl --fail --silent --max-time 5 http://127.0.0.1:8787/readyz >/dev/null 2>&1; then
+  if curl --fail --silent --max-time 5 "$(control_url /readyz)" >/dev/null 2>&1; then
     info 'Control plane: ready'
-    metrics=$(curl --fail --silent --max-time 5 http://127.0.0.1:8787/metrics || true)
+    metrics=$(curl --fail --silent --max-time 5 "$(control_url /metrics)" || true)
     info "Connected devices: $(metric_value ket_active_sessions "$metrics")/$(metric_value ket_session_capacity "$metrics")"
   else
     info 'Control plane: NOT READY (run: sudo ket doctor)'

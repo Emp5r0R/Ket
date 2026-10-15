@@ -129,7 +129,7 @@ wait_for_ready() {
   local attempts=${KET_READY_ATTEMPTS:-90} host attempt
   host=$(public_host)
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    if curl --fail --silent --max-time 5 http://127.0.0.1:8787/readyz >/dev/null 2>&1 \
+    if curl --fail --silent --max-time 5 "$(control_url /readyz)" >/dev/null 2>&1 \
       && curl --fail --silent --max-time 5 --resolve "$host:443:127.0.0.1" "https://$host/" >/dev/null 2>&1; then
       return 0
     fi

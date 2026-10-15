@@ -80,7 +80,7 @@ doctor_services() {
     fi
   done < <(service_states)
   $any || problem 'no Ket services exist' 'sudo ket restart'
-  if curl --fail --silent --max-time 5 http://127.0.0.1:8787/readyz >/dev/null 2>&1; then
+  if curl --fail --silent --max-time 5 "$(control_url /readyz)" >/dev/null 2>&1; then
     pass 'the control plane is ready'
   else
     problem 'the control plane is not ready' 'sudo ket logs control-plane'

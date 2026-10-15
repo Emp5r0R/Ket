@@ -37,6 +37,14 @@ env_value() {
   printf '%s' "${value%\"}"
 }
 
+# control_url PATH [DIR]: the control plane's loopback URL for PATH, on the
+# host port the installation publishes it on (KET_CONTROL_PORT, default 8787).
+control_url() {
+  local port
+  port=$(env_value KET_CONTROL_PORT "${2:-$install_dir}/.env")
+  printf 'http://127.0.0.1:%s%s' "${port:-8787}" "$1"
+}
+
 # set_env_value KEY VALUE [FILE]: replaces or appends KEY, keeping mode 0600.
 set_env_value() {
   local key=$1 value=$2 file=${3:-$install_dir/.env} next

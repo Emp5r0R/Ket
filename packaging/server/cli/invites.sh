@@ -6,14 +6,13 @@
 # admin_request METHOD PATH: calls the loopback admin API and prints the body
 # followed by a final line holding the HTTP status.
 admin_request() {
-  local token port
+  local token
   token=$(env_value KET_ADMIN_TOKEN)
-  port=$(env_value KET_CONTROL_PORT)
   [[ -n $token ]] || fail 'KET_ADMIN_TOKEN is missing from .env'
   curl --silent --show-error --max-time 30 --request "$1" \
     --header "Authorization: Bearer $token" \
     --write-out '\n%{http_code}' \
-    "http://127.0.0.1:${port:-8787}$2" \
+    "$(control_url "$2")" \
     || fail 'could not reach Ket on this server; check: sudo ket status'
 }
 
