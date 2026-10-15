@@ -153,7 +153,7 @@ function mockBridge(): DesktopBridge {
         status: "ready",
       },
       platform: "linux",
-      version: "1.0.1",
+      version: "1.1.0",
     }),
     inspectInvite: async (invite) => {
       if (!invite.startsWith("ket:invite:")) {

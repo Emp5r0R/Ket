@@ -2,7 +2,7 @@
 
 Everything Ket implements today, and the qualification status of each transport. Setup instructions are in [SERVER_INSTALL.md](SERVER_INSTALL.md).
 
-## Since v1.0.1 (on `main`, not yet released)
+## v1.1.0
 
 - A probe-resistant HTTPS edge: only client session routes and exact secret transport paths are reachable, and scanners see one neutral page ([CONTROL_API.md](CONTROL_API.md#public-exposure)).
 - Signed invites: one `ket:invite:` string or QR code replaces the server URL and access code, and pins the node's Ed25519 key so enrollment proves it reached the right server ([INVITE_CAPSULE.md](INVITE_CAPSULE.md)).

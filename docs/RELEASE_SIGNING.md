@@ -41,7 +41,7 @@ The signer regenerates `SHA256SUMS`, signs every package and the checksum file, 
 gpg --import ket-release-signing-key.asc
 gpg --verify SHA256SUMS.asc SHA256SUMS
 sha256sum --check SHA256SUMS
-gpg --verify Ket_1.0.1_amd64.deb.asc Ket_1.0.1_amd64.deb
+gpg --verify Ket_1.1.0_amd64.deb.asc Ket_1.1.0_amd64.deb
 ```
 
 Compare the imported fingerprint with `3FFD C479 EB97 4B59 5D70 C60F 754B 51EC 583C 5BFF`, which is also tracked under `packaging/release-keys/README.md`, before trusting the key.

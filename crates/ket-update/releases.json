@@ -8,6 +8,13 @@
       "client": "optional",
       "server": "optional",
       "summary": "Baseline release before update tracking."
+    },
+    {
+      "version": "1.1.0",
+      "published": "2026-10-15",
+      "client": "recommended",
+      "server": "security",
+      "summary": "Closes the control API that v1.0.1 servers exposed on port 443. Adds invites with QR codes, one-command server setup, the ket server command, rated updates, and a smaller Android download."
     }
   ]
 }
