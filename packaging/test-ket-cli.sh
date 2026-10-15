@@ -252,6 +252,32 @@ remove_host_integration
 )
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 10 -subj /CN=test \
   -keyout "$work/key.pem" -out "$work/cert.pem" 2>/dev/null
+# --- Cloudflare Tunnel exposure --------------------------------------------------
+(
+  install_dir="$work/tunnel-install"
+  mkdir -p "$install_dir"
+  printf 'KET_PUBLIC_URL=https://ket.example.test\nKET_CONTROL_PORT=18787\n' > "$install_dir/.env"
+  export KET_CLOUDFLARED_CONFIG="$work/cloudflared.yml" KET_CLOUDFLARED="$work/cloudflared"
+  : > "$KET_CLOUDFLARED_CONFIG"
+  # The stub answers "tunnel ingress rule URL" with the service in $work/tunnel-service.
+  printf '#!/usr/bin/env bash\n[[ $* == *"rule https://ket.example.test/metrics" ]] || exit 1\nprintf "Matched rule #4\\n\\thostname: ket.example.test\\n\\tservice: %%s\\n" "$(cat %q)"\n' \
+    "$work/tunnel-service" > "$KET_CLOUDFLARED"
+  chmod +x "$KET_CLOUDFLARED"
+  for service in http://127.0.0.1:18787 http://localhost:18787/ https://127.0.0.1:18787; do
+    printf '%s\n' "$service" > "$work/tunnel-service"
+    equals "tunnel bypass via $service" "$(tunnel_bypass_service)" "$service"
+    output=$(doctor_tunnel)
+    contains 'doctor reports the bypass' "$output" 'FAIL  the tunnel sends ket.example.test to the control plane'
+  done
+  for service in https://127.0.0.1:443 http_status:404 http://127.0.0.1:8787 http://127.0.0.1:187870; do
+    printf '%s\n' "$service" > "$work/tunnel-service"
+    if tunnel_bypass_service >/dev/null; then fail_test "$service was taken for the control plane"; fi
+  done
+  contains 'doctor passes an edge route' "$(doctor_tunnel)" "ok    the tunnel keeps ket.example.test's operational endpoints private"
+  rm -f "$KET_CLOUDFLARED_CONFIG"
+  equals 'no tunnel, no section' "$(doctor_tunnel)" ''
+)
+
 days=$(certificate_days_left "$work/cert.pem")
 ((days == 9 || days == 10)) || fail_test "certificate days left: $days"
 if certificate_days_left "$work/missing.pem" >/dev/null; then fail_test 'a missing certificate had days left'; fi

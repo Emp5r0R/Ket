@@ -118,6 +118,35 @@ doctor_network() {
   printf '        compare its rules with the ports in docs/SERVER_INSTALL.md.\n'
 }
 
+cloudflared_cli() { "${KET_CLOUDFLARED:-cloudflared}" "$@"; }
+
+# tunnel_bypass_service: prints the Cloudflare Tunnel service that receives
+# https://<public host>/metrics when it is the control plane itself, which
+# skips the Ket edge and makes the operational endpoints public. Fails when
+# there is no tunnel configuration or it routes the request elsewhere.
+tunnel_bypass_service() {
+  local config=${KET_CLOUDFLARED_CONFIG:-/etc/cloudflared/config.yml} service port
+  [[ -r $config ]] || return 1
+  service=$(cloudflared_cli --config "$config" tunnel ingress rule "https://$(public_host)/metrics" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*service:[[:space:]]*//p' | head -n 1)
+  port=$(env_value KET_CONTROL_PORT)
+  [[ $service =~ ^https?://(127\.0\.0\.1|localhost|\[::1\]):${port:-8787}(/.*)?$ ]] || return 1
+  printf '%s' "$service"
+}
+
+doctor_tunnel() {
+  local config=${KET_CLOUDFLARED_CONFIG:-/etc/cloudflared/config.yml} host service
+  [[ -r $config ]] && command -v "${KET_CLOUDFLARED:-cloudflared}" >/dev/null 2>&1 || return 0
+  printf 'Cloudflare Tunnel\n'
+  host=$(public_host)
+  if service=$(tunnel_bypass_service); then
+    problem "the tunnel sends $host to the control plane ($service), past the Ket edge, so /metrics and other operational endpoints are public" \
+      "route $host to the edge instead: service https://127.0.0.1:443 with originRequest.originServerName $host (docs/XHTTP_STEALTH.md#route-cloudflare-tunnel), then: sudo systemctl restart cloudflared"
+  else
+    pass "the tunnel keeps $host's operational endpoints private"
+  fi
+}
+
 doctor_certificate() {
   printf 'Certificate\n'
   local days
@@ -133,7 +162,7 @@ doctor_certificate() {
     problem 'the TLS certificate is missing' 'sudo systemctl start ket-certificates.service'
   fi
   if uses_host_certbot; then
-    pass 'renewal runs through the host certbot (v1.0.1 installation)'
+    pass 'renewal runs through the host certbot (v1.0.x installation)'
   elif systemd_is_simulated || systemctl is-active --quiet ket-certificates.timer; then
     pass 'the renewal timer is active'
   else
@@ -155,6 +184,7 @@ cmd_doctor() {
   doctor_configuration
   doctor_services
   doctor_network
+  doctor_tunnel
   doctor_certificate
   info ''
   if ((doctor_failures > 0)); then
