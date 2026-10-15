@@ -27,6 +27,8 @@ These remain on the control listener, which Compose publishes only on `127.0.0.1
 | --- | --- | --- |
 | `POST` | `/v1/sessions` | Exchange a 32-character access code for a short-lived session |
 
+A client that enrolls from an invite sends `Ket-Enrollment-Nonce` (32 random bytes, unpadded Base64URL). A node with a signing key then returns `Ket-Node-Signature` over the exact response body, and the client rejects the manifest unless the signature verifies against the invite's node key. A malformed nonce is rejected with `400` before any session is created. Requests without the header are unchanged. See [INVITE_CAPSULE.md](INVITE_CAPSULE.md#node-authenticated-enrollment).
+
 Create a session:
 
 ```json
@@ -95,7 +97,7 @@ Create a grant:
 }
 ```
 
-`max_connections` must be at least `1` and cannot exceed the server's `KET_MAX_SESSIONS`; it limits concurrent sessions, not the number of clients that may save the code. `valid_for_minutes` is required and accepts `1` through `525600` minutes. The server derives one absolute expiry and returns it as `expires_at_epoch_seconds`; session manifests and status responses carry the same access expiry so clients can retain the profile and display its remaining time. The plaintext `access_code` is available only in the creation response. Store it in a password manager. Revocation removes its leases before the server asks each configured data plane to kick the corresponding client IDs.
+`max_connections` must be at least `1` and cannot exceed the server's `KET_MAX_SESSIONS`; it limits concurrent sessions, not the number of clients that may save the code. `valid_for_minutes` is required and accepts `1` through `525600` minutes. The server derives one absolute expiry and returns it as `expires_at_epoch_seconds`; session manifests and status responses carry the same access expiry so clients can retain the profile and display its remaining time. The plaintext `access_code` is available only in the creation response. Store it in a password manager. When the node has `KET_NODE_SIGNING_KEY`, the response also contains `invite`: a signed `ket:invite:...` string carrying the same access code, its expiry, the control address, and the node key (see [INVITE_CAPSULE.md](INVITE_CAPSULE.md)). It is equally secret and also returned only once. Revocation removes its leases before the server asks each configured data plane to kick the corresponding client IDs.
 
 ## Data-plane endpoint
 

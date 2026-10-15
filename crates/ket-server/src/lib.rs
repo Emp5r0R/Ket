@@ -2,6 +2,7 @@ pub mod api;
 pub mod config;
 mod data_plane;
 pub mod hysteria;
+pub mod invite;
 mod model;
 pub mod openvpn;
 pub mod openvpn_agent;

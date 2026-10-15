@@ -46,6 +46,9 @@ http {
     location = /healthz { return 204; }
     location = /v1/sessions {
       if ($request_method != POST) { return 405 '{"code":"method_not_allowed"}'; }
+      # Echo the enrollment nonce back as the node signature so the harness can
+      # prove the edge forwards both headers unchanged.
+      add_header Ket-Node-Signature $http_ket_enrollment_nonce always;
       if ($http_x_test_outcome = created) { return 201 '{"session_token":"stub"}'; }
       if ($http_x_test_outcome = expired) { return 403 '{"code":"grant_expired"}'; }
       if ($http_x_test_outcome = capacity) { return 409 '{"code":"grant_capacity_reached"}'; }
@@ -154,6 +157,13 @@ expect_decoy 'WireGuard prefix neighbour' GET "/${wireguard_prefix}0/events"
 # Enrolled-client outcomes and the exact transport routes pass through.
 expect 'neutral home page' 200 'under construction' GET /
 expect 'enrollment created' 201 'session_token' POST /v1/sessions -H 'X-Test-Outcome: created' --data '{}'
+nonce=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+signature=$(curl --silent --show-error --insecure --max-time 10 \
+  --resolve "$host:$port:127.0.0.1" --request POST --data '{}' \
+  -H 'X-Test-Outcome: created' -H "Ket-Enrollment-Nonce: $nonce" \
+  --dump-header - --output /dev/null "https://$host:$port/v1/sessions" \
+  | tr -d '\r' | sed -n 's/^[Kk]et-[Nn]ode-[Ss]ignature: //p')
+[[ "$signature" == "$nonce" ]] || fail "edge did not forward the enrollment nonce and node signature headers (got '$signature')"
 expect 'grant expired' 403 'grant_expired' POST /v1/sessions -H 'X-Test-Outcome: expired' --data '{}'
 expect 'grant capacity' 409 'grant_capacity_reached' POST /v1/sessions -H 'X-Test-Outcome: capacity' --data '{}'
 expect 'server busy' 429 'server_busy' POST /v1/sessions -H 'X-Test-Outcome: busy' --data '{}'

@@ -45,6 +45,10 @@ pub enum ClientError {
     },
     #[error("local client operation failed: {0}")]
     Local(String),
+    #[error("the invite is not usable: {0}")]
+    Invite(ket_invite::InviteError),
+    #[error("the server could not prove it is the node named in the invite")]
+    NodeIdentityMismatch,
 }
 
 impl ClientError {
@@ -87,6 +91,8 @@ impl ClientError {
                 retryable: *retryable,
             },
             Self::Local(_) => issue("local_failure", self, false),
+            Self::Invite(error) => issue(error.code(), self, false),
+            Self::NodeIdentityMismatch => issue("node_identity_mismatch", self, false),
         }
     }
 
@@ -188,6 +194,16 @@ mod tests {
             (
                 ClientError::Local("disk failed".to_owned()),
                 "local_failure",
+                false,
+            ),
+            (
+                ClientError::Invite(ket_invite::InviteError::Expired),
+                "invite_expired",
+                false,
+            ),
+            (
+                ClientError::NodeIdentityMismatch,
+                "node_identity_mismatch",
                 false,
             ),
         ];

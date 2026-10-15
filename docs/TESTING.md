@@ -45,6 +45,7 @@ sudo apt-get install --no-install-recommends -y \
 | Product boundary | Maintained evidence |
 | --- | --- |
 | Shared control contract | Exact protocol/network/health wire names, request/status lifetimes, optional-field compatibility, manifest round trips, and debug redaction |
+| Invite capsule | Canonical CBOR (shortest forms, re-encoding match), every-bit tamper rejection, semantic rejections behind valid signatures, locator safety rules, text form canonicality, expiry after signature, enrollment signatures bound to node/nonce/exact body; Rust-generated vectors (`crates/ket-invite/tests/vectors/invite-v1.json`) that fail on drift and are replayed by the Android JVM tests with identical error codes; server issuance for single and batch grants, signed enrollment only with a valid nonce, and pinned desktop/Android enrollment over real loopback HTTP |
 | Secret handling | Access/session token shapes, Argon2 policy, scoped token hashes, broker token permissions, HMAC proof tampering, and secret-redacted diagnostics |
 | Control server | Configuration bounds, grant/session API authorization and lifecycle, persistence validation and restart, capacity under concurrency, renewal/release/revocation, and bounded errors |
 | Server data plane | Deterministic credentials, counters, resource allocation, reconciliation/revocation, runtime renderers, all six environment profiles, and system telemetry parsing |

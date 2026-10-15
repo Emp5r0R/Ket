@@ -3,6 +3,7 @@ members = [
     "apps/ket-desktop/src-tauri",
     "crates/ket-client-core",
     "crates/ket-core",
+    "crates/ket-invite",
     "crates/ket-server",
     "crates/ket-tunnel-protocol",
     "crates/ket-tunnel-service",
@@ -23,6 +24,7 @@ axum = { version = "0.7.9", features = ["http1", "json", "tokio"] }
 base64 = "0.22.1"
 blake2 = "0.10.6"
 bytes = "1.12.1"
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["rand_core", "std", "zeroize"] }
 http-body-util = "0.1.4"
 hyper = { version = "1.10.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", features = ["client", "client-legacy", "http1", "tokio"] }

@@ -1,5 +1,6 @@
 package com.ket.android
 
+import com.ket.android.invite.NodePublicKey
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -369,7 +370,8 @@ class DurableTunnelCredentialsTest {
         var renewals = 0
         val releasedTokens = mutableListOf<String>()
 
-        override fun enroll(serverUrl: String, accessCode: String, clientName: String): EnrollmentResult {
+        override fun enroll(serverUrl: String, accessCode: String, clientName: String, nodeKey: NodePublicKey?): EnrollmentResult {
+            assertEquals(null, nodeKey)
             assertEquals(SERVER_URL, serverUrl)
             assertEquals(ACCESS_CODE, accessCode)
             assertEquals("Ket Android", clientName)

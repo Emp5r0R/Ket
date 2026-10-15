@@ -119,6 +119,10 @@ pub struct CreateAccessGrantResponse {
     pub valid_for_minutes: u32,
     pub expires_at_epoch_seconds: u64,
     pub created_at_epoch_seconds: u64,
+    /// `ket:invite:...` wrapping `access_code`, present when the node has a
+    /// signing key. Returned exactly once, like the access code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite: Option<SecretString>,
 }
 
 impl std::fmt::Debug for CreateAccessGrantResponse {
@@ -132,6 +136,7 @@ impl std::fmt::Debug for CreateAccessGrantResponse {
             .field("valid_for_minutes", &self.valid_for_minutes)
             .field("expires_at_epoch_seconds", &self.expires_at_epoch_seconds)
             .field("created_at_epoch_seconds", &self.created_at_epoch_seconds)
+            .field("invite", &self.invite)
             .finish()
     }
 }

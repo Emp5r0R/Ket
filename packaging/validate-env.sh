@@ -44,10 +44,44 @@ valid_public_url() {
     esac
   fi
 }
+# Invites need a locator: an https:// public DNS name without a path, or loopback HTTP.
+# Mirrors ket-invite ControlLocator::from_public_url; the server re-checks at startup.
+valid_invite_public_url() {
+  local value=${KET_PUBLIC_URL:-http://127.0.0.1:8787} authority host port label
+  local -a labels
+  value=${value%/}
+  [[ "$value" == http://* ]] && return 0
+  [[ "$value" == https://* ]] || return 1
+  authority=${value#https://}
+  [[ "$authority" != */* && "$authority" != \[* ]] || return 1
+  host=${authority%%:*}
+  host=${host,,}
+  if [[ "$authority" == *:* ]]; then
+    port=${authority#*:}
+    [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && (( port <= 65535 )) || return 1
+  fi
+  (( ${#host} <= 253 )) || return 1
+  IFS=. read -r -a labels <<<"$host"
+  (( ${#labels[@]} >= 2 )) || return 1
+  [[ "$host" != *. && "$host" != *..* ]] || return 1
+  for label in "${labels[@]}"; do
+    [[ "$label" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || return 1
+  done
+  [[ "${labels[-1]}" =~ [a-z] ]] || return 1
+  case ".$host" in
+    *.local|*.localhost|*.internal|*.onion|*.i2p|*.home.arpa|*.test|*.example|*.invalid) return 1 ;;
+  esac
+}
 
 required KET_ADMIN_TOKEN
 (( ${#KET_ADMIN_TOKEN} >= 32 )) || fail 'KET_ADMIN_TOKEN must contain at least 32 characters'
 valid_public_url || fail 'KET_PUBLIC_URL must use HTTPS or loopback HTTP without credentials, whitespace, a query, or a fragment'
+if [[ -n "${KET_NODE_SIGNING_KEY:-}" ]]; then
+  [[ "$KET_NODE_SIGNING_KEY" =~ ^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$ ]] \
+    || fail 'KET_NODE_SIGNING_KEY must be a 32-byte seed in unpadded Base64URL'
+  valid_invite_public_url \
+    || fail 'KET_NODE_SIGNING_KEY requires KET_PUBLIC_URL to be an https:// public DNS name without a path, or loopback HTTP'
+fi
 [[ "${KET_NODE_ID:-ket-node-1}" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || fail 'KET_NODE_ID must be a 1-128 character ASCII identifier'
 bounded_text KET_NODE_NAME 'Ket node' 128 || fail 'KET_NODE_NAME must contain 1-128 trimmed printable characters'
 bounded_text KET_COUNTRY_NAME 'Unknown' 128 || fail 'KET_COUNTRY_NAME must contain 1-128 trimmed printable characters'

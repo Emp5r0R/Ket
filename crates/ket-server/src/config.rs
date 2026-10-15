@@ -3,6 +3,7 @@ use std::{
     env, fs,
     net::SocketAddr,
     path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 
@@ -10,6 +11,8 @@ use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ket_core::{Network, NodeLocation, TransportProfile, TransportProtocol};
 use url::{Host, Url};
+
+use crate::invite::InviteIssuer;
 
 const MAX_NODE_TEXT_CHARS: usize = 128;
 const MAX_PUBLIC_URL_CHARS: usize = 2_048;
@@ -39,6 +42,8 @@ pub struct ServerConfig {
     pub shadowsocks: Option<ShadowsocksConfig>,
     pub wireguard: Option<WireGuardConfig>,
     pub xray: Option<XrayConfig>,
+    /// Present when `KET_NODE_SIGNING_KEY` is configured.
+    pub invite_issuer: Option<Arc<InviteIssuer>>,
 }
 
 #[derive(Clone)]
@@ -158,6 +163,7 @@ impl ServerConfig {
         }
 
         let public_url = normalize_public_url(value("KET_PUBLIC_URL", "http://127.0.0.1:8787"))?;
+        let invite_issuer = InviteIssuer::from_env(&public_url)?.map(Arc::new);
 
         let max_sessions = parse_value("KET_MAX_SESSIONS", 1000_u32)?;
         if max_sessions == 0 {
@@ -233,6 +239,7 @@ impl ServerConfig {
             shadowsocks,
             wireguard,
             xray,
+            invite_issuer,
         })
     }
 }

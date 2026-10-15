@@ -28,6 +28,8 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+use ket_invite::{ENROLLMENT_NONCE_HEADER, EnrollmentNonce, NODE_SIGNATURE_HEADER};
+
 use crate::{
     config::{HysteriaObfuscation, ServerConfig},
     data_plane::{self, DataPlaneControl},
@@ -165,7 +167,8 @@ async fn create_grant(
     Json(request): Json<CreateAccessGrantRequest>,
 ) -> Result<(StatusCode, Json<CreateAccessGrantResponse>), ApiError> {
     authorize_admin(&state, &headers)?;
-    let response = state.access.create_grant(request).await?;
+    let mut response = state.access.create_grant(request).await?;
+    attach_invite(&state, &mut response);
     Ok((StatusCode::CREATED, Json(response)))
 }
 
@@ -175,8 +178,24 @@ async fn create_grant_batch(
     Json(request): Json<CreateAccessGrantBatchRequest>,
 ) -> Result<(StatusCode, Json<Vec<CreateAccessGrantResponse>>), ApiError> {
     authorize_admin(&state, &headers)?;
-    let response = state.access.create_grant_batch(request).await?;
+    let mut response = state.access.create_grant_batch(request).await?;
+    for grant in &mut response {
+        attach_invite(&state, grant);
+    }
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// Wraps a new grant's access code in a signed invite when the node has a
+/// signing key. The grant already exists, so a failure is logged and the
+/// access code is still returned rather than lost.
+fn attach_invite(state: &AppState, grant: &mut CreateAccessGrantResponse) {
+    let Some(issuer) = &state.config.invite_issuer else {
+        return;
+    };
+    match issuer.issue(&grant.access_code, grant.expires_at_epoch_seconds) {
+        Ok(invite) => grant.invite = Some(invite),
+        Err(error) => tracing::error!(%error, grant_id = %grant.id, "failed to issue an invite"),
+    }
 }
 
 async fn list_grants(
@@ -200,8 +219,10 @@ async fn revoke_grant(
 
 async fn create_session(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<CreateSessionRequest>,
-) -> Result<(StatusCode, Json<SessionManifest>), ApiError> {
+) -> Result<Response, ApiError> {
+    let enrollment_nonce = enrollment_nonce(&headers)?;
     if !state.data_plane_ready.load(Ordering::Acquire) {
         return Err(ApiError::data_plane_not_ready());
     }
@@ -253,7 +274,51 @@ async fn create_session(
         node: build_node_status(&state).await,
         transports,
     };
-    Ok((StatusCode::CREATED, Json(response)))
+    signed_manifest_response(&state, enrollment_nonce.as_ref(), &response)
+}
+
+/// Parses the optional `Ket-Enrollment-Nonce`; a malformed value is rejected
+/// before any session is created.
+fn enrollment_nonce(headers: &HeaderMap) -> Result<Option<EnrollmentNonce>, ApiError> {
+    let Some(value) = headers.get(ENROLLMENT_NONCE_HEADER) else {
+        return Ok(None);
+    };
+    value
+        .to_str()
+        .ok()
+        .and_then(|value| EnrollmentNonce::from_header_value(value).ok())
+        .map(Some)
+        .ok_or_else(ApiError::invalid_enrollment_nonce)
+}
+
+/// Serializes the manifest once so the node signature covers the exact bytes
+/// the client receives.
+fn signed_manifest_response(
+    state: &AppState,
+    nonce: Option<&EnrollmentNonce>,
+    manifest: &SessionManifest,
+) -> Result<Response, ApiError> {
+    let body = serde_json::to_vec(manifest).map_err(|error| {
+        tracing::error!(%error, "failed to serialize the session manifest");
+        ApiError::internal()
+    })?;
+    let signature = nonce
+        .zip(state.config.invite_issuer.as_deref())
+        .map(|(nonce, issuer)| issuer.sign_enrollment(nonce, &body));
+    let mut response = (
+        StatusCode::CREATED,
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        )],
+        body,
+    )
+        .into_response();
+    if let Some(signature) = signature {
+        let value = HeaderValue::from_str(&signature).map_err(|_| ApiError::internal())?;
+        response.headers_mut().insert(NODE_SIGNATURE_HEADER, value);
+    }
+    Ok(response)
 }
 
 async fn session_status(
@@ -628,6 +693,22 @@ impl ApiError {
         }
     }
 
+    fn invalid_enrollment_nonce() -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_request",
+            message: "the enrollment nonce is invalid".to_owned(),
+        }
+    }
+
+    fn internal() -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "internal_error",
+            message: "the server could not complete the request".to_owned(),
+        }
+    }
+
     fn data_plane_not_ready() -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -673,11 +754,7 @@ impl From<ServiceError> for ApiError {
             },
             internal => {
                 tracing::error!(error = %internal, "request failed");
-                Self {
-                    status: StatusCode::INTERNAL_SERVER_ERROR,
-                    code: "internal_error",
-                    message: "the server could not complete the request".to_owned(),
-                }
+                Self::internal()
             }
         }
     }
@@ -995,6 +1072,207 @@ mod tests {
             .await
             .expect("request should complete");
         assert_eq!(revoke.status(), StatusCode::NO_CONTENT);
+    }
+
+    fn invite_test_config() -> ServerConfig {
+        let mut config = test_config();
+        config.public_url = "https://ket.example.com".to_owned();
+        config.invite_issuer = Some(Arc::new(
+            crate::invite::InviteIssuer::new(
+                ket_invite::NodeSigningKey::from_seed(&[0x55; 32]),
+                &config.public_url,
+            )
+            .expect("invite issuer"),
+        ));
+        config
+    }
+
+    async fn invite_test_app(config: ServerConfig) -> Router {
+        let service = AccessService::load(
+            Arc::new(MemoryRepository::default()),
+            Duration::from_secs(300),
+            4,
+        )
+        .await
+        .expect("service should load");
+        build_router(AppState::new(config, service).expect("app state"))
+    }
+
+    async fn create_test_grant(app: &Router) -> CreateAccessGrantResponse {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({"label": "Invite", "max_connections": 2, "valid_for_minutes": 60}),
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        response_json(response).await
+    }
+
+    fn enrollment_request(access_code: &str, nonce: Option<&str>) -> Request<Body> {
+        let mut request = json_request(
+            "POST",
+            "/v1/sessions",
+            None,
+            serde_json::json!({"access_code": access_code, "client_name": "Invite test"}),
+        );
+        if let Some(nonce) = nonce {
+            request.headers_mut().insert(
+                ENROLLMENT_NONCE_HEADER,
+                HeaderValue::from_str(nonce).expect("nonce header"),
+            );
+        }
+        request
+    }
+
+    #[tokio::test]
+    async fn signing_nodes_issue_invites_for_single_and_batch_grants() {
+        let app = invite_test_app(invite_test_config()).await;
+        let grant = create_test_grant(&app).await;
+        let text = grant.invite.as_ref().expect("an invite is issued");
+        let invite =
+            ket_invite::decode_invite_text(text.expose_secret(), None).expect("valid invite");
+        assert_eq!(
+            invite.capsule().access_code(),
+            grant.access_code.expose_secret()
+        );
+        assert_eq!(
+            invite.capsule().access_expires_at_epoch_seconds,
+            Some(grant.expires_at_epoch_seconds)
+        );
+        assert_eq!(
+            invite.capsule().locators[0].base_url(),
+            "https://ket.example.com/"
+        );
+        assert!(!format!("{grant:?}").contains(text.expose_secret()));
+
+        let batch = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants/batch",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({"label_prefix": "Fleet", "count": 2, "max_connections": 1, "valid_for_minutes": 60}),
+            ))
+            .await
+            .expect("request should complete");
+        let batch: Vec<CreateAccessGrantResponse> = response_json(batch).await;
+        for grant in batch {
+            let invite = ket_invite::decode_invite_text(
+                grant.invite.expect("batch invite").expose_secret(),
+                None,
+            )
+            .expect("valid batch invite");
+            assert_eq!(
+                invite.capsule().access_code(),
+                grant.access_code.expose_secret()
+            );
+        }
+
+        let unsigned = invite_test_app(test_config()).await;
+        let response = unsigned
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/v1/admin/access-grants",
+                Some(ADMIN_TOKEN),
+                serde_json::json!({"label": "Plain", "max_connections": 1, "valid_for_minutes": 60}),
+            ))
+            .await
+            .expect("request should complete");
+        let body = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
+        assert!(
+            json.get("invite").is_none(),
+            "no invite field without a node key"
+        );
+    }
+
+    #[tokio::test]
+    async fn enrollment_responses_are_signed_only_for_a_client_nonce() {
+        let app = invite_test_app(invite_test_config()).await;
+        let grant = create_test_grant(&app).await;
+        let code = grant.access_code.expose_secret();
+        let node_key = ket_invite::NodeSigningKey::from_seed(&[0x55; 32]).public_key();
+
+        let nonce = EnrollmentNonce::generate();
+        let response = app
+            .clone()
+            .oneshot(enrollment_request(code, Some(&nonce.header_value())))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/json"))
+        );
+        let signature = response
+            .headers()
+            .get(NODE_SIGNATURE_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("body");
+        ket_invite::EnrollmentProof::verify(&node_key, &nonce, &body, signature.as_deref())
+            .expect("the node signs the exact manifest bytes");
+        let manifest: SessionManifest = serde_json::from_slice(&body).expect("manifest");
+        assert!(!manifest.session_token.expose_secret().is_empty());
+
+        let unsigned = app
+            .clone()
+            .oneshot(enrollment_request(code, None))
+            .await
+            .expect("request should complete");
+        assert_eq!(unsigned.status(), StatusCode::CREATED);
+        assert!(unsigned.headers().get(NODE_SIGNATURE_HEADER).is_none());
+
+        let capacity_before = app
+            .clone()
+            .oneshot(empty_request("GET", "/v1/node/status", None))
+            .await
+            .expect("request should complete");
+        let before: NodeStatus = response_json(capacity_before).await;
+        for malformed in ["", "short", "AAAA=", &format!("{}=", nonce.header_value())] {
+            let response = app
+                .clone()
+                .oneshot(enrollment_request(code, Some(malformed)))
+                .await
+                .expect("request should complete");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{malformed:?}");
+        }
+        let capacity_after = app
+            .clone()
+            .oneshot(empty_request("GET", "/v1/node/status", None))
+            .await
+            .expect("request should complete");
+        let after: NodeStatus = response_json(capacity_after).await;
+        assert_eq!(
+            after.active_sessions, before.active_sessions,
+            "a malformed nonce must not create a session"
+        );
+    }
+
+    #[tokio::test]
+    async fn nodes_without_a_signing_key_never_sign_enrollments() {
+        let app = invite_test_app(test_config()).await;
+        let grant = create_test_grant(&app).await;
+        let response = app
+            .clone()
+            .oneshot(enrollment_request(
+                grant.access_code.expose_secret(),
+                Some(&EnrollmentNonce::generate().header_value()),
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert!(response.headers().get(NODE_SIGNATURE_HEADER).is_none());
     }
 
     #[tokio::test]
@@ -1745,6 +2023,7 @@ mod tests {
             shadowsocks: None,
             wireguard: None,
             xray: None,
+            invite_issuer: None,
         }
     }
 

@@ -109,3 +109,19 @@ reject --domain ket.example.com --email operator@example.com --install-dir '/opt
 reject --domain ket.example.com --email operator@example.com --install-dir /opt/../etc/ket
 
 printf 'Ket installer argument tests passed.\n'
+
+# The installer's node signing key generator must always satisfy the preflight
+# and server format (32-byte seed, unpadded Base64URL).
+eval "$(sed -n '/^random_base64url_32()/p' "$installer")"
+for _ in 1 2 3 4 5 6 7 8; do
+  node_key=$(random_base64url_32)
+  env -i "PATH=$PATH" \
+    KET_ADMIN_TOKEN=01234567890123456789012345678901 \
+    KET_PUBLIC_URL=https://ket.example.com \
+    "KET_NODE_SIGNING_KEY=$node_key" \
+    "$root/packaging/validate-env.sh" >/dev/null
+done
+# shellcheck disable=SC2016 # literal installer text, not an expansion
+grep -Fq 'KET_NODE_SIGNING_KEY=$(random_base64url_32)' "$installer"
+grep -Fq "first_invite=\$(jq -er '.invite'" "$installer"
+printf 'Installer node-key generation tests passed.\n'

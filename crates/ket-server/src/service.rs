@@ -194,6 +194,7 @@ impl AccessService {
             valid_for_minutes: request.valid_for_minutes,
             expires_at_epoch_seconds,
             created_at_epoch_seconds: now,
+            invite: None,
         })
     }
 

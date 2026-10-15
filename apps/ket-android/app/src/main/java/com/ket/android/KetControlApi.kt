@@ -1,5 +1,10 @@
 package com.ket.android
 
+import com.ket.android.invite.ENROLLMENT_NONCE_HEADER
+import com.ket.android.invite.EnrollmentNonce
+import com.ket.android.invite.EnrollmentProof
+import com.ket.android.invite.NODE_SIGNATURE_HEADER
+import com.ket.android.invite.NodePublicKey
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -48,13 +53,15 @@ object KetControlApi : TunnelSessionApi {
     private const val MAX_ERROR_MESSAGE_CHARS = 256
     internal const val CREDENTIALS_REJECTED_MESSAGE = "Server address or access code was not accepted"
 
-    override fun enroll(serverUrl: String, accessCode: String, clientName: String): EnrollmentResult {
+    override fun enroll(serverUrl: String, accessCode: String, clientName: String, nodeKey: NodePublicKey?): EnrollmentResult {
         val base = normalizeBaseUrl(serverUrl)
         val validatedAccessCode = validateAccessCode(accessCode)
         val validatedClientName = validateClientName(clientName)
+        val nonce = nodeKey?.let { EnrollmentNonce.generate() }
         val connection = open("$base/v1/sessions").apply {
             requestMethod = "POST"; readTimeout = 15_000; doOutput = true
             setRequestProperty("Content-Type", "application/json")
+            nonce?.let { setRequestProperty(ENROLLMENT_NONCE_HEADER, it.headerValue) }
         }
         connection.outputStream.use {
             it.write(
@@ -65,9 +72,13 @@ object KetControlApi : TunnelSessionApi {
                     .toByteArray(StandardCharsets.UTF_8),
             )
         }
-        val (code, body) = response(connection)
-        requireSuccess(code, HttpURLConnection.HTTP_CREATED, body, "Enrollment failed")
-        return parseEnrollment(body, requireActiveLease = true)
+        val response = response(connection)
+        requireSuccess(response.code, HttpURLConnection.HTTP_CREATED, response.body, "Enrollment failed")
+        if (nodeKey != null && nonce != null) {
+            // The body was decoded as strict UTF-8, so re-encoding restores the exact signed bytes.
+            EnrollmentProof.verify(nodeKey, nonce, response.body.toByteArray(StandardCharsets.UTF_8), response.nodeSignature)
+        }
+        return parseEnrollment(response.body, requireActiveLease = true)
     }
 
     fun status(serverUrl: String, token: String): SessionTelemetry {
@@ -207,11 +218,13 @@ object KetControlApi : TunnelSessionApi {
         setRequestProperty("Accept", "application/json")
     }
 
-    private fun response(connection: HttpURLConnection): Pair<Int, String> {
+    private data class ControlResponse(val code: Int, val body: String, val nodeSignature: String?)
+
+    private fun response(connection: HttpURLConnection): ControlResponse {
         return try {
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            code to readBoundedBody(stream, connection.contentLengthLong)
+            ControlResponse(code, readBoundedBody(stream, connection.contentLengthLong), connection.getHeaderField(NODE_SIGNATURE_HEADER))
         } finally {
             connection.disconnect()
         }

@@ -202,6 +202,8 @@ detect_location() {
   return 1
 }
 random_secret() { openssl rand -base64 48 | tr -d '\n'; }
+# A 32-byte value as unpadded Base64URL (the node signing key format).
+random_base64url_32() { openssl rand 32 | base64 | tr -d '\n=' | tr '+/' '-_'; }
 random_hex() { openssl rand -hex "$1"; }
 
 mode=auto
@@ -454,6 +456,8 @@ node_id=$(printf '%s-%s' "${country_code,,}" "$direct_host" \
 cat > .env <<EOF
 KET_ADMIN_TOKEN=$(random_secret)
 KET_PUBLIC_URL=https://$domain
+# Node identity for signed invites. Never rotate it: that invalidates every invite.
+KET_NODE_SIGNING_KEY=$(random_base64url_32)
 KET_CONTROL_PORT=8787
 KET_CERTBOT_NAME=$domain
 KET_NODE_ID=$node_id
@@ -615,6 +619,7 @@ jq -n \
       http://127.0.0.1:8787/v1/admin/access-grants \
   > "$grant_file"
 first_code=$(jq -er '.access_code' "$grant_file")
+first_invite=$(jq -er '.invite' "$grant_file")
 first_code_expires_at=$(jq -er '.expires_at_epoch_seconds' "$grant_file")
 rm -f "$grant_file"
 trap - EXIT
@@ -624,11 +629,12 @@ printf 'First 32-character access code: %s\n' "$first_code"
 printf 'First access code concurrent-connection limit: %s\n' "$first_code_max_connections"
 printf 'First access code expires at Unix time: %s (%s minutes after creation)\n' \
   "$first_code_expires_at" "$first_code_valid_minutes"
-printf 'Store that code now; the server never stores its plaintext value.\n'
+printf 'First invite (server URL + access code in one signed string):\n%s\n' "$first_invite"
+printf 'Store the code and invite now; the server never stores their plaintext value.\n'
 printf '\nClient setup:\n'
 printf '  1. Download Linux, Windows, or Android client: %s\n' "$CLIENT_RELEASE_URL"
-printf '  2. Server URL: https://%s\n' "$domain"
-printf '  3. Enter the access code printed above, then connect.\n'
+printf '  2. Paste the invite, or enter Server URL https://%s and the access code.\n' "$domain"
+printf '  3. Connect.\n'
 printf '\nRequired cloud ingress (verify it remains open):\n'
 print_ingress
 printf 'Manage the stack with: cd %s && ./packaging/server/compose.sh ps\n' "$install_dir"

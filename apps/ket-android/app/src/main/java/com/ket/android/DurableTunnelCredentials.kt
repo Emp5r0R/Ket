@@ -4,6 +4,8 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
+import com.ket.android.invite.NodePublicKey
+import org.json.JSONObject
 import java.io.File
 import java.io.FileNotFoundException
 import java.nio.ByteBuffer
@@ -12,7 +14,6 @@ import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
-import org.json.JSONObject
 
 internal class TunnelEnrollmentProfile(
     val serverUrl: String,
@@ -286,7 +287,8 @@ internal class AndroidTunnelCredentialStore private constructor(context: Context
 }
 
 internal interface TunnelSessionApi {
-    fun enroll(serverUrl: String, accessCode: String, clientName: String): EnrollmentResult
+    /** With [nodeKey] (pinned from an invite) the response must carry that node's signature. */
+    fun enroll(serverUrl: String, accessCode: String, clientName: String, nodeKey: NodePublicKey? = null): EnrollmentResult
     fun renew(serverUrl: String, token: String): Long
     fun release(serverUrl: String, token: String)
 }

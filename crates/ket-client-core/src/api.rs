@@ -2,6 +2,9 @@ use std::{net::IpAddr, time::Duration};
 
 use async_trait::async_trait;
 use ket_core::{CreateSessionRequest, ErrorResponse, SecretString, SessionManifest, SessionStatus};
+use ket_invite::{
+    ENROLLMENT_NONCE_HEADER, EnrollmentNonce, EnrollmentProof, NODE_SIGNATURE_HEADER, NodePublicKey,
+};
 use reqwest::{Client, RequestBuilder, StatusCode, Url, redirect::Policy, tls::Version};
 use serde::de::DeserializeOwned;
 
@@ -19,6 +22,8 @@ pub enum InsecureHttpPolicy {
 #[derive(Clone, Eq, PartialEq)]
 pub struct ControlEndpoint {
     base: Url,
+    /// Pinned from an invite. When present, enrollment must be signed by it.
+    node_key: Option<NodePublicKey>,
 }
 
 impl ControlEndpoint {
@@ -62,7 +67,20 @@ impl ControlEndpoint {
 
         let normalized_path = format!("{}/", base.path().trim_end_matches('/'));
         base.set_path(&normalized_path);
-        Ok(Self { base })
+        Ok(Self {
+            base,
+            node_key: None,
+        })
+    }
+
+    /// Requires every enrollment through this endpoint to be signed by `key`.
+    pub fn with_node_key(mut self, key: NodePublicKey) -> Self {
+        self.node_key = Some(key);
+        self
+    }
+
+    pub fn node_key(&self) -> Option<&NodePublicKey> {
+        self.node_key.as_ref()
     }
 
     pub fn as_str(&self) -> &str {
@@ -81,8 +99,9 @@ impl ControlEndpoint {
 impl std::fmt::Debug for ControlEndpoint {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_tuple("ControlEndpoint")
-            .field(&self.base.as_str())
+            .debug_struct("ControlEndpoint")
+            .field("base", &self.base.as_str())
+            .field("node_key", &self.node_key)
             .finish()
     }
 }
@@ -147,17 +166,35 @@ impl HttpControlPlane {
         request: RequestBuilder,
         expected: StatusCode,
     ) -> Result<T, ClientError> {
+        let response = self.send(request, expected).await?;
+        decode_json(&response.body)
+    }
+
+    /// Sends a request and returns the bounded body of an expected response;
+    /// any other status becomes an API error.
+    async fn send(
+        &self,
+        request: RequestBuilder,
+        expected: StatusCode,
+    ) -> Result<BoundedResponse, ClientError> {
         let response = request
             .send()
             .await
             .map_err(|error| ClientError::request(&error))?;
         let status = response.status();
+        let node_signature = response
+            .headers()
+            .get(NODE_SIGNATURE_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
         let body = read_bounded(response).await?;
         if status != expected {
             return Err(api_error(status, &body));
         }
-        serde_json::from_slice(&body)
-            .map_err(|_| ClientError::InvalidResponse("JSON decoding failed".to_owned()))
+        Ok(BoundedResponse {
+            body,
+            node_signature,
+        })
     }
 
     async fn empty(
@@ -165,17 +202,7 @@ impl HttpControlPlane {
         request: RequestBuilder,
         expected: StatusCode,
     ) -> Result<(), ClientError> {
-        let response = request
-            .send()
-            .await
-            .map_err(|error| ClientError::request(&error))?;
-        let status = response.status();
-        let body = read_bounded(response).await?;
-        if status == expected {
-            Ok(())
-        } else {
-            Err(api_error(status, &body))
-        }
+        self.send(request, expected).await.map(|_| ())
     }
 }
 
@@ -197,13 +224,27 @@ impl ControlPlane for HttpControlPlane {
             access_code: access_code.clone(),
             client_name: client_name.to_owned(),
         };
-        self.json(
-            self.client
-                .post(endpoint.route("v1/sessions")?)
-                .json(&request),
-            StatusCode::CREATED,
-        )
-        .await
+        let mut builder = self
+            .client
+            .post(endpoint.route("v1/sessions")?)
+            .json(&request);
+        let challenge = endpoint
+            .node_key()
+            .map(|key| (key, EnrollmentNonce::generate()));
+        if let Some((_, nonce)) = &challenge {
+            builder = builder.header(ENROLLMENT_NONCE_HEADER, nonce.header_value());
+        }
+        let response = self.send(builder, StatusCode::CREATED).await?;
+        if let Some((key, nonce)) = &challenge {
+            EnrollmentProof::verify(
+                key,
+                nonce,
+                &response.body,
+                response.node_signature.as_deref(),
+            )
+            .map_err(|_| ClientError::NodeIdentityMismatch)?;
+        }
+        decode_json(&response.body)
     }
 
     async fn session_status(
@@ -247,6 +288,16 @@ impl ControlPlane for HttpControlPlane {
         )
         .await
     }
+}
+
+struct BoundedResponse {
+    body: Vec<u8>,
+    node_signature: Option<String>,
+}
+
+fn decode_json<T: DeserializeOwned>(body: &[u8]) -> Result<T, ClientError> {
+    serde_json::from_slice(body)
+        .map_err(|_| ClientError::InvalidResponse("JSON decoding failed".to_owned()))
 }
 
 async fn read_bounded(mut response: reqwest::Response) -> Result<Vec<u8>, ClientError> {
@@ -424,6 +475,93 @@ mod tests {
             .await
             .unwrap();
         server.abort();
+    }
+
+    /// Serves enrollment the way a signing node does, optionally signing with
+    /// a different key or omitting the signature, and records the nonce.
+    async fn signing_server(
+        signer_seed: Option<[u8; 32]>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::task::JoinHandle<()>,
+        std::sync::Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    ) {
+        use axum::{http::HeaderMap, response::IntoResponse};
+        let nonces = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = nonces.clone();
+        let manifest = test_manifest();
+        let app = Router::new().route(
+            "/v1/sessions",
+            post(move |headers: HeaderMap| {
+                let manifest = manifest.clone();
+                let recorded = recorded.clone();
+                async move {
+                    let nonce = headers
+                        .get(ENROLLMENT_NONCE_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned);
+                    recorded.lock().unwrap().push(nonce.clone());
+                    let body = serde_json::to_vec(&manifest).unwrap();
+                    let mut response = (StatusCode::CREATED, body.clone()).into_response();
+                    if let (Some(seed), Some(nonce)) = (signer_seed, nonce) {
+                        let nonce = EnrollmentNonce::from_header_value(&nonce).unwrap();
+                        let key = ket_invite::NodeSigningKey::from_seed(&seed);
+                        response.headers_mut().insert(
+                            NODE_SIGNATURE_HEADER,
+                            EnrollmentProof::sign(&key, &nonce, &body).parse().unwrap(),
+                        );
+                    }
+                    response
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (address, server, nonces)
+    }
+
+    #[tokio::test]
+    async fn pinned_endpoints_require_the_node_signature_over_the_manifest() {
+        const NODE_SEED: [u8; 32] = [0x77; 32];
+        let node_key = ket_invite::NodeSigningKey::from_seed(&NODE_SEED).public_key();
+        let api = HttpControlPlane::new().unwrap();
+        let code = SecretString::from("A2345678901234567890123456789012");
+
+        let (address, server, nonces) = signing_server(Some(NODE_SEED)).await;
+        let pinned = ControlEndpoint::parse(&format!("http://{address}"))
+            .unwrap()
+            .with_node_key(node_key);
+        api.create_session(&pinned, &code, "Pinned client")
+            .await
+            .expect("a correctly signed manifest is accepted");
+        let unpinned = ControlEndpoint::parse(&format!("http://{address}")).unwrap();
+        api.create_session(&unpinned, &code, "Plain client")
+            .await
+            .expect("URL + access code enrollment is unchanged");
+        let recorded = nonces.lock().unwrap().clone();
+        assert!(
+            recorded[0]
+                .as_deref()
+                .is_some_and(|nonce| nonce.len() == 43)
+        );
+        assert_eq!(recorded[1], None, "unpinned clients send no nonce");
+        server.abort();
+
+        for signer in [None, Some([0x78; 32])] {
+            let (address, server, _) = signing_server(signer).await;
+            let pinned = ControlEndpoint::parse(&format!("http://{address}"))
+                .unwrap()
+                .with_node_key(node_key);
+            let result = api.create_session(&pinned, &code, "Pinned client").await;
+            assert!(
+                matches!(result, Err(ClientError::NodeIdentityMismatch)),
+                "signer {signer:?}"
+            );
+            server.abort();
+        }
     }
 
     #[tokio::test]

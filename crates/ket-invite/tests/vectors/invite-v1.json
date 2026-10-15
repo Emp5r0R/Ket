@@ -1,0 +1,206 @@
+{
+  "enrollment": {
+    "body": "{\"session_token\":\"vector\",\"transports\":[]}",
+    "node_public_key_hex": "0d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b0",
+    "nonce": "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s",
+    "rejected": [
+      {
+        "body": "{\"session_token\":\"vector\",\"transports\":[]}",
+        "name": "other_nonce",
+        "nonce": "bGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGw",
+        "signature": "mpjB9UhQgBCU3B6IMFCnWbeJPS-PkYO5BVQ7eghnXLNkXGzZ2JLiS8otAAU0warankEIzHz01N-GiEuyDI0xCQ"
+      },
+      {
+        "body": "{\"session_token\":\"vectos\",\"transports\":[]}",
+        "name": "modified_body",
+        "nonce": "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s",
+        "signature": "mpjB9UhQgBCU3B6IMFCnWbeJPS-PkYO5BVQ7eghnXLNkXGzZ2JLiS8otAAU0warankEIzHz01N-GiEuyDI0xCQ"
+      },
+      {
+        "body": "{\"session_token\":\"vector\",\"transports\":[]}",
+        "name": "other_node",
+        "nonce": "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s",
+        "signature": "U0EbTLO60s8OvdVTqWKiMLA0w2gs0Uzb_pXpOZNYFDt4_RjzXPFZaDLMfDVA4dSTz0rpJVw9JxJPduwQTzHgAA"
+      },
+      {
+        "body": "{\"session_token\":\"vector\",\"transports\":[]}",
+        "name": "padded_signature",
+        "nonce": "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s",
+        "signature": "mpjB9UhQgBCU3B6IMFCnWbeJPS-PkYO5BVQ7eghnXLNkXGzZ2JLiS8otAAU0warankEIzHz01N-GiEuyDI0xCQ="
+      },
+      {
+        "body": "{\"session_token\":\"vector\",\"transports\":[]}",
+        "name": "missing_signature",
+        "nonce": "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s",
+        "signature": null
+      }
+    ],
+    "signature": "mpjB9UhQgBCU3B6IMFCnWbeJPS-PkYO5BVQ7eghnXLNkXGzZ2JLiS8otAAU0warankEIzHz01N-GiEuyDI0xCQ"
+  },
+  "format": "ket-invite-capsule-v1-conformance",
+  "invalid": [
+    {
+      "error": "unsupported_invite_version",
+      "name": "unsupported_version",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh0igJub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQHyICvrqM6VUUwSNAKykqVPN5UktpwFubN8njy5yaKMkxH8hg_Cgn7MJEbYLZ-cFvk1MqSK5EdXspwAU8aK6Fwo"
+    },
+    {
+      "error": "wrong_application",
+      "name": "wrong_application",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glhzigFtb3JnLm90aGVyLmFwcAFYIA11UHVOCACl0jfu9YJgNXZrmz5aFYaKlAqyiZWHiOOwgYMBb2tldC5leGFtcGxlLmNvbRkBu3ggQWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDUBAQAadzWUAFhAN_qzCcCRJXeBqqdrae78js9oYjQb9Br4dSBU40hg687d_a5JExu6jOD3ZvJ1X61XNY6xB8_FPueL3F8cZ8-aBQ"
+    },
+    {
+      "error": "unsupported_capability",
+      "name": "unsupported_capability",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MCWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQB_7-POWw6pW3kI6JGsMAWwqMAWKk6GhgB2bw7VM159RT7S7Ct3QGHTAxXvUxNpTUKEt-6L2fAnXnWLupuLk3gI"
+    },
+    {
+      "error": "invalid_node_key",
+      "name": "zero_node_key",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQKhRP46EqeeemI74MHBKfx7skbR1L1H3M67KP3uAYj5aewo-X5vYT80Ij86C7hU57OR9rpO9Qa0bSYO4JLTfggk"
+    },
+    {
+      "error": "invalid_invite",
+      "name": "empty_locators",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glhfigFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIB4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQFBpwxkvYnm4eU3TG8GCo_upRgAoitOtV9pRLr7wqEva4_x9Ky9O5HRQySMFOIkXEIyKXbr8FB4xBNzElABadA4"
+    },
+    {
+      "error": "unsafe_locator",
+      "name": "ip_literal_locator",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glhwigFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAWsyMDMuMC4xMTMuORkBu3ggQWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDUBAQAadzWUAFhAkDsHA4jx-Lh8KGsgzf3hmU-Be7FxALRr8YBG0wcrRFoDkQZs5KOToQFF9QYZTuo3gq2LbZ1YouE_VM54yVqcBg"
+    },
+    {
+      "error": "unsupported_locator",
+      "name": "unknown_locator_tag",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glhligFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDCQAZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQMePISzt3jZqEHKGwQEFZdvzohVzo7FsRLntBRw4VRb2ApbryZQfNI6uYoQ8VkNbEPhoJx5qYGUdvXxOMAWh_g8"
+    },
+    {
+      "error": "invalid_invite",
+      "name": "duplicate_locators",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:gliJigFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIKDAW9rZXQuZXhhbXBsZS5jb20ZAbuDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQHmXFGrlN1Gw30qncpA7s1EDO6xY5kn3CUVRZ-YVRa1_MKYT50spTHKb0aySUCapj0-cEV7EvrOOBfo_DxQ2tgI"
+    },
+    {
+      "error": "invalid_invite",
+      "name": "short_access_code",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glhYigFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbtlc2hvcnQBAQAadzWUAFhAjZ3rtGO8kECcq9l14tTrKV5d-qeQM5bXmf2jIf4sQGtJnob4d75JkP88kJKe9x3Gnc0HqJlBAfDIujhWkCYhDg"
+    },
+    {
+      "error": "invalid_invite",
+      "name": "inverted_control_api_range",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQAAGnc1lABYQNRgnvZUkZsK6kkQ3xS-4Ih4PGzq8Wk5v7Ke2RGWdBQN-TaygNc60apmjGorjhbVdne8hdMari_ehnhOOBG0JwY"
+    },
+    {
+      "error": "invalid_invite",
+      "name": "nonzero_flags",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEBGnc1lABYQBprlVGfp1W9f1jf0XdZ-t0EtLyiHxr9huN_U013PtfRCaMTpHyauDkFTDe7osPqTZkHAk4ADbKBIEbPlbd0SgU"
+    },
+    {
+      "error": "invalid_invite",
+      "name": "non_shortest_integer",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh1ihgBbm9yZy5rZXQuYWNjZXNzAVggDXVQdU4IAKXSN-71gmA1dmubPloVhoqUCrKJlYeI47CBgwFva2V0LmV4YW1wbGUuY29tGQG7eCBBYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NQEBABp3NZQAWECpO6tqe6xG7UzueTduzaY3GiDgpOU2kkhEWY6ZUJ7kIe7WOvagWF6A_P768qbf81k5heazPS40wsgSYuqZdcsL"
+    },
+    {
+      "error": "invalid_invite_signature",
+      "name": "bad_signature",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw8"
+    },
+    {
+      "error": "invite_expired",
+      "name": "expired",
+      "now_epoch_seconds": 2000000000,
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4"
+    },
+    {
+      "error": "invalid_invite",
+      "name": "trailing_bytes",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4A"
+    },
+    {
+      "error": "invalid_invite",
+      "name": "padded_text",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4="
+    },
+    {
+      "error": "invalid_invite",
+      "name": "standard_base64_alphabet",
+      "now_epoch_seconds": null,
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s+WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9+XKI+9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4"
+    },
+    {
+      "error": "invalid_invite",
+      "name": "surrounding_whitespace",
+      "now_epoch_seconds": null,
+      "text": " ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4"
+    }
+  ],
+  "node_seed_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "valid": [
+    {
+      "access_code": "Abcdefghijklmnopqrstuvwxyz012345",
+      "access_expires_at_epoch_seconds": 2000000000,
+      "binary_hex": "8258748a016e6f72672e6b65742e6163636573730158200d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b08183016f6b65742e6578616d706c652e636f6d1901bb78204162636465666768696a6b6c6d6e6f707172737475767778797a3031323334350101001a773594005840b63570fbf1ba3d285754d1f15e764ab7bdf97288fbd25b965bde5df23037a05d386740d6d8877f89dfcdcf18a1c3431930cfce83901fd6ca05965ba21764030e",
+      "control_api_max": 1,
+      "control_api_min": 1,
+      "decode_at_epoch_seconds": 1900000000,
+      "locators": [
+        {
+          "base_url": "https://ket.example.com/",
+          "host": "ket.example.com",
+          "port": 443,
+          "type": "https"
+        }
+      ],
+      "name": "single_https",
+      "node_fingerprint": "16E7:E930:BB31:A9AC:2B4A:769B:F27A:214C",
+      "node_public_key_hex": "0d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b0",
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4"
+    },
+    {
+      "access_code": "Abcdefghijklmnopqrstuvwxyz012345",
+      "access_expires_at_epoch_seconds": null,
+      "binary_hex": "82588c8a016e6f72672e6b65742e6163636573730158200d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b083830170656467652e6578616d706c652e6e65741920fb83016f6b65742e6578616d706c652e636f6d1901bb83020419225378204162636465666768696a6b6c6d6e6f707172737475767778797a303132333435010100f658400bf596ad771672325f24ac1010fd0c588eed128c19bf9a4975e67df21c357991b0a4d6099b55a8de753a76f3b6a6f873b5fb5a4b5fd8a9a4220456c4bf40890e",
+      "control_api_max": 1,
+      "control_api_min": 1,
+      "decode_at_epoch_seconds": 1900000000,
+      "locators": [
+        {
+          "base_url": "https://edge.example.net:8443/",
+          "host": "edge.example.net",
+          "port": 8443,
+          "type": "https"
+        },
+        {
+          "base_url": "https://ket.example.com/",
+          "host": "ket.example.com",
+          "port": 443,
+          "type": "https"
+        },
+        {
+          "base_url": "http://10.0.2.2:8787/",
+          "host": "10.0.2.2",
+          "port": 8787,
+          "type": "loopback_development"
+        }
+      ],
+      "name": "multiple_locators_without_expiry",
+      "node_fingerprint": "16E7:E930:BB31:A9AC:2B4A:769B:F27A:214C",
+      "node_public_key_hex": "0d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b0",
+      "text": "ket:invite:gliMigFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIODAXBlZGdlLmV4YW1wbGUubmV0GSD7gwFva2V0LmV4YW1wbGUuY29tGQG7gwIEGSJTeCBBYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NQEBAPZYQAv1lq13FnIyXySsEBD9DFiO7RKMGb-aSXXmffIcNXmRsKTWCZtVqN51Onbztqb4c7X7Wktf2KmkIgRWxL9AiQ4"
+    }
+  ]
+}

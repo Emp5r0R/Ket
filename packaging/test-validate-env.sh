@@ -134,6 +134,22 @@ expect_pass 'HTTPS Stealth configuration' "${XHTTP_ENV[@]}"
 expect_pass 'WireGuard TLS configuration' "${WIREGUARD_ENV[@]}"
 expect_pass 'OpenVPN TLS configuration' "${OPENVPN_ENV[@]}"
 
+NODE_KEY=REREREREREREREREREREREREREREREREREREREREREQ
+expect_pass 'invite signing key with a public DNS URL' \
+  KET_NODE_SIGNING_KEY=$NODE_KEY KET_PUBLIC_URL=https://ket.example.com
+expect_pass 'invite signing key with a port and trailing slash' \
+  KET_NODE_SIGNING_KEY=$NODE_KEY KET_PUBLIC_URL=https://Ket-1-2-3-4.sslip.io:8443/
+expect_pass 'invite signing key with loopback development' \
+  KET_NODE_SIGNING_KEY=$NODE_KEY KET_PUBLIC_URL=http://127.0.0.1:8787
+expect_fail 'padded invite signing key' 'KET_NODE_SIGNING_KEY must be a 32-byte seed' \
+  "KET_NODE_SIGNING_KEY=$NODE_KEY=" KET_PUBLIC_URL=https://ket.example.com
+expect_fail 'non-canonical invite signing key' 'KET_NODE_SIGNING_KEY must be a 32-byte seed' \
+  KET_NODE_SIGNING_KEY=RERERERERERERERERERERERERERERERERERERERERER KET_PUBLIC_URL=https://ket.example.com
+for url in https://ket.example.com/prefix https://203.0.113.9 https://ket.example.test https://single 'https://[2001:db8::1]'; do
+  expect_fail "invite signing key with $url" 'KET_NODE_SIGNING_KEY requires KET_PUBLIC_URL' \
+    KET_NODE_SIGNING_KEY=$NODE_KEY "KET_PUBLIC_URL=$url"
+done
+
 expect_fail 'missing admin token' 'KET_ADMIN_TOKEN is required' KET_ADMIN_TOKEN=
 expect_fail 'remote plaintext control URL' 'KET_PUBLIC_URL must use HTTPS' KET_PUBLIC_URL=http://ket.example.test
 expect_fail 'invalid country code' 'KET_COUNTRY_CODE must be two uppercase letters' KET_COUNTRY_CODE=sg

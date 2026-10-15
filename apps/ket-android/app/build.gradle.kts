@@ -56,7 +56,11 @@ android { namespace = "com.ket.android"; compileSdk = 36
     externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
     sourceSets {
         named("main") { jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-engines/jniLibs")) }
-        named("test") { resources.srcDir("src/main/res/raw") }
+        named("test") {
+            resources.srcDir("src/main/res/raw")
+            // Invite conformance vectors are owned by the Rust reference implementation.
+            resources.srcDir(rootProject.layout.projectDirectory.dir("../../crates/ket-invite/tests/vectors"))
+        }
     }
     packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libsslocal.so", "**/libxray.so", "**/libwstunnel.so", "**/libopenvpn.so", "**/libovpnexec.so") } }
     buildFeatures {
@@ -115,6 +119,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("com.google.crypto.tink:tink-android:1.23.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

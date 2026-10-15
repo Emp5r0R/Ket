@@ -127,7 +127,7 @@ If Certbot fails, verify TCP `80`, DNS propagation, NAT, provider ingress, and a
 
 ## Client handoff
 
-After the readiness check, the installer prints the server URL and one plaintext access code. Store the code immediately; only its protected verifier remains on the server. Download the matching package from the [stable v1.0.1 release](https://github.com/Emp5r0R/Ket/releases/tag/v1.0.1):
+After the readiness check, the installer prints the server URL, one plaintext access code, and the same grant as a signed invite (`ket:invite:...`). Store them immediately; only the code's protected verifier remains on the server. The installer also generates the node signing key (`KET_NODE_SIGNING_KEY` in `.env`) that signs invites; never rotate or share it. Download the matching package from the [stable v1.0.1 release](https://github.com/Emp5r0R/Ket/releases/tag/v1.0.1):
 
 - Linux Debian/Ubuntu: `Ket_1.0.1_amd64.deb`
 - Windows x64: `Ket_1.0.1_x64-setup.exe`
@@ -171,6 +171,16 @@ sudo ./packaging/server/compose.sh ps
 ```
 
 Review release notes before checkout when a version declares a state or configuration migration.
+
+Servers installed before invites existed have no node signing key. Add one once, then restart; existing access codes keep working and new grants also return an invite:
+
+```bash
+cd /opt/ket
+grep -q '^KET_NODE_SIGNING_KEY=' .env || \
+  printf 'KET_NODE_SIGNING_KEY=%s\n' "$(openssl rand 32 | base64 | tr -d '\n=' | tr '+/' '-_')" | sudo tee -a .env >/dev/null
+sudo ./packaging/validate-env.sh
+sudo ./packaging/server/compose.sh up --detach --remove-orphans
+```
 
 ## Security boundary
 
