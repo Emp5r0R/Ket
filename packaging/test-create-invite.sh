@@ -82,6 +82,15 @@ last_request=$(tail -n1 "$work/requests.jsonl")
 [[ $last_request == '{"label": "Family phones", "max_connections": 2, "valid_for_minutes": 10080}' ]] \
   || fail "unexpected grant request: $last_request"
 
+# Without KET_CONTROL_URL the helper finds the control plane on .env's
+# KET_CONTROL_PORT.
+cp "$work/install/.env" "$work/env.saved"
+printf 'KET_CONTROL_PORT=%s\n' "$port" >> "$work/install/.env"
+output=$(cd "$work/install" && env -i "PATH=$work/bin:$PATH" "$helper" --devices 1 --no-qr) \
+  || fail 'the helper did not use KET_CONTROL_PORT from .env'
+grep -Fxq "$invite" <<<"$output" || fail 'invite missing when using KET_CONTROL_PORT'
+cp "$work/env.saved" "$work/install/.env"
+
 output=$(run_helper --devices 1 --minutes 90 --no-qr)
 grep -Fxq "$invite" <<<"$output" || fail 'invite missing with --no-qr'
 grep -q 'QR\[' <<<"$output" && fail '--no-qr still rendered a QR code'
@@ -103,6 +112,6 @@ if (cd "$work" && env -i "PATH=$PATH" "$helper" >/dev/null 2>&1); then
   fail 'ran outside an install directory without an admin token'
 fi
 requests=$(wc -l < "$work/requests.jsonl")
-((requests == 4)) || fail "invalid invocations reached the server ($requests requests)"
+((requests == 5)) || fail "invalid invocations reached the server ($requests requests)"
 
 printf 'create-invite contract tests passed.\n'

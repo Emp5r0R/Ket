@@ -12,7 +12,6 @@ label="Ket devices"
 devices=1
 minutes=$((30 * 24 * 60))
 show_qr=true
-control_url=${KET_CONTROL_URL:-http://127.0.0.1:${KET_CONTROL_PORT:-8787}}
 
 usage() {
   cat <<'EOF'
@@ -60,6 +59,13 @@ if [[ -z ${KET_ADMIN_TOKEN:-} ]]; then
   KET_ADMIN_TOKEN=$(sed -n 's/^KET_ADMIN_TOKEN=//p' .env | tail -n 1)
 fi
 [[ -n $KET_ADMIN_TOKEN ]] || fail 'KET_ADMIN_TOKEN is not configured'
+# The control plane listens on the host port the installation chose
+# (KET_CONTROL_PORT in .env), not always 8787.
+control_port=${KET_CONTROL_PORT:-}
+if [[ -z $control_port && -r .env ]]; then
+  control_port=$(sed -n 's/^KET_CONTROL_PORT=//p' .env | tail -n 1)
+fi
+control_url=${KET_CONTROL_URL:-http://127.0.0.1:${control_port:-8787}}
 for dependency in curl jq; do
   command -v "$dependency" >/dev/null || fail "$dependency is required"
 done
