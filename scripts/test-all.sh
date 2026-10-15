@@ -132,14 +132,18 @@ server_contracts() {
   require_command gpg
   local scripts=()
   while IFS= read -r script; do scripts+=("$script"); done < <(
-    find "$ROOT/.github/scripts" "$ROOT/packaging" "$ROOT/scripts" \
-      -type f -name '*.sh' -print | LC_ALL=C sort
+    { printf '%s\n' "$ROOT/install.sh"
+      find "$ROOT/.github/scripts" "$ROOT/packaging" "$ROOT/scripts" -type f -name '*.sh' -print; } \
+      | LC_ALL=C sort
   )
   run_step 'Shell syntax for every maintained Bash script' bash -n "${scripts[@]}"
   if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     run_step 'Tracked shell scripts are executable in Git' git_tracked_scripts_are_executable
   fi
-  run_step 'Server installer argument and rendering tests' "$ROOT/packaging/test-install-server.sh"
+  run_step 'Server installer command-line tests' "$ROOT/packaging/test-install-server.sh"
+  run_step 'Server installer library tests' "$ROOT/packaging/test-installer-lib.sh"
+  run_step 'One-command bootstrap tests' "$ROOT/packaging/test-bootstrap.sh"
+  run_step 'Compose overlay selection tests' "$ROOT/packaging/test-compose-overlays.sh"
   run_step 'Public edge renderer and template contract tests' "$ROOT/packaging/test-render-edge.sh"
   run_step 'Invite helper contract tests' "$ROOT/packaging/test-create-invite.sh"
   run_step 'Certificate trust-bundle tests' "$ROOT/packaging/test-certificate-trust-bundle.sh"
@@ -174,6 +178,7 @@ quality() {
 
 integration() {
   run_step 'Public edge probe resistance (Docker)' "$ROOT/packaging/verify-edge-proxy.sh"
+  run_step 'Installer provisioning with real key generation (Docker)' "$ROOT/packaging/verify-installer-provisioning.sh"
   run_step 'OpenVPN over stunnel engine lifecycle' "$ROOT/packaging/verify-openvpn-handshake.sh"
   run_step 'Shadowsocks 2022 engine traffic lifecycle' "$ROOT/packaging/verify-shadowsocks-traffic.sh"
   run_step 'XHTTP TLS Stealth engine traffic lifecycle' "$ROOT/packaging/verify-xhttp-tls-traffic.sh"

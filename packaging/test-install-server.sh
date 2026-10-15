@@ -1,128 +1,82 @@
 #!/usr/bin/env bash
+# Command-line contract tests for packaging/install-server.sh (plan mode only;
+# nothing is installed). Library behaviour is covered by test-installer-lib.sh.
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 installer="$root/packaging/install-server.sh"
 
-automatic=$(
-  "$installer" \
-    --mode auto \
-    --public-ip 8.8.8.8 \
-    --email operator@example.com \
-    --plan
-)
-grep -Fq 'Mode: auto' <<<"$automatic"
-grep -Fq 'Control hostname: ket-8-8-8-8.sslip.io' <<<"$automatic"
-grep -Fq 'DNS: none to configure.' <<<"$automatic"
-grep -Fq 'Do NOT expose TCP 8787, 8445, or 8446' <<<"$automatic"
-grep -Fq 'TCP+UDP 20000-20031' <<<"$automatic"
-grep -Fq 'Git ref: v1.0.1' <<<"$automatic"
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
 
-direct=$(
-  "$installer" \
-    --domain ket.example.com \
-    --email operator@example.com \
-    --max-sessions 32 \
-    --first-code-valid-minutes 1440 \
-    --plan
-)
-grep -Fq 'Mode: direct' <<<"$direct"
-grep -Fq 'TCP 80,443,9443,20000-20031' <<<"$direct"
-grep -Fq 'Location: automatic public-IP detection' <<<"$direct"
-grep -Fq 'First access-code concurrent-connection limit: 5' <<<"$direct"
-grep -Fq 'First access-code lifetime: 1440 minutes' <<<"$direct"
-grep -Fq 'DNS: create an A record for ket.example.com' <<<"$direct"
+plan() {
+  "$installer" --public-ip 8.8.8.8 --plan "$@"
+}
 
-small=$(
-  "$installer" \
-    --domain ket.example.com \
-    --email operator@example.com \
-    --max-sessions 1 \
-    --plan
-)
-grep -Fq 'First access-code concurrent-connection limit: 1' <<<"$small"
-
-cloudflare=$(
-  "$installer" \
-    --mode cloudflare \
-    --domain ket.example.com \
-    --direct-host direct-ket.example.com \
-    --email operator@example.com \
-    --max-sessions 64 \
-    --plan
-)
-grep -Fq 'Mode: cloudflare' <<<"$cloudflare"
-grep -Fq 'Raw transport hostname: direct-ket.example.com' <<<"$cloudflare"
-grep -Fq '20000-20063' <<<"$cloudflare"
-grep -Fq 'ket.example.com = Proxied; direct-ket.example.com = DNS only' <<<"$cloudflare"
-grep -Fq 'Cloudflare SSL/TLS: Full (strict)' <<<"$cloudflare"
-
-manual=$(
-  "$installer" \
-    --domain ket.example.com \
-    --email operator@example.com \
-    --country-code SG \
-    --country-name Singapore \
-    --city Singapore \
-    --latitude 1.29 \
-    --longitude 103.85 \
-    --plan
-)
-grep -Fq 'Location: Singapore, Singapore (SG; 1.29,103.85)' <<<"$manual"
-
-international=$(
-  "$installer" \
-    --domain ket.example.com \
-    --email operator@example.com \
-    --country-code CI \
-    --country-name "Côte d'Ivoire" \
-    --city Abidjan \
-    --latitude 5.36 \
-    --longitude -4.01 \
-    --plan
-)
-grep -Fq "Location: Abidjan, Côte d'Ivoire (CI; 5.36,-4.01)" <<<"$international"
+expect() {
+  local output=$1 text=$2
+  grep -Fq -- "$text" <<<"$output" || fail "expected '$text' in:"$'\n'"$output"
+}
 
 reject() {
-  if "$installer" "$@" --plan >/dev/null 2>&1; then
-    printf 'Expected installer arguments to fail: %s\n' "$*" >&2
-    exit 1
+  if "$installer" --plan "$@" >/dev/null 2>&1; then
+    fail "expected installer arguments to fail: $*"
   fi
 }
 
-reject --mode cloudflare --domain ket.example.com --email operator@example.com
-reject --mode auto --domain ket.example.com --email operator@example.com --public-ip 8.8.8.8
-reject --mode direct --email operator@example.com
-reject --mode direct --domain ket.example.com --direct-host raw.example.com --email operator@example.com
-reject --mode auto --email operator@example.com --public-ip 999.1.1.1
-reject --mode auto --email operator@example.com --public-ip 10.0.0.1
-reject --mode auto --email operator@example.com --public-ip 100.64.0.1
-reject --mode auto --email operator@example.com --public-ip 192.168.1.1
-reject --mode auto --email operator@example.com --public-ip 203.0.113.10
-reject --domain bad..example.com --email operator@example.com
-reject --domain ket.example.com --email operator@example.com --max-sessions 513
-reject --domain ket.example.com --email operator@example.com --first-code-valid-minutes 0
-reject --domain ket.example.com --email operator@example.com --first-code-valid-minutes 525601
-reject --domain ket.example.com --email operator@example.com --country-name "bad\$name"
-reject --domain ket.example.com --email operator@example.com --country-code SG
-reject --domain ket.example.com --email operator@example.com --install-dir '/opt/ket server'
-reject --domain ket.example.com --email operator@example.com --install-dir /opt/../etc/ket
+automatic=$(plan)
+expect "$automatic" 'Address: ket-8-8-8-8.sslip.io (automatic, no DNS needed)'
+expect "$automatic" 'TCP+UDP 20000-20031'
+expect "$automatic" 'Never expose TCP 8787, 8445, or 8446.'
+expect "$automatic" 'First invite: up to 5 device(s) for 43200 minutes'
+expect "$automatic" 'Install directory: /opt/ket'
 
-printf 'Ket installer argument tests passed.\n'
+direct=$(plan ket.example.com --mode direct --max-sessions 32 --first-code-valid-minutes 1440)
+expect "$direct" 'Address: ket.example.com (your domain, pointing straight at this server)'
+expect "$direct" 'First invite: up to 5 device(s) for 1440 minutes'
 
-# The installer's node signing key generator must always satisfy the preflight
-# and server format (32-byte seed, unpadded Base64URL).
-eval "$(sed -n '/^random_base64url_32()/p' "$installer")"
-for _ in 1 2 3 4 5 6 7 8; do
-  node_key=$(random_base64url_32)
-  env -i "PATH=$PATH" \
-    KET_ADMIN_TOKEN=01234567890123456789012345678901 \
-    KET_PUBLIC_URL=https://ket.example.com \
-    "KET_NODE_SIGNING_KEY=$node_key" \
-    "$root/packaging/validate-env.sh" >/dev/null
+small=$(plan ket.example.com --mode direct --max-sessions 1)
+expect "$small" 'First invite: up to 1 device(s)'
+
+cloudflare=$(plan --domain ket.example.com --mode cloudflare --max-sessions 64 --email operator@example.com)
+expect "$cloudflare" 'Address: ket.example.com (through Cloudflare)'
+expect "$cloudflare" 'Direct address for UDP and raw TLS: ket-8-8-8-8.sslip.io'
+expect "$cloudflare" 'TCP+UDP 20000-20063'
+expect "$cloudflare" 'Full (strict)'
+
+named=$(plan ket.example.com --mode cloudflare --direct-host direct-ket.example.com)
+expect "$named" 'Direct address for UDP and raw TLS: direct-ket.example.com'
+
+plan ket.example.com --mode direct \
+  --country-code sg --country-name Singapore --city Singapore --latitude 1.29 --longitude 103.85 >/dev/null
+plan ket.example.com --mode direct \
+  --country-code CI --country-name "Côte d'Ivoire" --city Abidjan --latitude 5.36 --longitude -4.01 >/dev/null
+"$installer" --help | grep -Fq 'Usage: install-server.sh [DOMAIN] [options]' || fail 'help text missing'
+
+reject --public-ip 8.8.8.8 --mode cloudflare
+reject --public-ip 8.8.8.8 --mode auto ket.example.com
+reject --public-ip 8.8.8.8 --mode direct
+reject --public-ip 8.8.8.8 --mode direct ket.example.com --direct-host raw.example.com
+reject --public-ip 8.8.8.8 --mode cloudflare ket.example.com --direct-host ket.example.com
+reject --public-ip 8.8.8.8 --mode sideways ket.example.com
+reject --public-ip 8.8.8.8 --direct-host raw.example.com
+for address in 999.1.1.1 10.0.0.1 100.64.0.1 192.168.1.1 203.0.113.10 127.0.0.1; do
+  reject --public-ip "$address"
 done
-# shellcheck disable=SC2016 # literal installer text, not an expansion
-grep -Fq 'KET_NODE_SIGNING_KEY=$(random_base64url_32)' "$installer"
-grep -Fq './packaging/server/create-invite.sh' "$installer"
-grep -Eq 'apt-get install -y .*qrencode' "$installer"
-printf 'Installer node-key generation tests passed.\n'
+reject --public-ip 8.8.8.8 bad..example.com
+reject --public-ip 8.8.8.8 one.example.com two.example.com
+reject --public-ip 8.8.8.8 --email not-an-email
+reject --public-ip 8.8.8.8 --max-sessions 513
+reject --public-ip 8.8.8.8 --max-sessions 0
+reject --public-ip 8.8.8.8 --first-code-valid-minutes 0
+reject --public-ip 8.8.8.8 --first-code-valid-minutes 525601
+reject --public-ip 8.8.8.8 --country-name "bad\$name" --country-code SG --city X --latitude 1 --longitude 1
+reject --public-ip 8.8.8.8 --country-code SG
+reject --public-ip 8.8.8.8 --install-dir '/opt/ket server'
+reject --public-ip 8.8.8.8 --install-dir /opt/../etc/ket
+reject --public-ip 8.8.8.8 --ref '../main'
+reject --public-ip 8.8.8.8 --unknown-option
+
+printf 'Ket installer command-line tests passed.\n'

@@ -45,6 +45,10 @@ For a production server, source `.env`, run `./packaging/validate-env.sh`, and v
 
 Container upgrades retain the v1 state volume. The loader accepts older v1 session records that predate scoped data-plane hashes, but those missing credentials remain fail closed until the client creates a current session. Unknown schema versions and structurally inconsistent or oversized state files stop startup instead of discarding grants or guessing a migration. Back up the `ket-state` volume before upgrading; never replace a rejected state file with an empty document as an automated recovery action.
 
+## Server installer
+
+The one-command bootstrap (`install.sh`) installs whatever GitHub marks as the latest release, using that release's own `packaging/install-server.sh`. Publishing a release therefore changes what every new server gets, immediately. Before publishing, run `./scripts/test-all.sh server` and `./scripts/test-all.sh integration` on the release commit, confirm `packaging/installer/protocol` is present, and preview the installer on the tag with `KET_REF=<tag>` and `--plan`. Releases without the protocol file are installed through their own legacy command, which the bootstrap prints.
+
 ## Signing
 
 The Android debug artifact is only for testing. Production Android, Linux, and Windows artifacts must be signed by the release owner and their checksums published alongside the files. Ket does not store signing keys in this repository.
