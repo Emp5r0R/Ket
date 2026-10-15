@@ -33,7 +33,7 @@ Then choose exactly one setup.
 **No domain:** Ket detects the public IPv4 address and creates a certificate-backed `sslip.io` hostname automatically. This needs no DNS account, but a domain you control is preferred for a long-lived server because automatic mode depends on an external wildcard DNS service. Restricted DNS resolvers may block wildcard-IP hostnames; use your own domain when that affects intended clients.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/v1.0.1/packaging/install-server.sh | sudo bash -s -- \
   --mode auto \
   --email operator@example.com
 ```
@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-
 **Your own domain, without Cloudflare proxying:** create an `A` record such as `ket.example.com` pointing directly to the VPS, wait for it to resolve, then run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/v1.0.1/packaging/install-server.sh | sudo bash -s -- \
   --mode direct \
   --domain ket.example.com \
   --email operator@example.com
@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-
 **Cloudflare:** create `ket.example.com` as a **Proxied** record and `direct-ket.example.com` as a **DNS only** record, both pointing to the VPS. Set SSL/TLS to **Full (strict)** and keep WebSockets enabled, then run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/v1.0.1/packaging/install-server.sh | sudo bash -s -- \
   --mode cloudflare \
   --domain ket.example.com \
   --direct-host direct-ket.example.com \

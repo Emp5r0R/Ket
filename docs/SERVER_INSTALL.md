@@ -26,7 +26,7 @@ sudo apt-get update && sudo apt-get install -y ca-certificates curl
 Automatic mode detects the VPS public IPv4 address and derives a hostname such as `ket-161-118-195-126.sslip.io`. [sslip.io](https://sslip.io/) resolves hostnames containing an IP address to that address, so no DNS account or manual record is required. Ket still obtains a normal Let's Encrypt certificate and all clients retain certificate verification.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/v1.0.1/packaging/install-server.sh | sudo bash -s -- \
   --mode auto --email operator@example.com
 ```
 
@@ -37,7 +37,7 @@ Automatic mode depends on a third-party DNS service and can be blocked by DNS re
 Create an `A` record for the control hostname that resolves directly to the VPS public IPv4 address. The same name is used for raw transports and certificate verification.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/v1.0.1/packaging/install-server.sh | sudo bash -s -- \
   --mode direct --domain ket.example.com --email operator@example.com \
   --first-code-valid-minutes 43200
 ```
@@ -52,7 +52,7 @@ Create two records before installation:
 | `direct-ket.example.com` | DNS only | Hysteria2, REALITY, Shadowsocks 2022, OpenVPN/stunnel |
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/v1.0.1/packaging/install-server.sh | sudo bash -s -- \
   --mode cloudflare \
   --domain ket.example.com \
   --direct-host direct-ket.example.com \
@@ -92,7 +92,7 @@ With the default capacity of 32 sessions, allow these stateful rules in the VPS 
 The Shadowsocks range contains exactly `--max-sessions` ports starting at `20000`. `--plan` prints the final range without requiring root or changing the host:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/packaging/install-server.sh | \
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/v1.0.1/packaging/install-server.sh | \
   bash -s -- --domain ket.example.com --email operator@example.com --max-sessions 64 --plan
 ```
 
