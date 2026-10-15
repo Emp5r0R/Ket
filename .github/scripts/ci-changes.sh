@@ -69,8 +69,12 @@ classify() {
     apps/ket-android/*)
       enable android
       ;;
-    packaging/build-android.sh | packaging/prepare-android-engines.sh | packaging/validate-android-apk.sh)
+    packaging/build-android.sh | packaging/prepare-android-engines.sh)
       enable android
+      ;;
+    packaging/validate-android-apk.sh | packaging/test-validate-android-apk.sh)
+      # The validator's tests run with the server contract suite.
+      enable android container
       ;;
     packaging/fetch-hysteria.sh | packaging/fetch-shadowsocks.sh | packaging/fetch-xray.sh | packaging/fetch-wstunnel.sh)
       enable linux_package windows_package android

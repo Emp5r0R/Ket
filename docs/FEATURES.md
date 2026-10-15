@@ -11,6 +11,7 @@ Everything Ket implements today, and the qualification status of each transport.
 - The `ket` server command: guided invites, invite list and revoke, status, a troubleshooting `doctor`, logs, backups, key rotation, update, rollback, and uninstall ([SERVER_INSTALL.md](SERVER_INSTALL.md#managing-the-server)).
 - An update lifecycle: every release is rated for apps and servers; servers apply security fixes on their own with a health-checked, self-reverting swap, and tell each app whether its update is optional, recommended, security (with a deadline), or required ([UPDATES.md](UPDATES.md)).
 - Published multi-architecture server images on release, so installs and updates need not compile on the VPS.
+- A smaller Android download: an arm64 APK, about half the size, next to the universal APK.
 
 ## v1.0
 

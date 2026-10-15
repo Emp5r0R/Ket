@@ -36,6 +36,7 @@ assert_selection 'desktop native' apps/ket-desktop/src-tauri/src/lib.rs \
   desktop_native linux_package desktop_windows windows_package
 assert_selection 'Android client' apps/ket-android/app/src/main/AndroidManifest.xml android
 assert_selection 'Android engine fetch' packaging/fetch-hysteria.sh linux_package windows_package android
+assert_selection 'Android APK validator' packaging/test-validate-android-apk.sh android container
 assert_selection 'Linux package lifecycle' packaging/verify-linux-deb.sh linux_package
 assert_selection 'Windows package lifecycle' packaging/verify-windows-nsis.ps1 windows_package
 assert_selection 'server installer' packaging/install-server.sh container

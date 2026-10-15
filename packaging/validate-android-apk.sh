@@ -1,15 +1,37 @@
 #!/usr/bin/env bash
+# Checks a Ket APK's native engine payload and, optionally, its signer.
+#
+#   validate-android-apk.sh [--abi universal|ABI] [--expected-cert-sha256 DIGEST] APK
+#
+# --abi names the APK split: "universal" (the default) must carry every ABI;
+# a single ABI must carry exactly that ABI's libraries and nothing else.
 set -euo pipefail
 
+readonly ABIS=(armeabi-v7a arm64-v8a x86 x86_64)
+
+usage() {
+  printf 'Usage: %s [--abi universal|%s] [--expected-cert-sha256 <digest>] <apk>\n' \
+    "$0" "$(IFS='|'; printf '%s' "${ABIS[*]}")" >&2
+  exit 2
+}
+
+# Libraries every build of Ket must bundle for one ABI. The Go and Rust engines
+# that only ship for 64-bit ABIs are listed per ABI.
+required_libraries() {
+  printf '%s\n' libhysteria.so libhev-socks5-tunnel.so libket-android-native.so libopenvpn.so libovpnexec.so
+  case $1 in
+    arm64-v8a) printf '%s\n' libsslocal.so libxray.so libwstunnel.so ;;
+    x86_64) printf '%s\n' libsslocal.so libxray.so ;;
+  esac
+}
+
 expected_cert_sha256=""
+split=universal
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --expected-cert-sha256)
-      if [[ $# -lt 2 ]]; then
-        printf '%s requires a value.\n' "$1" >&2
-        exit 2
-      fi
-      expected_cert_sha256=$2
+    --expected-cert-sha256 | --abi)
+      [[ $# -ge 2 ]] || { printf '%s requires a value.\n' "$1" >&2; exit 2; }
+      if [[ $1 == --abi ]]; then split=$2; else expected_cert_sha256=$2; fi
       shift 2
       ;;
     --)
@@ -27,47 +49,35 @@ while [[ $# -gt 0 ]]; do
 done
 
 apk=${1:-}
-if [[ -z "$apk" || ! -f "$apk" ]]; then
-  printf 'Usage: %s [--expected-cert-sha256 <digest>] <apk>\n' "$0" >&2
-  exit 2
-fi
-if [[ $# -ne 1 ]]; then
-  printf 'Usage: %s [--expected-cert-sha256 <digest>] <apk>\n' "$0" >&2
-  exit 2
+[[ -n "$apk" && -f "$apk" && $# -eq 1 ]] || usage
+
+if [[ $split == universal ]]; then
+  expected_abis=("${ABIS[@]}")
+elif printf '%s\n' "${ABIS[@]}" | grep -Fxq -- "$split"; then
+  expected_abis=("$split")
+else
+  printf 'Unknown ABI: %s\n' "$split" >&2
+  usage
 fi
 
-for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-  for library in libhysteria.so libhev-socks5-tunnel.so libket-android-native.so; do
+entries=$(unzip -Z1 "$apk") || { printf 'Not a readable APK: %s\n' "$apk" >&2; exit 1; }
+for abi in "${expected_abis[@]}"; do
+  while IFS= read -r library; do
     entry="lib/$abi/$library"
-    if ! unzip -Z1 "$apk" "$entry" | grep -Fxq "$entry"; then
+    if ! grep -Fxq -- "$entry" <<<"$entries"; then
       printf 'APK is missing %s\n' "$entry" >&2
       exit 1
     fi
-  done
-  for library in libopenvpn.so libovpnexec.so; do
-    entry="lib/$abi/$library"
-    if ! unzip -Z1 "$apk" "$entry" | grep -Fxq "$entry"; then
-      printf 'APK is missing %s\n' "$entry" >&2
-      exit 1
-    fi
-  done
+  done < <(required_libraries "$abi")
 done
 
-entry="lib/arm64-v8a/libwstunnel.so"
-if ! unzip -Z1 "$apk" "$entry" | grep -Fxq "$entry"; then
-  printf 'APK is missing %s\n' "$entry" >&2
+present_abis=$(sed -n 's|^lib/\([^/]*\)/.*|\1|p' <<<"$entries" | LC_ALL=C sort -u)
+unexpected=$(LC_ALL=C comm -23 <(printf '%s\n' "$present_abis") \
+  <(printf '%s\n' "${expected_abis[@]}" | LC_ALL=C sort -u))
+if [[ -n $unexpected ]]; then
+  printf 'The %s APK also carries libraries for: %s\n' "$split" "$(tr '\n' ' ' <<<"$unexpected")" >&2
   exit 1
 fi
-
-for abi in arm64-v8a x86_64; do
-  for library in libsslocal.so libxray.so; do
-    entry="lib/$abi/$library"
-    if ! unzip -Z1 "$apk" "$entry" | grep -Fxq "$entry"; then
-      printf 'APK is missing %s\n' "$entry" >&2
-      exit 1
-    fi
-  done
-done
 
 apksigner=${APKSIGNER:-}
 if [[ -z "$apksigner" ]] && command -v apksigner >/dev/null 2>&1; then
@@ -106,4 +116,4 @@ if [[ -n "$apksigner" ]]; then
   fi
 fi
 
-printf 'Validated Android Hysteria and OpenVPN payloads for four ABIs, Shadowsocks/Xray payloads for arm64-v8a and x86_64, and wstunnel for arm64-v8a.\n'
+printf 'Validated the %s APK engine payload for: %s\n' "$split" "${expected_abis[*]}"

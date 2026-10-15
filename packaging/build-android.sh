@@ -1,18 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Builds the Ket Android APKs and validates the shipped splits.
+#
+#   build-android.sh [debug|release] [--out DIR]
+#
+# --out copies the arm64-v8a and universal APKs into DIR under their release
+# names (Ket_<version>_android-arm64.apk, Ket_<version>_android-universal.apk).
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 project_dir="$repo_root/apps/ket-android"
-variant=${1:-debug}
+variant=debug
+out_dir=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    debug | release) variant=$1; shift ;;
+    --out)
+      [[ $# -ge 2 ]] || { printf -- '--out requires a directory.\n' >&2; exit 2; }
+      out_dir=$2
+      shift 2
+      ;;
+    *)
+      printf 'Usage: %s [debug|release] [--out DIR]\n' "$0" >&2
+      exit 2
+      ;;
+  esac
+done
+apk_dir="$project_dir/app/build/outputs/apk/$variant"
+# Published splits: release name suffix -> Gradle split name.
+declare -A shipped_splits=([arm64]=arm64-v8a [universal]=universal)
 case "$variant" in
   debug)
     gradle_task=:app:assembleDebug
-    apk="$project_dir/app/build/outputs/apk/debug/app-debug.apk"
     validation_args=()
     ;;
   release)
     gradle_task=:app:assembleRelease
-    apk="$project_dir/app/build/outputs/apk/release/app-release.apk"
     required=(
       KET_ANDROID_KEYSTORE
       KET_ANDROID_KEYSTORE_PASSWORD
@@ -32,11 +54,21 @@ case "$variant" in
     fi
     validation_args=(--expected-cert-sha256 "$KET_ANDROID_CERT_SHA256")
     ;;
-  *)
-    printf 'Usage: %s [debug|release]\n' "$0" >&2
-    exit 2
-    ;;
 esac
+
+# Gradle derives versionName and versionCode from the workspace version. A
+# release must not carry a stale override (for example from an old env file).
+workspace_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$repo_root/Cargo.toml" | head -n 1)
+if [[ $variant == release ]]; then
+  IFS=. read -r major minor patch <<<"$workspace_version"
+  workspace_code=$((10#$major * 10000 + 10#$minor * 100 + 10#$patch))
+  if [[ -n ${KET_ANDROID_VERSION_NAME:-} && $KET_ANDROID_VERSION_NAME != "$workspace_version" ]] \
+    || [[ -n ${KET_ANDROID_VERSION_CODE:-} && $KET_ANDROID_VERSION_CODE != "$workspace_code" ]]; then
+    printf 'KET_ANDROID_VERSION_NAME/CODE (%s/%s) disagree with the workspace version %s (%s); unset them.\n' \
+      "${KET_ANDROID_VERSION_NAME:-}" "${KET_ANDROID_VERSION_CODE:-}" "$workspace_version" "$workspace_code" >&2
+    exit 1
+  fi
+fi
 
 sdk=${KET_ANDROID_SDK:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}}
 if [[ ! -d "$sdk/platforms" && -d "$repo_root/../Abyssal/android-sdk/platforms" ]]; then
@@ -56,7 +88,19 @@ fi
 "$repo_root/packaging/prepare-android-engines.sh" "$project_dir/app"
 gradle_home=${GRADLE_USER_HOME:-/media/n_emperor/Aadhish/gradle-home}
 (cd "$project_dir" && GRADLE_USER_HOME="$gradle_home" ./gradlew --no-daemon "$gradle_task")
-APKSIGNER="$apksigner" \
-  "$repo_root/packaging/validate-android-apk.sh" "${validation_args[@]}" "$apk"
-printf 'APK: %s\n' "$apk"
-sha256sum "$apk"
+version=${KET_ANDROID_VERSION_NAME:-$workspace_version}
+[[ -z $out_dir ]] || mkdir -p "$out_dir"
+for name in "${!shipped_splits[@]}"; do
+  split=${shipped_splits[$name]}
+  apk="$apk_dir/app-$split-$variant.apk"
+  APKSIGNER="$apksigner" \
+    "$repo_root/packaging/validate-android-apk.sh" --abi "$split" "${validation_args[@]}" "$apk"
+  if [[ -n $out_dir ]]; then
+    apk_out="$out_dir/Ket_${version}_android-$name.apk"
+    [[ $variant == release ]] || apk_out="${apk_out%.apk}-debug.apk"
+    cp -- "$apk" "$apk_out"
+    apk=$apk_out
+  fi
+  printf 'APK: %s\n' "$apk"
+  sha256sum "$apk"
+done

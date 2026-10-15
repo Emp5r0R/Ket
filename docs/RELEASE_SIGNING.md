@@ -17,8 +17,10 @@ Load the owner-held values, then build and verify the release variant:
 set -a
 . "$HOME/.ket-release/release.env"
 set +a
-./packaging/build-android.sh release
+./packaging/build-android.sh release --out release-artifacts/v<version>
 ```
+
+This writes `Ket_<version>_android-arm64.apk` and `Ket_<version>_android-universal.apk`. The version comes from the workspace; remove `KET_ANDROID_VERSION_NAME` and `KET_ANDROID_VERSION_CODE` from `release.env` if they are still there, because a value that disagrees stops the build.
 
 ## Package signatures
 
@@ -28,7 +30,7 @@ Place only final APK, DEB, and EXE artifacts in one directory, then run:
 set -a
 . "$HOME/.ket-release/release.env"
 set +a
-./packaging/sign-release.sh release-artifacts/v1.0.1
+./packaging/sign-release.sh release-artifacts/v<version>
 ```
 
 The signer regenerates `SHA256SUMS`, signs every package and the checksum file, verifies each new signature, and exports the public key.

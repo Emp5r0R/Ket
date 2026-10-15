@@ -32,7 +32,7 @@ When it finishes, you get an **invite** and a QR code.
 
 ## 2. Connect
 
-1. Install the Ket app for Linux, Windows, or Android from the [latest release](https://github.com/Emp5r0R/Ket/releases/latest).
+1. Install the Ket app for Linux, Windows, or Android from the [latest release](https://github.com/Emp5r0R/Ket/releases/latest). On Android, take the `android-arm64` file; if your phone won't install it, take `android-universal`.
 2. Paste the invite or scan its QR code.
 3. Tap **Connect**.
 

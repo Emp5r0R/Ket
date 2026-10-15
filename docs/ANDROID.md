@@ -30,14 +30,18 @@ The Compose surface uses the same node contract as desktop. It exposes Automatic
 
 Generated third-party files live under `app/build/generated/ket-engines` and are not tracked. The APK validator requires Hysteria, OpenVPN, hev, and the Ket JNI shim for every ABI, Xray plus Shadowsocks for both supported 64-bit ABIs, and wstunnel for arm64 before CI uploads the artifact.
 
+Gradle builds one APK per ABI plus a universal APK (`app-<abi>-<variant>.apk`, `app-universal-<variant>.apk`). Releases ship two of them: `Ket_<version>_android-arm64.apk` for current phones, about half the size of the universal one, and `Ket_<version>_android-universal.apk` for everything else. Both are signed with the same key and version, so either one updates the other. `validate-android-apk.sh --abi <abi>` requires a split to carry exactly its own ABI's engines; `--abi universal` (the default) requires all four ABIs.
+
+The app's `versionName` and `versionCode` come from the workspace version in `Cargo.toml` (`versionCode` = MAJOR×10000 + MINOR×100 + PATCH). `KET_ANDROID_VERSION_NAME` and `KET_ANDROID_VERSION_CODE` still override them for test builds, but `build-android.sh release` refuses overrides that disagree with the workspace.
+
 ## Verification
 
 ```bash
 ./packaging/build-android.sh debug
 GRADLE_USER_HOME=/media/n_emperor/Aadhish/gradle-home \
   apps/ket-android/gradlew --no-daemon testDebugUnitTest assembleDebug lintDebug
-./packaging/validate-android-apk.sh \
-  apps/ket-android/app/build/outputs/apk/debug/app-debug.apk
+./packaging/validate-android-apk.sh --abi arm64-v8a \
+  apps/ket-android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
 ```
 
 `./packaging/build-android.sh` defaults to `debug`; the explicit argument avoids confusing a test build with a release. A release build requires all signing variables and pins the resulting APK to the expected certificate:
@@ -48,14 +52,12 @@ export KET_ANDROID_KEYSTORE_PASSWORD='<keystore password>'
 export KET_ANDROID_KEY_ALIAS=ket-release
 export KET_ANDROID_KEY_PASSWORD='<key password>'
 export KET_ANDROID_CERT_SHA256='<64-hex-digit certificate SHA-256>'
-export KET_ANDROID_VERSION_CODE=6
-export KET_ANDROID_VERSION_NAME=1.0.1
-./packaging/build-android.sh release
+./packaging/build-android.sh release --out release-artifacts/v<version>
 ```
 
-Obtain the expected fingerprint with `keytool -list -v -keystore "$KET_ANDROID_KEYSTORE" -alias "$KET_ANDROID_KEY_ALIAS"`; let `keytool` prompt for the password. Gradle rejects every release task when the signing environment is missing or partial. The wrapper then verifies the APK signature and requires its signer certificate to match `KET_ANDROID_CERT_SHA256` before reporting success.
+Obtain the expected fingerprint with `keytool -list -v -keystore "$KET_ANDROID_KEYSTORE" -alias "$KET_ANDROID_KEY_ALIAS"`; let `keytool` prompt for the password. Gradle rejects every release task when the signing environment is missing or partial. The wrapper then verifies both shipped APKs' signatures and requires their signer certificate to match `KET_ANDROID_CERT_SHA256` before copying them, under their release names, into the `--out` directory.
 
-The debug APK is build evidence, not a production release. CI generates a short-lived signing identity to prove that the release variant, native payloads, and certificate check work together, but it neither uploads that release APK nor establishes a production signer. Unit tests cover bounded strict-UTF-8 control reads, token/status identity and lease binding, strict parsing for every maintained transport and Hysteria XOR mode, the complete node/status contract, OpenVPN profile hardening and credential isolation, authenticated credential-envelope tamper detection, durable session resume/re-enrollment decisions, orphan-session cleanup, the exact bundled world topology and coordinate projection, bridge-local mapped DNS configuration, routed-Internet probe fallback, SOCKS UDP forwarding, IPv4/IPv6 route inclusion and exclusion, fail-closed replacement-route ownership, Doze refresh gating, terminal authorization loss, deterministic recovery ranking/cooldown, underlying-network transition decisions, cooperative startup cancellation, and process-output shutdown races.
+The debug APK is build evidence, not a production release. CI generates a short-lived signing identity to prove that the release variant, both shipped splits' native payloads, and certificate check work together, but it neither uploads those release APKs nor establishes a production signer. Unit tests cover bounded strict-UTF-8 control reads, token/status identity and lease binding, strict parsing for every maintained transport and Hysteria XOR mode, the complete node/status contract, OpenVPN profile hardening and credential isolation, authenticated credential-envelope tamper detection, durable session resume/re-enrollment decisions, orphan-session cleanup, the exact bundled world topology and coordinate projection, bridge-local mapped DNS configuration, routed-Internet probe fallback, SOCKS UDP forwarding, IPv4/IPv6 route inclusion and exclusion, fail-closed replacement-route ownership, Doze refresh gating, terminal authorization loss, deterministic recovery ranking/cooldown, underlying-network transition decisions, cooperative startup cancellation, and process-output shutdown races.
 
 On 2026-07-19, the arm64 payload was exercised on a physical Android 16/API 36 device against the dual-transport Oracle ARM deployment. Both Hysteria2 and VLESS + REALITY established protected routes and reported nonzero bidirectional traffic. The device also proved automatic startup fallback, recovery after forcibly terminating the active Xray child while retaining its lease, cancellation with both data planes unreachable, lease release, and repeated crash-free disconnects. Temporary server firewall rules used for the unreachable-path test were removed and readiness was rechecked afterward.
 
