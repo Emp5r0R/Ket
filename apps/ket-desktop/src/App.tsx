@@ -575,11 +575,14 @@ export default function App() {
     });
   };
 
-  /** Verifies the invite locally, then enrolls pinned to its node. */
-  const enrollInvite = async (invite: string, inviteDeviceName: string) => {
+  /** Enrolls pinned to the node of an invite that native code has verified. */
+  const enrollVerifiedInvite = async (
+    verify: () => Promise<InviteDetails>,
+    inviteDeviceName: string,
+  ) => {
     let details: InviteDetails;
     try {
-      details = await bridge.inspectInvite(invite);
+      details = await verify();
     } catch (error) {
       setLocalIssue(normalizeIssue(error));
       return;
@@ -591,6 +594,12 @@ export default function App() {
       nodeKey: details.node_key,
     });
   };
+
+  const enrollInvite = (invite: string, inviteDeviceName: string) =>
+    enrollVerifiedInvite(() => bridge.inspectInvite(invite), inviteDeviceName);
+
+  const enrollInviteImage = (image: Uint8Array, inviteDeviceName: string) =>
+    enrollVerifiedInvite(() => bridge.decodeInviteQr(image), inviteDeviceName);
 
   const forget = async () => {
     connectionRequestedRef.current = false;
@@ -762,6 +771,7 @@ export default function App() {
                   issue={localIssue}
                   onEnroll={enroll}
                   onEnrollInvite={enrollInvite}
+                  onEnrollInviteImage={enrollInviteImage}
                 />
               )}
             </div>

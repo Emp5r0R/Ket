@@ -14,6 +14,8 @@ type SnapshotListener = (snapshot: ClientSnapshot) => void;
 export interface DesktopBridge {
   state(): Promise<DesktopState>;
   inspectInvite(invite: string): Promise<InviteDetails>;
+  /** Decodes and verifies an invite QR image natively; bytes travel as a raw IPC body. */
+  decodeInviteQr(image: Uint8Array): Promise<InviteDetails>;
   enroll(input: EnrollmentInput): Promise<ClientSnapshot>;
   connect(preferredProtocol: ProtocolId | null): Promise<ClientSnapshot>;
   stop(): Promise<ClientSnapshot>;
@@ -25,6 +27,7 @@ export interface DesktopBridge {
 const tauriBridge: DesktopBridge = {
   state: () => invoke<DesktopState>("desktop_state"),
   inspectInvite: (invite) => invoke<InviteDetails>("inspect_invite", { invite }),
+  decodeInviteQr: (image) => invoke<InviteDetails>("decode_invite_qr", image),
   enroll: (input) =>
     invoke<ClientSnapshot>("enroll", {
       serverUrl: input.serverUrl,
@@ -155,6 +158,22 @@ function mockBridge(): DesktopBridge {
         throw {
           code: "invalid_invite",
           message: "invalid invite",
+          retryable: false,
+        } satisfies ClientIssue;
+      }
+      return {
+        server_url: "https://de-fra.ket.example",
+        access_code: "D".repeat(32),
+        access_expires_at_epoch_seconds: now() + 86_400,
+        node_key: "A".repeat(42) + "E",
+        node_fingerprint: "DEMO:0000:0000:0000:0000:0000:0000:0000",
+      };
+    },
+    decodeInviteQr: async (image) => {
+      if (image.length === 0) {
+        throw {
+          code: "qr_not_found",
+          message: "no QR code was found in that image",
           retryable: false,
         } satisfies ClientIssue;
       }

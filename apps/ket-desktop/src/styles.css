@@ -664,6 +664,32 @@ input:disabled {
   background: var(--disabled);
 }
 
+.secondary-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 0 14px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.secondary-button:disabled {
+  color: var(--disabled);
+  cursor: default;
+}
+
 .text-button {
   align-self: center;
   min-height: 32px;

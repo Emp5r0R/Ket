@@ -212,6 +212,22 @@ describe("Ket desktop shell", () => {
     expect(localStorage.getItem("ket.node-key")).toBe(`${"A".repeat(42)}E`);
   });
 
+  it("enrolls from an invite QR image and pins its node key", async () => {
+    const { bridge } = await import("./lib/bridge");
+    const decode = vi.spyOn(bridge, "decodeInviteQr");
+    const enroll = vi.spyOn(bridge, "enroll");
+    const { default: App } = await import("./App");
+    render(<App />);
+
+    const png = new File([new Uint8Array([137, 80, 78, 71])], "invite.png", { type: "image/png" });
+    fireEvent.change(await screen.findByLabelText("QR image file"), { target: { files: [png] } });
+
+    expect(await screen.findByRole("heading", { name: "Frankfurt, Germany" })).toBeInTheDocument();
+    expect(decode).toHaveBeenCalledWith(new Uint8Array([137, 80, 78, 71]));
+    expect(enroll).toHaveBeenCalledWith(expect.objectContaining({ nodeKey: `${"A".repeat(42)}E` }));
+    expect(localStorage.getItem("ket.node-key")).toBe(`${"A".repeat(42)}E`);
+  });
+
   it("rejects an invalid invite without contacting a server", async () => {
     const { bridge } = await import("./lib/bridge");
     const enroll = vi.spyOn(bridge, "enroll");

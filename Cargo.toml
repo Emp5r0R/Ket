@@ -4,6 +4,7 @@ members = [
     "crates/ket-client-core",
     "crates/ket-core",
     "crates/ket-invite",
+    "crates/ket-qr",
     "crates/ket-server",
     "crates/ket-tunnel-protocol",
     "crates/ket-tunnel-service",

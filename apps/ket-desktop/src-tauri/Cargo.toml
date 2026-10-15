@@ -20,13 +20,16 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 ket-client-core = { path = "../../../crates/ket-client-core" }
 ket-core = { path = "../../../crates/ket-core" }
+ket-qr = { path = "../../../crates/ket-qr" }
 serde.workspace = true
 tauri = { version = "2.11.5", features = [] }
 tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 ket-invite = { path = "../../../crates/ket-invite" }
+qrcode = { version = "=0.14.1", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 glib = "=0.18.5"

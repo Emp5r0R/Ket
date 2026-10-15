@@ -20,6 +20,7 @@ describe("server enrollment", () => {
         issue={null}
         onEnroll={onEnroll}
         onEnrollInvite={vi.fn(async () => undefined)}
+        onEnrollInviteImage={vi.fn(async () => undefined)}
       />,
     );
     const input = screen.getByLabelText("Access code") as HTMLInputElement;
@@ -56,6 +57,7 @@ describe("server enrollment", () => {
         issue={null}
         onEnroll={vi.fn(async () => undefined)}
         onEnrollInvite={vi.fn(async () => undefined)}
+        onEnrollInviteImage={vi.fn(async () => undefined)}
       />,
     );
     expect(screen.getByRole("button", { name: "Add server" })).toBeDisabled();
@@ -71,6 +73,7 @@ describe("server enrollment", () => {
         issue={null}
         onEnroll={vi.fn(async () => undefined)}
         onEnrollInvite={vi.fn(async () => undefined)}
+        onEnrollInviteImage={vi.fn(async () => undefined)}
       />,
     );
     expect(screen.getByLabelText("Server URL")).toBeDisabled();
@@ -93,6 +96,7 @@ describe("server enrollment", () => {
         issue={{ code: "grant_expired", message: "Access code expired", retryable: false }}
         onEnroll={vi.fn(async () => undefined)}
         onEnrollInvite={vi.fn(async () => undefined)}
+        onEnrollInviteImage={vi.fn(async () => undefined)}
       />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("1h 1m access left");
@@ -112,6 +116,7 @@ describe("server enrollment", () => {
         issue={null}
         onEnroll={onEnroll}
         onEnrollInvite={onEnrollInvite}
+        onEnrollInviteImage={vi.fn(async () => undefined)}
       />,
     );
     expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
@@ -143,6 +148,7 @@ describe("server enrollment", () => {
         issue={null}
         onEnroll={vi.fn(async () => undefined)}
         onEnrollInvite={vi.fn(async () => undefined)}
+        onEnrollInviteImage={vi.fn(async () => undefined)}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Advanced: use a server URL and access code" }));
@@ -151,5 +157,39 @@ describe("server enrollment", () => {
     expect(screen.queryByLabelText("Invite")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Use an invite instead" }));
     expect(screen.getByLabelText("Invite")).toBeInTheDocument();
+  });
+
+  it("hands a chosen or pasted PNG to native QR decoding and rejects other files", async () => {
+    const onEnrollInviteImage = vi.fn(async () => undefined);
+    render(
+      <EnrollmentPanel
+        initialServerUrl=""
+        initialAccessCode=""
+        accessExpiresAtEpochSeconds={null}
+        initialDeviceName="Laptop"
+        busy={false}
+        issue={null}
+        onEnroll={vi.fn(async () => undefined)}
+        onEnrollInvite={vi.fn(async () => undefined)}
+        onEnrollInviteImage={onEnrollInviteImage}
+      />,
+    );
+    const picker = screen.getByLabelText("QR image file") as HTMLInputElement;
+    expect(picker).toHaveAttribute("accept", "image/png,image/jpeg");
+
+    const png = new File([new Uint8Array([137, 80, 78, 71])], "invite.png", { type: "image/png" });
+    fireEvent.change(picker, { target: { files: [png] } });
+    await waitFor(() => expect(onEnrollInviteImage).toHaveBeenCalledOnce());
+    expect(onEnrollInviteImage).toHaveBeenCalledWith(new Uint8Array([137, 80, 78, 71]), "Laptop");
+
+    const gif = new File([new Uint8Array([71, 73, 70])], "invite.gif", { type: "image/gif" });
+    fireEvent.change(picker, { target: { files: [gif] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("PNG or JPEG");
+    const huge = new File([new Uint8Array(8 * 1024 * 1024 + 1)], "huge.png", { type: "image/png" });
+    fireEvent.change(picker, { target: { files: [huge] } });
+    expect(onEnrollInviteImage).toHaveBeenCalledOnce();
+
+    fireEvent.paste(screen.getByLabelText("Invite"), { clipboardData: { files: [png] } });
+    await waitFor(() => expect(onEnrollInviteImage).toHaveBeenCalledTimes(2));
   });
 });

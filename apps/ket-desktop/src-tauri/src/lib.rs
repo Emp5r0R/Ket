@@ -9,7 +9,10 @@ use ket_client_core::{
 };
 use ket_core::TransportProtocol;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+use tauri::{
+    AppHandle, Emitter, Manager, RunEvent, State,
+    ipc::{InvokeBody, Request},
+};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 const SNAPSHOT_EVENT: &str = "ket://snapshot";
@@ -168,6 +171,38 @@ fn invite_details(invite: &str, now_epoch_seconds: u64) -> Result<InviteDetails,
         node_key,
         node_fingerprint: enrollment.node_fingerprint,
     })
+}
+
+/// Reads an invite QR code from a user-selected or pasted image (raw bytes,
+/// never a path or URL) and verifies it like pasted invite text.
+#[tauri::command]
+fn decode_invite_qr(request: Request<'_>) -> Result<InviteDetails, ClientIssue> {
+    match request.body() {
+        InvokeBody::Raw(bytes) => invite_from_qr_image(bytes, unix_now()),
+        InvokeBody::Json(_) => Err(unsupported_qr_image()),
+    }
+}
+
+fn invite_from_qr_image(
+    bytes: &[u8],
+    now_epoch_seconds: u64,
+) -> Result<InviteDetails, ClientIssue> {
+    let text = ket_qr::decode_qr_image(bytes)
+        .map_err(|_| unsupported_qr_image())?
+        .ok_or_else(|| ClientIssue {
+            code: "qr_not_found".to_owned(),
+            message: "no QR code was found in that image".to_owned(),
+            retryable: false,
+        })?;
+    invite_details(&text, now_epoch_seconds)
+}
+
+fn unsupported_qr_image() -> ClientIssue {
+    ClientIssue {
+        code: "unsupported_image".to_owned(),
+        message: "choose a PNG or JPEG image of a Ket invite QR code (up to 8 MiB)".to_owned(),
+        retryable: false,
+    }
 }
 
 fn unix_now() -> u64 {
@@ -364,6 +399,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             desktop_state,
             inspect_invite,
+            decode_invite_qr,
             enroll,
             connect,
             stop_tunnel,
@@ -444,6 +480,70 @@ mod command_contract_tests {
                 .message
                 .contains("Abcdefghijklmnopqrstuvwxyz012345")
         );
+    }
+
+    #[test]
+    fn invite_qr_images_are_decoded_and_verified_natively() {
+        use image::{ColorType, ImageEncoder};
+        use ket_invite::{
+            ControlLocator, InviteCapsuleV1, NodeSigningKey, SignedInviteCapsule,
+            encode_invite_text,
+        };
+        use qrcode::{Color, EcLevel, QrCode};
+
+        let key = NodeSigningKey::from_seed(&[0x32; 32]);
+        let capsule = InviteCapsuleV1::new(
+            key.public_key(),
+            vec![ControlLocator::https("ket.example.com", 443).unwrap()],
+            "Abcdefghijklmnopqrstuvwxyz012345",
+            Some(2_000_000_000),
+        )
+        .unwrap();
+        let text = encode_invite_text(&SignedInviteCapsule::sign(capsule, &key).unwrap()).unwrap();
+        let png = |content: &str| {
+            let code = QrCode::with_error_correction_level(content.as_bytes(), EcLevel::M).unwrap();
+            let (modules, scale, margin) = (code.width(), 5, 4);
+            let colors = code.to_colors();
+            let side = (modules + 2 * margin) * scale;
+            let mut pixels = vec![255_u8; side * side];
+            for (index, pixel) in pixels.iter_mut().enumerate() {
+                let (x, y) = (index % side / scale, index / side / scale);
+                let inside = (margin..modules + margin).contains(&x)
+                    && (margin..modules + margin).contains(&y);
+                if inside && colors[(y - margin) * modules + x - margin] == Color::Dark {
+                    *pixel = 0;
+                }
+            }
+            let mut bytes = Vec::new();
+            image::codecs::png::PngEncoder::new(&mut bytes)
+                .write_image(&pixels, side as u32, side as u32, ColorType::L8.into())
+                .unwrap();
+            bytes
+        };
+
+        let details = invite_from_qr_image(&png(&text), 1_900_000_000).unwrap();
+        assert_eq!(details.server_url, "https://ket.example.com");
+        assert_eq!(details.node_key, key.public_key().to_base64url());
+
+        let foreign = invite_from_qr_image(&png("https://example.com/not-an-invite"), 1);
+        assert_eq!(foreign.err().unwrap().code, "invalid_invite");
+        let blank = image_with_no_code();
+        assert_eq!(
+            invite_from_qr_image(&blank, 1).err().unwrap().code,
+            "qr_not_found"
+        );
+        assert_eq!(
+            invite_from_qr_image(b"<svg/>", 1).err().unwrap().code,
+            "unsupported_image"
+        );
+
+        fn image_with_no_code() -> Vec<u8> {
+            let mut bytes = Vec::new();
+            image::codecs::png::PngEncoder::new(&mut bytes)
+                .write_image(&[255; 64 * 64], 64, 64, ColorType::L8.into())
+                .unwrap();
+            bytes
+        }
     }
 
     #[test]

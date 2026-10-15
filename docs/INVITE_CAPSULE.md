@@ -151,9 +151,12 @@ valid replacement. Possession of an invite grants the access code it contains.
 
 ## Client experience
 
-- Desktop: the Add server panel takes an invite (masked, whitespace-stripped).
-  The native `inspect_invite` command verifies it without network access; the
-  saved profile keeps the node key (`ket.node-key`) for every restore.
+- Desktop: the Add server panel takes an invite (masked, whitespace-stripped),
+  a QR image (Open QR image), or a pasted screenshot. The native
+  `inspect_invite` and `decode_invite_qr` commands decode (`crates/ket-qr`,
+  adapted from Abyssal) and verify it without network access; images travel
+  as raw bytes, are limited to 8 MiB PNG/JPEG, and are never kept. The saved
+  profile keeps the node key (`ket.node-key`) for every restore.
 - Android: paste, camera scan (ZXing + CameraX, same as Abyssal), or open a QR
   image. Text is verified before it fills the field and again on submit. The
   encrypted profile stores `node_public_key`.

@@ -1,5 +1,5 @@
-import { Clock3, Eye, EyeOff, Link2, LoaderCircle, Ticket } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { Clock3, Eye, EyeOff, ImageUp, Link2, LoaderCircle, Ticket } from "lucide-react";
+import { useRef, useState, type ClipboardEvent, type FormEvent } from "react";
 import { formatDuration } from "../lib/format";
 import type { ClientIssue, EnrollmentInput } from "../types";
 
@@ -16,9 +16,21 @@ interface EnrollmentPanelProps {
   issue: ClientIssue | null;
   onEnroll: (input: EnrollmentInput) => Promise<void>;
   onEnrollInvite: (invite: string, deviceName: string) => Promise<void>;
+  onEnrollInviteImage: (image: Uint8Array, deviceName: string) => Promise<void>;
 }
 
 const INVITE_MIN_LENGTH = 32;
+const MAX_QR_IMAGE_BYTES = 8 * 1024 * 1024;
+const QR_IMAGE_TYPES = ["image/png", "image/jpeg"];
+
+function readFileBytes(file: File): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+}
 
 export function EnrollmentPanel({
   initialServerUrl,
@@ -30,8 +42,11 @@ export function EnrollmentPanel({
   issue,
   onEnroll,
   onEnrollInvite,
+  onEnrollInviteImage,
 }: EnrollmentPanelProps) {
   const [mode, setMode] = useState<EnrollmentMode>(initialMode);
+  const [imageIssue, setImageIssue] = useState<string | null>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
   const [invite, setInvite] = useState("");
   const [revealInvite, setRevealInvite] = useState(false);
   const [serverUrl, setServerUrl] = useState(initialServerUrl);
@@ -44,6 +59,32 @@ export function EnrollmentPanel({
   const canSubmit = mode === "invite"
     ? invite.length >= INVITE_MIN_LENGTH
     : accessCode.length === 32;
+
+  /** Hands a local PNG/JPEG to native QR decoding; nothing is uploaded or kept. */
+  const useQrImage = async (file: File) => {
+    if (!QR_IMAGE_TYPES.includes(file.type) || file.size === 0 || file.size > MAX_QR_IMAGE_BYTES) {
+      setImageIssue("Choose a PNG or JPEG image of a Ket invite QR code (up to 8 MiB).");
+      return;
+    }
+    setImageIssue(null);
+    setInvite("");
+    let bytes: Uint8Array;
+    try {
+      bytes = await readFileBytes(file);
+    } catch {
+      setImageIssue("That image could not be read.");
+      return;
+    }
+    await onEnrollInviteImage(bytes, deviceName);
+  };
+
+  const pasteInvite = (event: ClipboardEvent<HTMLInputElement>) => {
+    const image = Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/"));
+    if (image) {
+      event.preventDefault();
+      void useQrImage(image);
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -86,7 +127,11 @@ export function EnrollmentPanel({
                 placeholder="ket:invite:..."
                 maxLength={2_048}
                 value={invite}
-                onChange={(event) => setInvite(event.target.value.replace(/\s/g, ""))}
+                onChange={(event) => {
+                  setImageIssue(null);
+                  setInvite(event.target.value.replace(/\s/g, ""));
+                }}
+                onPaste={pasteInvite}
                 required
                 disabled={busy}
               />
@@ -100,6 +145,27 @@ export function EnrollmentPanel({
                 {revealInvite ? <EyeOff size={17} /> : <Eye size={17} />}
               </button>
             </span>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => imageInput.current?.click()}
+              disabled={busy}
+            >
+              <ImageUp size={16} aria-hidden="true" />
+              Open QR image
+            </button>
+            <input
+              ref={imageInput}
+              type="file"
+              accept={QR_IMAGE_TYPES.join(",")}
+              aria-label="QR image file"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (file) void useQrImage(file);
+              }}
+            />
           </div>
         ) : (
           <>
@@ -168,9 +234,9 @@ export function EnrollmentPanel({
             />
           </span>
         </div>
-        {issue ? (
+        {imageIssue ?? issue ? (
           <div className="inline-issue" role="alert">
-            {issue.message}
+            {imageIssue ?? issue?.message}
           </div>
         ) : null}
         <button type="submit" className="primary-button" disabled={busy || !canSubmit}>
