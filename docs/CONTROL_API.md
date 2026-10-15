@@ -76,6 +76,27 @@ An OpenVPN/stunnel profile uses `protocol=open_vpn_stunnel`, `network=tcp`, and 
 | `PUT` | `/v1/sessions/current` | Renew the current lease and return current metrics |
 | `DELETE` | `/v1/sessions/current` | Release the current lease |
 
+## App versions and update advice
+
+Apps name themselves on every session request with `Ket-Client: <platform>/<version>`, where the platform is `android`, `linux`, `windows`, or `macos` and the version is `MAJOR.MINOR.PATCH`. A missing or malformed header means an app from v1.0.1 or earlier on an unknown platform.
+
+Successful `POST /v1/sessions`, `GET`, and `PUT /v1/sessions/current` responses carry an `updates` object (servers before the update lifecycle omit it):
+
+```json
+{
+  "server_version": "1.1.0",
+  "client": {
+    "status": "security",
+    "latest_version": "1.1.0",
+    "required_after_epoch_seconds": 1793577600,
+    "summary": "Fixes a DNS leak on Windows.",
+    "download_url": "https://github.com/Emp5r0R/Ket/releases/latest"
+  }
+}
+```
+
+`status` is `current`, `optional`, `recommended`, `security` (with a deadline), or `required`; [UPDATES.md](UPDATES.md) explains how the server rates an app. When the update is `required`, `POST /v1/sessions` and `PUT /v1/sessions/current` answer `426 Upgrade Required` with code `client_update_required` and the same `client` object under `update`. The version check runs after the access code or session token is verified and the refused session is rolled back, so the response reveals nothing to anyone without valid credentials. `GET /v1/sessions/current` still answers, so an app can show the advice; the session simply is not renewed. Apps open `download_url` only when it is an `https://` URL without credentials.
+
 ## Admin endpoints
 
 Admin endpoints are operational and reachable only on the host-loopback control listener.
@@ -122,4 +143,4 @@ Errors use a stable machine code and a user-safe message:
 }
 ```
 
-Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_capacity_reached`, `node_capacity_reached`, `server_busy`, `data_plane_unavailable`, `not_found`, and `internal_error`. Secret verification uses a bounded worker pool and bounded admission queue. When that queue is full, the server returns `429 server_busy` with `Retry-After: 1` instead of accumulating unbounded Argon2 work; clients may retry after that delay.
+Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_capacity_reached`, `node_capacity_reached`, `server_busy`, `data_plane_unavailable`, `client_update_required` (`426`, with an `update` object), `not_found`, and `internal_error`. Secret verification uses a bounded worker pool and bounded admission queue. When that queue is full, the server returns `429 server_busy` with `Retry-After: 1` instead of accumulating unbounded Argon2 work; clients may retry after that delay.

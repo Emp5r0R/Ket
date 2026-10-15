@@ -58,6 +58,17 @@ export interface SessionTraffic {
   observed_at_epoch_seconds: number;
 }
 
+export type ClientUpdateStatus = "current" | "optional" | "recommended" | "security" | "required";
+
+/** The server's advice for this app (see docs/UPDATES.md). */
+export interface ClientUpdate {
+  status: ClientUpdateStatus;
+  latest_version: string;
+  required_after_epoch_seconds?: number | null;
+  summary?: string | null;
+  download_url: string;
+}
+
 export interface ClientSnapshot {
   phase: ClientPhase;
   node: NodeStatus | null;
@@ -71,6 +82,8 @@ export interface ClientSnapshot {
   connected_at_epoch_seconds: number | null;
   reconnect_attempt: number;
   issue: ClientIssue | null;
+  server_version: string | null;
+  client_update: ClientUpdate | null;
   updated_at_epoch_seconds: number;
 }
 

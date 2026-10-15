@@ -6,8 +6,11 @@ Everything Ket implements today, and the qualification status of each transport.
 
 - A probe-resistant HTTPS edge: only client session routes and exact secret transport paths are reachable, and scanners see one neutral page ([CONTROL_API.md](CONTROL_API.md#public-exposure)).
 - Signed invites: one `ket:invite:` string or QR code replaces the server URL and access code, and pins the node's Ed25519 key so enrollment proves it reached the right server ([INVITE_CAPSULE.md](INVITE_CAPSULE.md)).
-- Invite entry on desktop (paste, QR image, pasted screenshot) and Android (paste, camera, QR image); `create-invite.sh` with terminal QR on servers.
+- Invite entry on desktop (paste, QR image, pasted screenshot) and Android (paste, camera, QR image); `sudo ket invite` with a terminal QR on servers.
 - One-command server setup for any modern systemd Linux with automatic Cloudflare detection ([SERVER_INSTALL.md](SERVER_INSTALL.md)).
+- The `ket` server command: guided invites, invite list and revoke, status, a troubleshooting `doctor`, logs, backups, key rotation, update, rollback, and uninstall ([SERVER_INSTALL.md](SERVER_INSTALL.md#managing-the-server)).
+- An update lifecycle: every release is rated for apps and servers; servers apply security fixes on their own with a health-checked, self-reverting swap, and tell each app whether its update is optional, recommended, security (with a deadline), or required ([UPDATES.md](UPDATES.md)).
+- Published multi-architecture server images on release, so installs and updates need not compile on the VPS.
 
 ## v1.0
 

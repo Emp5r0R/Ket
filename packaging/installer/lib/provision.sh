@@ -109,6 +109,9 @@ KET_OPENVPN_AUTH_TOKEN=$(random_secret)
 
 KET_EDGE_BIND_ADDRESS=0.0.0.0
 KET_EDGE_PUBLIC_PORT=443
+
+# Which releases the daily update check applies on its own (docs/UPDATES.md).
+KET_AUTO_UPDATE=$auto_update
 EOF
   chmod 0600 .env
 }
@@ -134,7 +137,7 @@ create_openvpn_pki() {
 
 build_and_validate() {
   ./packaging/server/refresh-certificates.sh
-  docker build --tag ket-control-plane:local .
+  prepare_image "$PWD" "$git_ref" local
   docker run --rm --user 0:0 \
     --entrypoint /usr/local/bin/openvpn \
     -v "$PWD/secrets/openvpn:/out" \

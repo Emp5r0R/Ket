@@ -3,6 +3,7 @@
 mod contract;
 mod secret;
 mod secret_value;
+mod update;
 
 pub use contract::*;
 pub use secret::{
@@ -12,3 +13,6 @@ pub use secret::{
     verify_secret, verify_token_secret,
 };
 pub use secret_value::SecretString;
+pub use update::{
+    CLIENT_HEADER, CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate, ClientUpdateStatus, UpdateAdvice,
+};

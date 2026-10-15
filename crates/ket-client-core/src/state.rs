@@ -1,4 +1,7 @@
-use ket_core::{Network, NodeStatus, SessionTraffic, TransportProfile, TransportProtocol};
+use ket_core::{
+    ClientUpdate, Network, NodeStatus, SessionTraffic, TransportProfile, TransportProtocol,
+    UpdateAdvice,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::ClientIssue;
@@ -51,7 +54,25 @@ pub struct ClientSnapshot {
     pub connected_at_epoch_seconds: Option<u64>,
     pub reconnect_attempt: u32,
     pub issue: Option<ClientIssue>,
+    /// The server's Ket version, from its last session response.
+    #[serde(default)]
+    pub server_version: Option<String>,
+    /// What the server asks of this app: nothing, an optional update, or a
+    /// required one.
+    #[serde(default)]
+    pub client_update: Option<ClientUpdate>,
     pub updated_at_epoch_seconds: u64,
+}
+
+impl ClientSnapshot {
+    /// Records a session response's update advice. Servers from before the
+    /// update lifecycle send none, which leaves the last advice in place.
+    pub(crate) fn apply_advice(&mut self, advice: Option<UpdateAdvice>) {
+        if let Some(advice) = advice {
+            self.server_version = Some(advice.server_version);
+            self.client_update = Some(advice.client);
+        }
+    }
 }
 
 #[cfg(test)]

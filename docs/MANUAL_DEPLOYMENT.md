@@ -91,7 +91,7 @@ docker compose -f compose.yaml -f compose.hysteria.yaml -f compose.xray.yaml -f 
 
 The control, XHTTP, and WireGuard TLS hostnames may remain behind Cloudflare Tunnel, but Hysteria2, REALITY, Shadowsocks, and OpenVPN/stunnel session profiles must advertise a direct server IP or DNS-only hostname. Open only the exact raw-transport ports in both the cloud network policy and host firewall; keep all Cloudflare Tunnel origin ports closed publicly.
 
-On a server set up by the installer, create invites with `sudo ./packaging/server/create-invite.sh` (see [SERVER_INSTALL.md](SERVER_INSTALL.md#after-installation)). The raw admin API calls below work on any deployment.
+On a server set up by the installer, create invites with `sudo ket invite` (see [SERVER_INSTALL.md](SERVER_INSTALL.md#managing-the-server)). The raw admin API calls below work on any deployment.
 
 Create one client access code on an installed server:
 

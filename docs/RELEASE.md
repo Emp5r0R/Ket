@@ -45,6 +45,10 @@ For a production server, source `.env`, run `./packaging/validate-env.sh`, and v
 
 Container upgrades retain the v1 state volume. The loader accepts older v1 session records that predate scoped data-plane hashes, but those missing credentials remain fail closed until the client creates a current session. Unknown schema versions and structurally inconsistent or oversized state files stop startup instead of discarding grants or guessing a migration. Back up the `ket-state` volume before upgrading; never replace a rejected state file with an empty document as an automated recovery action.
 
+## Update ratings
+
+Before tagging, add the release to `crates/ket-update/releases.json` with its app and server ratings ([UPDATES.md](UPDATES.md)). Servers refuse apps based on these ratings, and servers with automatic updates apply `security` and `critical` releases on their own, so a wrong rating reaches users within a day.
+
 ## Server installer
 
 The one-command bootstrap (`install.sh`) installs whatever GitHub marks as the latest release, using that release's own `packaging/install-server.sh`. Publishing a release therefore changes what every new server gets, immediately. Before publishing, run `./scripts/test-all.sh server` and `./scripts/test-all.sh integration` on the release commit, confirm `packaging/installer/protocol` is present, and preview the installer on the tag with `KET_REF=<tag>` and `--plan`. Releases without the protocol file are installed through their own legacy command, which the bootstrap prints.
@@ -57,12 +61,16 @@ Android release tasks require `KET_ANDROID_KEYSTORE`, `KET_ANDROID_KEYSTORE_PASS
 
 The maintained server and Linux/Windows data planes are Hysteria2, Xray-core VLESS + REALITY, Xray-core VLESS + XHTTP/TLS Stealth, shadowsocks-rust Shadowsocks 2022, WireGuard over wstunnel WebSocket/TLS, and OpenVPN over stunnel TLS. Hysteria XOR is a selectable Salamander/Gecko mode over the same authenticated encrypted Hysteria data plane, not a separate security protocol. SOCKS-backed desktop transports share a locally tested full-route bridge; OpenVPN owns a separately supervised native TUN. Android implements the same choices through platform-owned routing, including a private OpenVPN management/TUN bridge and certificate-pinned stunnel-compatible TLS carrier. Android startup fallback, engine-exit recovery, bidirectional Wi-Fi/cellular recovery, cancellation, and disconnect have been exercised on a physical current arm64 device. On 2026-07-22, an owner-signed APK passed restricted-network VLESS + REALITY, XHTTP/TLS Stealth, and Shadowsocks routes with bridge-local mapped DNS and the end-to-end HTTPS gate. The repeated REALITY run exited through `161.118.195.126`, Android independently validated the full-route VPN, the UI recorded megabytes of bidirectional transfer, and disconnect restored direct device egress. XHTTP also has local certificate-verified TLS traffic, scoped UUID, counters, release, and revocation proof through real Xray engines. Shadowsocks key enforcement, counters, and revocation are proven locally; the Oracle deployment additionally passed authenticated public TCP egress and UDP DNS forwarding, followed by listener removal on grant revocation. WireGuard enrollment and peer revocation, plus the OpenVPN agent/stunnel stack, are deployed on Oracle ARM64. OpenVPN has local lifecycle proof and a public certificate-pinned nested-TLS handshake with scoped authentication and nonzero telemetry after strict trust-chain repair. Restricted-network Android gates remain for Hysteria2, WireGuard, and OpenVPN, along with TUN-backed public OpenVPN packet flow, fail-closed handover, Doze-exit renewal, graceful permission-revoke, always-on/reboot, API 26, connected-state DNS-leak, lockdown, sustained transfer, and owner-signed Windows installation. IKEv2 remains a contract-level extension point rather than an implemented adapter.
 
-## Multi-architecture image
+## Server image
 
-Publish one manifest for both supported server architectures with an authenticated registry login:
+Pushing a `v*` tag runs [`server-image.yml`](../.github/workflows/server-image.yml): it checks that the tag matches the workspace version and the last `releases.json` entry, builds `linux/amd64` and `linux/arm64` on native runners, publishes `ghcr.io/emp5r0r/ket-control-plane:<version>` with an `org.opencontainers.image.version` label and a build provenance attestation, and touches nothing else. Installs and updates of that release pull it and fall back to building on the server when it is missing or its label does not match, so a failed image job only makes installs slower.
+
+The first time the package is published, check its visibility under the repository's **Packages** and make it public, or servers cannot pull it. Verify an image with `gh attestation verify oci://ghcr.io/emp5r0r/ket-control-plane:<version> --repo Emp5r0R/Ket`.
+
+To publish an image by hand instead (for a fork, for example):
 
 ```bash
 ./packaging/build-multiarch.sh ghcr.io/your-org/ket-control-plane:<tag>
 ```
 
-The script publishes `linux/amd64` and `linux/arm64`. Docker selects the matching image on the host, so the same tag works on Oracle Ampere and AMD64 servers. The command requires Buildx and registry push permission; it does not alter the local Docker daemon image store.
+The script publishes `linux/amd64` and `linux/arm64`. Docker selects the matching image on the host. The command requires Buildx and registry push permission; it does not alter the local Docker daemon image store.

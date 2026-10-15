@@ -12,7 +12,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ket_core::{Network, NodeLocation, TransportProfile, TransportProtocol};
 use url::{Host, Url};
 
-use crate::invite::InviteIssuer;
+use crate::{invite::InviteIssuer, updates::ClientUpdates};
 
 const MAX_NODE_TEXT_CHARS: usize = 128;
 const MAX_PUBLIC_URL_CHARS: usize = 2_048;
@@ -44,6 +44,8 @@ pub struct ServerConfig {
     pub xray: Option<XrayConfig>,
     /// Present when `KET_NODE_SIGNING_KEY` is configured.
     pub invite_issuer: Option<Arc<InviteIssuer>>,
+    /// Which app versions this server accepts, and the advice it gives them.
+    pub client_updates: ClientUpdates,
 }
 
 #[derive(Clone)]
@@ -164,6 +166,7 @@ impl ServerConfig {
 
         let public_url = normalize_public_url(value("KET_PUBLIC_URL", "http://127.0.0.1:8787"))?;
         let invite_issuer = InviteIssuer::from_env(&public_url)?.map(Arc::new);
+        let client_updates = ClientUpdates::from_env()?;
 
         let max_sessions = parse_value("KET_MAX_SESSIONS", 1000_u32)?;
         if max_sessions == 0 {
@@ -240,6 +243,7 @@ impl ServerConfig {
             wireguard,
             xray,
             invite_issuer,
+            client_updates,
         })
     }
 }

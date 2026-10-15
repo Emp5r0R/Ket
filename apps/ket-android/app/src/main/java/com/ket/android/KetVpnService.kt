@@ -598,6 +598,22 @@ class KetVpnService : VpnService() {
                 confirmSessionLease(spec, remote, nowEpochSeconds, renewalDue)
                 renewalFailures = 0
             } catch (error: Exception) {
+                val requiredUpdate = (error as? KetControlException)?.requiredUpdate
+                if (requiredUpdate != null) {
+                    // The server no longer serves this app version; renewing again cannot help.
+                    AndroidConnectionDiagnostics.record(
+                        stage = "lease_renewal",
+                        outcome = DiagnosticOutcome.Failed,
+                        phase = KetTunnelRuntime.snapshot().phase,
+                        protocol = spec.preferredProtocol,
+                        transport = activeTransportId,
+                        code = CLIENT_UPDATE_REQUIRED_CODE,
+                        message = error.message,
+                    )
+                    KetTunnelRuntime.update { it.copy(clientUpdate = requiredUpdate) }
+                    requestStop(error.message ?: "Update Ket to keep using this server")
+                    return
+                }
                 val authorizationLost = (error as? KetControlException)?.authorizationLost == true
                 if (!authorizationLost && powerManager.isDeviceIdleMode) return
                 renewalFailures += 1
@@ -672,6 +688,8 @@ class KetVpnService : VpnService() {
                     sentBytes = local?.getOrNull(1) ?: remoteTraffic?.sent ?: it.sentBytes,
                     receivedBytes = local?.getOrNull(3) ?: remoteTraffic?.received ?: it.receivedBytes,
                     onlineConnections = remoteTraffic?.online ?: it.onlineConnections,
+                    serverVersion = remote.updates?.serverVersion ?: it.serverVersion,
+                    clientUpdate = remote.updates?.client ?: it.clientUpdate,
                 )
             }
         } finally {
@@ -785,6 +803,8 @@ class KetVpnService : VpnService() {
                     phase = TunnelPhase.Failed,
                     node = spec?.node ?: KetTunnelRuntime.snapshot().node,
                     message = failure,
+                    serverVersion = KetTunnelRuntime.snapshot().serverVersion,
+                    clientUpdate = KetTunnelRuntime.snapshot().clientUpdate,
                 )
             },
         )

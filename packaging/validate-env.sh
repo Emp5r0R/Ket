@@ -82,6 +82,25 @@ if [[ -n "${KET_NODE_SIGNING_KEY:-}" ]]; then
   valid_invite_public_url \
     || fail 'KET_NODE_SIGNING_KEY requires KET_PUBLIC_URL to be an https:// public DNS name without a path, or loopback HTTP'
 fi
+# Update lifecycle (docs/UPDATES.md); the server also checks the minimum against its own version.
+version_pattern='^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$'
+if [[ -n "${KET_CLIENT_MINIMUM_VERSION:-}" ]]; then
+  [[ "$KET_CLIENT_MINIMUM_VERSION" =~ $version_pattern ]] \
+    || fail 'KET_CLIENT_MINIMUM_VERSION must be a MAJOR.MINOR.PATCH version'
+fi
+case "${KET_CLIENT_UPDATE_ENFORCEMENT:-enforce}" in
+  enforce|warn) ;;
+  *) fail 'KET_CLIENT_UPDATE_ENFORCEMENT must be enforce or warn' ;;
+esac
+download_url_pattern='^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^[:space:][:cntrl:]#]*)?$'
+if [[ -n "${KET_CLIENT_DOWNLOAD_URL:-}" ]]; then
+  [[ ${#KET_CLIENT_DOWNLOAD_URL} -le 2048 && "$KET_CLIENT_DOWNLOAD_URL" =~ $download_url_pattern ]] \
+    || fail 'KET_CLIENT_DOWNLOAD_URL must be an https:// URL without credentials, whitespace, or a fragment'
+fi
+case "${KET_AUTO_UPDATE:-security}" in
+  off|critical|security|all) ;;
+  *) fail 'KET_AUTO_UPDATE must be off, critical, security, or all' ;;
+esac
 [[ "${KET_NODE_ID:-ket-node-1}" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || fail 'KET_NODE_ID must be a 1-128 character ASCII identifier'
 bounded_text KET_NODE_NAME 'Ket node' 128 || fail 'KET_NODE_NAME must contain 1-128 trimmed printable characters'
 bounded_text KET_COUNTRY_NAME 'Unknown' 128 || fail 'KET_COUNTRY_NAME must contain 1-128 trimmed printable characters'

@@ -174,6 +174,7 @@ impl KetClient {
         }
 
         let node = manifest.node.clone();
+        let advice = manifest.updates.clone();
         let expires_at = manifest.session_expires_at_epoch_seconds;
         let access_expires_at = manifest.access_expires_at_epoch_seconds;
         let available_transports = manifest
@@ -198,6 +199,7 @@ impl KetClient {
             snapshot.session_expires_at_epoch_seconds = Some(expires_at);
             snapshot.access_expires_at_epoch_seconds = access_expires_at;
             snapshot.issue = None;
+            snapshot.apply_advice(advice);
         });
         Ok(self.snapshot())
     }
@@ -662,7 +664,7 @@ impl KetClient {
                     .is_some_and(|deadline| unix_time() >= deadline);
                 let refresh = self.refresh_locked(renew, false).await;
                 if let Err(error) = refresh
-                    && error.is_unauthorized()
+                    && error.ends_session()
                 {
                     return Err(error);
                 }
@@ -729,7 +731,7 @@ impl KetClient {
                 self.apply_status(status, renew).await;
                 Ok(self.snapshot())
             }
-            Err(error) if error.is_unauthorized() => {
+            Err(error) if error.ends_session() => {
                 let tunnel = {
                     let mut runtime = self.runtime.lock().await;
                     runtime.connection_requested = false;
@@ -764,6 +766,9 @@ impl KetClient {
                     snapshot.handshake_latency_ms = None;
                     snapshot.reconnect_attempt = 0;
                     snapshot.issue = Some(error.issue());
+                    if let Some(update) = error.required_update() {
+                        snapshot.client_update = Some(update.clone());
+                    }
                 });
                 Err(error)
             }
@@ -800,6 +805,7 @@ impl KetClient {
             snapshot.session_expires_at_epoch_seconds = Some(status.expires_at_epoch_seconds);
             snapshot.access_expires_at_epoch_seconds = status.access_expires_at_epoch_seconds;
             snapshot.issue = None;
+            snapshot.apply_advice(status.updates);
         });
     }
 
@@ -859,6 +865,9 @@ impl KetClient {
         self.update_snapshot(|snapshot| {
             snapshot.phase = ClientPhase::Error;
             snapshot.issue = Some(error.issue());
+            if let Some(update) = error.required_update() {
+                snapshot.client_update = Some(update.clone());
+            }
         });
     }
 
@@ -936,8 +945,9 @@ mod tests {
 
     use async_trait::async_trait;
     use ket_core::{
-        HealthState, Network, NodeLocation, NodeStatus, SessionTraffic, SessionTransport,
-        TransportCredential, TransportProfile, TransportProtocol,
+        ClientUpdate, ClientUpdateStatus, HealthState, Network, NodeLocation, NodeStatus,
+        SessionTraffic, SessionTransport, TransportCredential, TransportProfile, TransportProtocol,
+        UpdateAdvice,
     };
 
     use super::*;
@@ -1219,6 +1229,63 @@ mod tests {
         assert!(client.runtime.lock().await.tunnel.is_none());
         assert_eq!(client.snapshot().issue.unwrap().code, "unauthorized");
         assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+    }
+
+    fn test_update(status: ClientUpdateStatus) -> ClientUpdate {
+        ClientUpdate {
+            status,
+            latest_version: "9.0.0".to_owned(),
+            required_after_epoch_seconds: None,
+            summary: Some("Fixes".to_owned()),
+            download_url: "https://example.test/ket".to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_advice_is_shown_and_a_required_update_ends_the_session() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![test_transport("hy2-primary", 1)];
+        manifest.updates = Some(UpdateAdvice {
+            server_version: "9.0.0".to_owned(),
+            client: test_update(ClientUpdateStatus::Optional),
+        });
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        let enrolled = client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        assert_eq!(enrolled.server_version.as_deref(), Some("9.0.0"));
+        assert_eq!(
+            enrolled.client_update.unwrap().status,
+            ClientUpdateStatus::Optional
+        );
+        client.connect().await.unwrap();
+
+        // A status response from an older server keeps the last advice.
+        client.refresh().await.unwrap();
+        assert!(client.snapshot().client_update.is_some());
+
+        api.set_update_required(true);
+        let error = client.maintain_once().await.unwrap_err();
+        assert!(error.required_update().is_some());
+        assert!(client.runtime.lock().await.session.is_none());
+        assert!(client.runtime.lock().await.tunnel.is_none());
+        let snapshot = client.snapshot();
+        assert_eq!(snapshot.phase, ClientPhase::Error);
+        assert_eq!(snapshot.issue.unwrap().code, "client_update_required");
+        assert_eq!(
+            snapshot.client_update.unwrap().status,
+            ClientUpdateStatus::Required
+        );
     }
 
     #[tokio::test]
@@ -1563,6 +1630,7 @@ mod tests {
         renewals: AtomicUsize,
         control_failures_remaining: AtomicUsize,
         unauthorized: AtomicBool,
+        update_required: AtomicBool,
     }
 
     impl MockApi {
@@ -1580,7 +1648,25 @@ mod tests {
                 renewals: AtomicUsize::new(0),
                 control_failures_remaining: AtomicUsize::new(0),
                 unauthorized: AtomicBool::new(false),
+                update_required: AtomicBool::new(false),
             }
+        }
+
+        fn set_update_required(&self, required: bool) {
+            self.update_required.store(required, Ordering::SeqCst);
+        }
+
+        fn refusal(&self) -> Option<ClientError> {
+            if self.unauthorized.load(Ordering::SeqCst) {
+                return Some(ClientError::Api {
+                    status: 401,
+                    code: "unauthorized".to_owned(),
+                    message: "session credentials are invalid".to_owned(),
+                });
+            }
+            self.update_required.load(Ordering::SeqCst).then(|| {
+                ClientError::UpdateRequired(Box::new(test_update(ClientUpdateStatus::Required)))
+            })
         }
 
         fn fail_next_control_requests(&self, count: usize) {
@@ -1619,12 +1705,8 @@ mod tests {
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
             self.statuses.fetch_add(1, Ordering::SeqCst);
-            if self.unauthorized.load(Ordering::SeqCst) {
-                return Err(ClientError::Api {
-                    status: 401,
-                    code: "unauthorized".to_owned(),
-                    message: "session credentials are invalid".to_owned(),
-                });
+            if let Some(error) = self.refusal() {
+                return Err(error);
             }
             if self.control_request_fails() {
                 return Err(ClientError::Network("request timed out"));
@@ -1638,12 +1720,8 @@ mod tests {
             _token: &SecretString,
         ) -> Result<SessionStatus, ClientError> {
             self.renewals.fetch_add(1, Ordering::SeqCst);
-            if self.unauthorized.load(Ordering::SeqCst) {
-                return Err(ClientError::Api {
-                    status: 401,
-                    code: "unauthorized".to_owned(),
-                    message: "session credentials are invalid".to_owned(),
-                });
+            if let Some(error) = self.refusal() {
+                return Err(error);
             }
             if self.control_request_fails() {
                 return Err(ClientError::Network("request timed out"));
@@ -1920,6 +1998,7 @@ mod tests {
                 test_transport("hy2-blocked", 1),
                 test_transport("hy2-working", 2),
             ],
+            updates: None,
         }
     }
 
@@ -1991,6 +2070,7 @@ mod tests {
                 online_connections: 1,
                 observed_at_epoch_seconds: unix_time(),
             },
+            updates: None,
         }
     }
 

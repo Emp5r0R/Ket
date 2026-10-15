@@ -160,7 +160,7 @@ valid replacement. Possession of an invite grants the access code it contains.
 - Android: paste, camera scan (ZXing + CameraX, same as Abyssal), or open a QR
   image. Text is verified before it fills the field and again on submit. The
   encrypted profile stores `node_public_key`.
-- Server: `packaging/server/create-invite.sh` issues invites with a terminal QR
+- Server: `sudo ket invite` (wrapping `packaging/server/create-invite.sh`) issues invites with a terminal QR
   code; the installer uses it for the first invite.
 - URL + access code entry stays under Advanced and never pins a node key.
 

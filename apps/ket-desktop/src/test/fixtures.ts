@@ -56,6 +56,8 @@ export function testSnapshot(overrides: Partial<ClientSnapshot> = {}): ClientSna
     connected_at_epoch_seconds: null,
     reconnect_attempt: 0,
     issue: null,
+    server_version: null,
+    client_update: null,
     updated_at_epoch_seconds: 1_000,
     ...overrides,
   };

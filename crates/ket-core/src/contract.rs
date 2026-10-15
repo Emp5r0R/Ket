@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::SecretString;
+use crate::{ClientUpdate, SecretString, UpdateAdvice};
 
 pub const MAX_ACCESS_GRANT_VALIDITY_MINUTES: u32 = 365 * 24 * 60;
 
@@ -200,6 +200,10 @@ pub struct SessionManifest {
     pub access_expires_at_epoch_seconds: Option<u64>,
     pub node: NodeStatus,
     pub transports: Vec<SessionTransport>,
+    /// Server version and update advice for this app; absent from servers
+    /// before the update lifecycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updates: Option<UpdateAdvice>,
 }
 
 impl std::fmt::Debug for SessionManifest {
@@ -217,6 +221,7 @@ impl std::fmt::Debug for SessionManifest {
             )
             .field("node", &self.node)
             .field("transports", &self.transports)
+            .field("updates", &self.updates)
             .finish()
     }
 }
@@ -239,12 +244,18 @@ pub struct SessionStatus {
     pub access_expires_at_epoch_seconds: Option<u64>,
     pub node: NodeStatus,
     pub traffic: SessionTraffic,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updates: Option<UpdateAdvice>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ErrorResponse {
     pub code: String,
     pub message: String,
+    /// Present on `client_update_required`, so a refused app can still show
+    /// where to get the update.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<ClientUpdate>,
 }
 
 #[cfg(test)]
@@ -365,6 +376,7 @@ mod tests {
                 online_connections: 1,
                 observed_at_epoch_seconds: 1_500,
             },
+            updates: None,
         };
         let value = serde_json::to_value(&status).expect("status must serialize");
         assert_eq!(value["access_expires_at_epoch_seconds"], 3_000);
@@ -408,6 +420,7 @@ mod tests {
                     )]),
                 }),
             }],
+            updates: None,
         }
     }
 

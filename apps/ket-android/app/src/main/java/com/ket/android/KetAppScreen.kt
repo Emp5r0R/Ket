@@ -513,6 +513,7 @@ internal fun KetApp(
                                     },
                                 )
                             }
+                            KetUpdateBanner(snapshot.clientUpdate)
                             ConnectionMessage(snapshot) { diagnosticsVisible = true }
                         }
                         KetAppDestination.Metrics -> {

@@ -23,6 +23,7 @@ class EnrollmentResult(
     val node: AndroidNodeStatus,
     val transports: List<AndroidTransport>,
     internal val manifestJson: String,
+    val updates: AndroidUpdateAdvice? = null,
 ) {
     override fun toString(): String =
         "EnrollmentResult(token=[REDACTED], node=${node.displayName}, transports=$transports)"
@@ -36,13 +37,17 @@ data class SessionTelemetry(
     val received: Long,
     val online: Int,
     val observedAtEpochSeconds: Long,
+    val updates: AndroidUpdateAdvice? = null,
 )
 
 internal class KetControlException(
     val statusCode: Int,
     message: String,
+    /** Present when the server refused this app version (`426`). */
+    val requiredUpdate: AndroidClientUpdate? = null,
 ) : IllegalStateException(message) {
     val authorizationLost: Boolean = statusCode in setOf(401, 403, 404, 410)
+    val updateRequired: Boolean = requiredUpdate != null
 }
 
 /** Small platform adapter for the versioned Ket control contract. Secrets never enter logs. */
@@ -133,6 +138,7 @@ object KetControlApi : TunnelSessionApi {
             node = AndroidNodeStatusParser.parse(json.getJSONObject("node")),
             transports = AndroidTransportSelector.parse(json.getJSONArray("transports")),
             manifestJson = json.toString(),
+            updates = AndroidUpdateAdviceParser.parseAdvice(json.optJSONObject("updates")),
         )
     }
 
@@ -178,6 +184,7 @@ object KetControlApi : TunnelSessionApi {
             received = received,
             online = online,
             observedAtEpochSeconds = positiveLong(traffic, "observed_at_epoch_seconds"),
+            updates = AndroidUpdateAdviceParser.parseAdvice(json.optJSONObject("updates")),
         )
     }
 
@@ -216,6 +223,7 @@ object KetControlApi : TunnelSessionApi {
         readTimeout = 10_000
         instanceFollowRedirects = false
         setRequestProperty("Accept", "application/json")
+        setRequestProperty(CLIENT_HEADER, AndroidUpdateAdviceParser.clientHeaderValue())
     }
 
     private data class ControlResponse(val code: Int, val body: String, val nodeSignature: String?)
@@ -238,19 +246,24 @@ object KetControlApi : TunnelSessionApi {
     }
 
     private fun requireSuccess(code: Int, expected: Int, body: String, fallback: String) {
-        if (code != expected) throw KetControlException(code, failureMessage(code, body, fallback))
+        if (code != expected) {
+            throw KetControlException(code, failureMessage(code, body, fallback), AndroidUpdateAdviceParser.parseRefusal(code, body))
+        }
     }
 
     /**
      * The public edge answers rejected credentials with the same neutral 404 page it serves
      * to scanners, so 401 and 404 carry no useful server text on the session routes.
      */
-    internal fun failureMessage(code: Int, body: String, fallback: String): String =
+    internal fun failureMessage(code: Int, body: String, fallback: String): String {
         if (code == HttpURLConnection.HTTP_UNAUTHORIZED || code == HttpURLConnection.HTTP_NOT_FOUND) {
-            CREDENTIALS_REJECTED_MESSAGE
-        } else {
-            errorMessage(body, fallback)
+            return CREDENTIALS_REJECTED_MESSAGE
         }
+        AndroidUpdateAdviceParser.parseRefusal(code, body)?.let {
+            return "This server needs Ket ${it.latestVersion} or newer. Update the app to connect."
+        }
+        return errorMessage(body, fallback)
+    }
 
     private fun nonNegativeLong(json: JSONObject, key: String): Long = json.getLong(key).also {
         require(it >= 0) { "$key is invalid" }

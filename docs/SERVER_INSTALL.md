@@ -14,13 +14,13 @@ curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/install.sh | sudo 
 
 `install.sh` looks up the latest Ket release, downloads that release, and runs its own installer (`packaging/install-server.sh`), so the installer always matches the code it installs. Set `KET_REF=<tag>` to install a specific release. Releases published before one-command setup (v1.0.1 and earlier) are recognised and the bootstrap prints their own install command instead; for those, see this guide at that tag.
 
-When it finishes, the installer prints the first invite as text and as a terminal QR code. Paste or scan it in a Ket app.
+When it finishes, the installer prints the first invite as text and as a terminal QR code. Paste or scan it in a Ket app. From then on, the `ket` command manages the server ([below](#managing-the-server)); the same bootstrap also takes `update` and `uninstall`.
 
 ## What you need
 
 - A VPS with a public IPv4 address (not behind carrier-grade NAT), `amd64` or `arm64`, running systemd.
 - Root access and outbound HTTPS.
-- Recommended: 2 CPU cores, 2 GiB RAM, 10 GiB free disk (images are built on the server).
+- Recommended: 2 CPU cores, 2 GiB RAM, 10 GiB free disk. Releases with a published server image need far less to install; without one, the image is built on the server.
 - `curl` and `tar`, which almost every image has. Everything else is installed or run in containers.
 
 ### Supported systems
@@ -86,6 +86,8 @@ install-server.sh [DOMAIN] [options]
   --country-code XX --country-name NAME --city NAME --latitude N --longitude N
                          Map location, all five together (default: detected)
   --install-dir PATH     Installation directory (default /opt/ket)
+  --auto-update POLICY   Releases the daily check applies on its own:
+                         off, critical, security (default), or all
   --plan                 Show what would be set up and change nothing
 ```
 
@@ -99,58 +101,81 @@ The map location is detected from the public IP (two providers, validated). Inst
 2. Checks that the direct address points at this server and that the ports are free; adds UFW or firewalld rules when active.
 3. Installs or verifies Docker with Compose v2.
 4. Gets one Let's Encrypt certificate for every name using the pinned certbot container (no certbot package on the host).
-5. Generates independent secrets, X25519 keys (in the pinned Xray container), the node signing key, and the OpenVPN PKI; validates `.env` and the Compose configuration; builds the image. All of this happens in a temporary directory, so a failure leaves no partial `/opt/ket`.
-6. Moves the validated tree to `/opt/ket`, starts the stack, and installs the `ket-certificates.timer` renewal timer.
+5. Generates independent secrets, X25519 keys (in the pinned Xray container), the node signing key, and the OpenVPN PKI; validates `.env` and the Compose configuration; gets the server image (the one published with the release when available, otherwise built on the server). All of this happens in a temporary directory, so a failure leaves no partial `/opt/ket`.
+6. Moves the validated tree to `/opt/ket`, starts the stack, and installs the `ket` command, the `ket-certificates.timer` renewal timer, and the `ket-update.timer` daily update check.
 7. Waits until the control plane is ready and the public edge serves its certificate, then prints the first invite.
 
 If the certificate request fails, check that TCP 80 reaches the server, that DNS has propagated, and any Cloudflare redirect, then rerun. If a failure happens after `/opt/ket` exists, keep that directory for its logs instead of rerunning.
 
-## After installation
+## Managing the server
 
-- More invites: `cd /opt/ket && sudo ./packaging/server/create-invite.sh --label "Family" --devices 3 --days 30`. `--devices` limits simultaneous connections, `--days` (or `--minutes`) sets the lifetime, and each run creates a separate grant that can be revoked on its own.
-- Status and logs: `sudo ./packaging/server/compose.sh ps` and `sudo ./packaging/server/compose.sh logs --tail=100` in `/opt/ket`.
-- Health on the server: `curl --fail http://127.0.0.1:8787/readyz`. From outside, `https://<your address>/` shows a neutral placeholder page; Ket's API is deliberately invisible.
-- Certificates are checked twice a day by `ket-certificates.timer` (`systemctl list-timers ket-certificates.timer`); run a check now with `sudo systemctl start ket-certificates.service`.
+The installer adds the `ket` command:
 
-Clients: install the Ket app from the [latest release](https://github.com/Emp5r0R/Ket/releases/latest), verify it as described in [release signing](RELEASE_SIGNING.md), then paste or scan the invite. **Advanced** in the app still accepts the server URL and access code that the installer prints for older apps.
+| Command | What it does |
+| --- | --- |
+| `sudo ket invite` | Create an invite. With no options it asks who it is for, how many devices may connect at once, and for how many days. Options: `--label`, `--devices`, `--days` or `--minutes`, `--no-qr` |
+| `sudo ket invites` | List invites with how many devices use each and when they expire |
+| `sudo ket revoke ID` | Revoke an invite and disconnect its devices |
+| `sudo ket status` | Version, services, connected devices, certificate expiry, last update check |
+| `sudo ket doctor` | Check Docker, the configuration, every service, DNS, listening ports, the certificate, and the timers, and say how to fix each problem |
+| `sudo ket logs [SERVICE] [--follow]` | Recent logs, for example `sudo ket logs control-plane` |
+| `sudo ket restart` | Apply changes made to `.env` and restart |
+| `sudo ket update` | Update to the latest release (`--check` only reports, `--to vX.Y.Z` picks a release) |
+| `sudo ket rollback` | Go back to the release before the last update (and forward again) |
+| `sudo ket backup` | Save `.env`, `secrets/`, and the grants and sessions to `/var/backups/ket` |
+| `sudo ket keys` | Show the node fingerprint that apps check invites against; `rotate-admin-token`, or `rotate-node-key` after a leak (that invalidates every invite) |
+| `sudo ket uninstall` | Remove Ket (see below) |
+
+From outside, `https://<your address>/` shows a neutral placeholder page; Ket's API is deliberately invisible. Certificates are checked twice a day by `ket-certificates.timer`.
+
+Clients: install the Ket app from the [latest release](https://github.com/Emp5r0R/Ket/releases/latest), verify it as described in [release signing](RELEASE_SIGNING.md), then paste or scan the invite. **Advanced** in the app still accepts the server URL and access code that `ket invite` prints for older apps.
 
 ## Installed layout
 
-- `/opt/ket`: application, `.env` (mode `0600`), and `secrets/`.
+- `/opt/ket`: application, `.env` (mode `0600`), `secrets/`, and `.ket-release` (the installed release).
+- `/opt/ket.previous`: the release before the last update, for `ket rollback`.
 - Docker volume `ket_ket-state`: grants and sessions.
 - `/etc/letsencrypt`: the certificate; Ket keeps its own copies under `secrets/`.
-- `/etc/systemd/system/ket-certificates.{service,timer}`: renewal.
-- `packaging/server/compose.sh`: runs Docker Compose with exactly the transports `.env` enables.
+- `/etc/systemd/system/ket-certificates.{service,timer}` and `ket-update.{service,timer}`.
+- `/usr/local/bin/ket`: the `ket` command (a link into `/opt/ket`).
+- `/var/backups/ket`: backups (the newest 10 are kept); `/var/lib/ket`: the last update check.
 
-`KET_NODE_SIGNING_KEY` in `.env` signs invites. Never rotate or share it: a new key invalidates every outstanding invite and every app profile pinned to the old one.
+`KET_NODE_SIGNING_KEY` in `.env` signs invites. Do not rotate or share it: a new key invalidates every outstanding invite and every app profile pinned to the old one.
 
-## Upgrades
+## Updates
 
-Never delete or regenerate `.env` or `secrets/`; their keys reconcile active sessions. Back up `.env`, `secrets/`, and the `ket_ket-state` volume first, and read the release notes for migrations.
+`ket-update.timer` checks for a new release once a day. What it does depends on `KET_AUTO_UPDATE` in `.env` and on the release's rating ([UPDATES.md](UPDATES.md)):
 
-Installations made by the one-command installer are plain release trees. Unpack the new release over them (your `.env` and `secrets/` are not part of a release and stay in place):
+| `KET_AUTO_UPDATE` | Applied on its own |
+| --- | --- |
+| `security` (default) | Security and critical releases |
+| `critical` | Critical releases only |
+| `all` | Every release |
+| `off` | Nothing; `ket status` shows what is waiting |
+
+Everything else waits for `sudo ket update`. An update:
+
+1. downloads the release and runs **that release's** updater, so the newer code decides how it is installed;
+2. builds the new tree next to the old one with your `.env`, `secrets/`, and any `compose.override.yaml`, adds settings the release needs (for example a node signing key on servers from before invites), validates it, and gets its image, while the old release keeps serving;
+3. backs up `.env`, `secrets/`, and the state volume to `/var/backups/ket`;
+4. swaps the trees, starts the new release, and waits until it is healthy;
+5. if it does not become healthy, puts the old release back automatically and keeps the failed one, with its logs, in `/opt/ket.failed-<time>`.
+
+`sudo ket rollback` switches back to the previous release later. A release that changed the stored state may not be readable by the older release; restore the backup taken before the update in that case.
+
+Servers installed by the v1.0.1 installer have no `ket` command yet. Update them once with the bootstrap; afterwards they have `ket` and the daily check, and keep renewing their certificate through the host certbot:
 
 ```bash
-ref=vX.Y.Z
-cd /opt/ket
-sudo cp .env /root/ket.env.backup
-sudo tar -czf /root/ket-secrets.backup.tgz secrets
-curl -fsSL "https://codeload.github.com/Emp5r0R/Ket/tar.gz/$ref" | sudo tar -xzf - --strip-components=1 -C /opt/ket
-sudo ./packaging/validate-env.sh
-sudo ./packaging/server/compose.sh up --detach --build --remove-orphans
+curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/install.sh | sudo bash -s -- update
 ```
 
-Servers installed by the v1.0.1 installer are git checkouts and use the host certbot renewal hook. Upgrade them with `sudo git fetch --tags origin && sudo git checkout <tag>` followed by the same validate and `compose.sh up` steps; their renewal keeps working.
-
-Servers installed before invites have no node signing key. Add one once; existing access codes keep working and new grants also get invites:
+## Uninstalling
 
 ```bash
-cd /opt/ket
-grep -q '^KET_NODE_SIGNING_KEY=' .env || \
-  printf 'KET_NODE_SIGNING_KEY=%s\n' "$(openssl rand 32 | base64 | tr -d '\n=' | tr '+/' '-_')" | sudo tee -a .env >/dev/null
-sudo ./packaging/validate-env.sh
-sudo ./packaging/server/compose.sh up --detach --remove-orphans
+sudo ket uninstall
 ```
+
+It asks you to type `uninstall`, writes a final backup of your keys, settings, and grants to `/var/backups/ket` (so a reinstall can reuse them), then removes the containers, the state volume, the timers, the `ket` command, and `/opt/ket`. `--purge` also deletes the backups, the Let's Encrypt certificate, and the container images. Firewall rules the installer added are left in place, as other services may use those ports. Servers without the `ket` command can use `curl -fsSL https://raw.githubusercontent.com/Emp5r0R/Ket/main/install.sh | sudo bash -s -- uninstall`.
 
 ## Security boundary
 

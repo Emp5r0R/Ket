@@ -104,6 +104,8 @@ function demoSnapshot(
     connected_at_epoch_seconds: connected ? now() - 1_842 : null,
     reconnect_attempt: 0,
     issue: null,
+    server_version: null,
+    client_update: null,
     updated_at_epoch_seconds: now(),
   };
 }

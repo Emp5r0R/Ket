@@ -8,6 +8,7 @@ members = [
     "crates/ket-server",
     "crates/ket-tunnel-protocol",
     "crates/ket-tunnel-service",
+    "crates/ket-update",
 ]
 resolver = "2"
 

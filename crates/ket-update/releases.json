@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "security_grace_days": 14,
+  "releases": [
+    {
+      "version": "1.0.1",
+      "published": "2026-09-02",
+      "client": "optional",
+      "server": "optional",
+      "summary": "Baseline release before update tracking."
+    }
+  ]
+}

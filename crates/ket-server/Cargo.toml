@@ -17,6 +17,7 @@ hyper-util.workspace = true
 hmac.workspace = true
 ket-core = { path = "../ket-core" }
 ket-invite = { path = "../ket-invite" }
+ket-update = { path = "../ket-update" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

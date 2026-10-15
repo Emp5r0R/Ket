@@ -1,5 +1,6 @@
 import { Binary, KeyRound, Laptop, Monitor, Moon, Server, ShieldCheck, Sun, Trash2 } from "lucide-react";
 import { endpointHost } from "../lib/format";
+import { compareVersions } from "../lib/updates";
 import type { ThemePreference } from "../App";
 import type { DesktopState } from "../types";
 
@@ -35,8 +36,15 @@ export function SettingsView({
       : state.engine.status === "permission_required"
         ? "Restart required"
         : "Unavailable";
+  const serverVersion = state.snapshot.server_version;
+  const serverVersionText = serverVersion === null
+    ? "Unknown"
+    : compareVersions(serverVersion, state.version) < 0
+      ? `Ket ${serverVersion} (older than this app; its operator can run: sudo ket update)`
+      : `Ket ${serverVersion}`;
   const rows = [
     { icon: Server, label: "Control server", value: serverUrl ? endpointHost(serverUrl) : "Not configured" },
+    { icon: Server, label: "Server version", value: serverVersionText },
     { icon: Laptop, label: "Device", value: deviceName || "Ket desktop" },
     { icon: Binary, label: "Transport engines", value: state.engine.binary_available ? "Available" : "Not installed" },
     { icon: ShieldCheck, label: "Tunnel service", value: tunnelStatus },

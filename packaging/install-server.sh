@@ -11,6 +11,12 @@
 set -euo pipefail
 
 installer_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# Shared with the ket command: host paths, timers, the command link, and the
+# server image. Loaded first so the installer's own helpers (fail) take precedence.
+for library in paths common units image; do
+  # shellcheck source=/dev/null
+  . "$installer_dir/server/cli/$library.sh"
+done
 for library in common validate network system certificates provision report; do
   # shellcheck source=/dev/null
   . "$installer_dir/installer/lib/$library.sh"
@@ -41,6 +47,8 @@ Options:
   --country-code XX --country-name NAME --city NAME --latitude N --longitude N
                        Map location, all five together (default: detected)
   --install-dir PATH   Installation directory (default /opt/ket)
+  --auto-update POLICY Which releases the daily check applies on its own:
+                       off, critical, security (default), or all
   --plan               Show what would be set up, change nothing
   --help               Show this help
 EOF
@@ -60,6 +68,7 @@ source_dir=''
 install_dir=/opt/ket
 plan=false
 wireguard_enabled=true
+auto_update=security
 
 parse_arguments() {
   while (($#)); do
@@ -79,6 +88,7 @@ parse_arguments() {
       --ref) need_value "$@"; git_ref=$2; shift 2 ;;
       --source-dir) need_value "$@"; source_dir=$2; shift 2 ;;
       --install-dir) need_value "$@"; install_dir=$2; shift 2 ;;
+      --auto-update) need_value "$@"; auto_update=$2; shift 2 ;;
       --plan) plan=true; shift ;;
       --help|-h) usage; exit 0 ;;
       -*) fail "unknown option: $1 (see --help)" ;;
@@ -111,6 +121,10 @@ validate_arguments() {
   [[ $install_dir =~ ^/[A-Za-z0-9._/-]{1,240}$ && $install_dir != / \
     && $install_dir != *..* && $install_dir != *//* ]] \
     || fail '--install-dir must be a safe absolute path without spaces or parent traversal'
+  case $auto_update in
+    off|critical|security|all) ;;
+    *) fail '--auto-update must be off, critical, security, or all' ;;
+  esac
   shadowsocks_start=20000
   shadowsocks_end=$((shadowsocks_start + max_sessions - 1))
   first_code_max_connections=$((max_sessions < 5 ? max_sessions : 5))
@@ -158,20 +172,21 @@ stage_source() {
 }
 
 finish_installation() {
+  printf '%s\n' "${git_ref:-source}" > "$staging_dir/.ket-release"
   cd "$(dirname -- "$install_dir")"
   mv -- "$staging_dir" "$install_dir"
   staging_dir=''
   trap - EXIT
   cd "$install_dir"
   ./packaging/server/compose.sh up --detach --no-build --remove-orphans
-  install_renewal_timer
+  install_host_integration
   wait_until_ready
   printf '\nKet is ready at https://%s\n' "$domain"
   ./packaging/server/create-invite.sh \
     --label 'First devices' \
     --devices "$first_code_max_connections" \
     --minutes "$first_code_valid_minutes" \
-    || fail 'Ket is running, but the first invite could not be created; run ./packaging/server/create-invite.sh'
+    || fail 'Ket is running, but the first invite could not be created; run: sudo ket invite'
   print_handoff
 }
 
@@ -188,11 +203,12 @@ main() {
     print_plan
     printf 'Install directory: %s\n' "$install_dir"
     printf 'First invite: up to %s device(s) for %s minutes\n' "$first_code_max_connections" "$first_code_valid_minutes"
+    printf 'Automatic updates: %s\n' "$auto_update"
     exit 0
   fi
 
   [[ $EUID -eq 0 ]] || fail 'run as root (curl ... | sudo bash)'
-  [[ ! -e $install_dir ]] || fail "$install_dir already exists; to upgrade, follow docs/SERVER_INSTALL.md"
+  [[ ! -e $install_dir ]] || fail "$install_dir already exists; to update it, run: sudo ket update"
   require_systemd
   load_os_release
   family=$(os_family)

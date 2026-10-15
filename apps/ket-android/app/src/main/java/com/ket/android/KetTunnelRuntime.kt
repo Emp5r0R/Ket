@@ -30,6 +30,10 @@ data class TunnelSnapshot(
     val transportName: String = "Auto",
     val reconnectAttempt: Int = 0,
     val accessExpiresAtEpochSeconds: Long? = null,
+    /** The server's Ket version, from its last session response. */
+    val serverVersion: String? = null,
+    /** The server's advice for this app; survives failures so a refusal can show where to update. */
+    val clientUpdate: AndroidClientUpdate? = null,
 )
 
 internal class TunnelLaunchSpec(
@@ -40,6 +44,7 @@ internal class TunnelLaunchSpec(
     val transports: List<AndroidTransport>,
     val accessExpiresAtEpochSeconds: Long?,
     val preferredProtocol: KetProtocol? = null,
+    val updates: AndroidUpdateAdvice? = null,
 ) {
     override fun toString(): String =
         "TunnelLaunchSpec(controlEndpoint=$controlEndpoint, sessionToken=[REDACTED], node=${node.displayName}, transports=$transports)"
@@ -55,6 +60,7 @@ internal class TunnelLaunchSpec(
         transports = transports,
         accessExpiresAtEpochSeconds = confirmedAccessExpiresAtEpochSeconds,
         preferredProtocol = preferredProtocol,
+        updates = updates,
     )
 
     companion object {
@@ -71,6 +77,7 @@ internal class TunnelLaunchSpec(
                 result.transports,
                 result.accessExpiresAtEpochSeconds,
                 preferredProtocol,
+                result.updates,
             )
     }
 }
@@ -156,6 +163,8 @@ object KetTunnelController {
                             node = preparedSpec.node,
                             accessExpiresAtEpochSeconds = preparedSpec.accessExpiresAtEpochSeconds,
                             message = "Starting protected route...",
+                            serverVersion = preparedSpec.updates?.serverVersion,
+                            clientUpdate = preparedSpec.updates?.client,
                         ),
                     )
                     ContextCompat.startForegroundService(
@@ -208,6 +217,7 @@ object KetTunnelController {
                     )
                 }
             } catch (error: Exception) {
+                val requiredUpdate = (error as? KetControlException)?.requiredUpdate
                 KetTunnelRuntime.clearPending()
                 val release = spec?.let {
                     runCatching { KetControlApi.release(it.controlEndpoint, it.sessionToken) }
@@ -230,7 +240,7 @@ object KetTunnelController {
                     outcome = DiagnosticOutcome.Failed,
                     phase = TunnelPhase.Failed,
                     protocol = preferredProtocol,
-                    code = "enrollment_failed",
+                    code = if (requiredUpdate != null) CLIENT_UPDATE_REQUIRED_CODE else "enrollment_failed",
                     message = error.message,
                 )
                 if (attempt == generation.get()) {
@@ -238,6 +248,7 @@ object KetTunnelController {
                         TunnelSnapshot(
                             phase = TunnelPhase.Failed,
                             message = error.message ?: "Unable to start Ket",
+                            clientUpdate = requiredUpdate,
                         ),
                     )
                 }

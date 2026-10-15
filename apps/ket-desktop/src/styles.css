@@ -364,6 +364,90 @@ input:disabled {
   background: var(--neutral-soft);
 }
 
+.update-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: -6px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.update-banner.is-info .update-icon {
+  color: var(--blue);
+}
+
+.update-banner.is-warning {
+  border-color: var(--warning-ink);
+  background: var(--warning-soft);
+}
+
+.update-banner.is-warning .update-icon {
+  color: var(--warning-ink);
+}
+
+.update-banner.is-danger {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.update-banner.is-danger .update-icon {
+  color: var(--danger-strong);
+}
+
+.update-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.update-copy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 3px;
+  min-width: 0;
+}
+
+.update-copy span {
+  color: var(--muted);
+}
+
+.update-link code {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.update-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.update-actions > button:not(.icon-button) {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--secondary-border);
+  border-radius: 6px;
+  color: var(--secondary-ink);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .update-banner {
+    flex-wrap: wrap;
+  }
+}
+
 .connection-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);

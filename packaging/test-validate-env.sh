@@ -150,6 +150,19 @@ for url in https://ket.example.com/prefix https://203.0.113.9 https://ket.exampl
     KET_NODE_SIGNING_KEY=$NODE_KEY "KET_PUBLIC_URL=$url"
 done
 
+expect_pass 'update lifecycle settings' \
+  KET_CLIENT_MINIMUM_VERSION=1.0.1 KET_CLIENT_UPDATE_ENFORCEMENT=warn \
+  KET_CLIENT_DOWNLOAD_URL=https://mirror.example.com/ket/releases KET_AUTO_UPDATE=critical
+for version in 1.0 v1.0.1 01.0.1 1.0.1-rc.1; do
+  expect_fail "client minimum $version" 'KET_CLIENT_MINIMUM_VERSION must be a MAJOR.MINOR.PATCH version' \
+    "KET_CLIENT_MINIMUM_VERSION=$version"
+done
+expect_fail 'unknown enforcement' 'KET_CLIENT_UPDATE_ENFORCEMENT must be enforce or warn' KET_CLIENT_UPDATE_ENFORCEMENT=off
+for url in http://mirror.example.com/ 'https://user:pw@mirror.example.com/' 'https://mirror.example.com/#x' 'https://mirror.example.com/a b'; do
+  expect_fail "download page $url" 'KET_CLIENT_DOWNLOAD_URL must be an https:// URL' "KET_CLIENT_DOWNLOAD_URL=$url"
+done
+expect_fail 'unknown automatic update policy' 'KET_AUTO_UPDATE must be off, critical, security, or all' KET_AUTO_UPDATE=yes
+
 expect_fail 'missing admin token' 'KET_ADMIN_TOKEN is required' KET_ADMIN_TOKEN=
 expect_fail 'remote plaintext control URL' 'KET_PUBLIC_URL must use HTTPS' KET_PUBLIC_URL=http://ket.example.test
 expect_fail 'invalid country code' 'KET_COUNTRY_CODE must be two uppercase letters' KET_COUNTRY_CODE=sg

@@ -1,0 +1,26 @@
+{
+  "description": "How urgently a server should update: the most urgent server or app rating among the releases after the installed version up to the target. The Rust crate and the server's ket command (jq) must agree on every case.",
+  "manifest": {
+    "schema": 1,
+    "security_grace_days": 14,
+    "releases": [
+      {"version": "1.0.1", "published": "2026-09-02", "client": "optional", "server": "optional", "summary": "Baseline."},
+      {"version": "1.1.0", "published": "2026-10-01", "client": "recommended", "server": "security", "summary": "Edge hardening."},
+      {"version": "1.1.1", "published": "2026-10-10", "client": "security", "summary": "App-only fix."},
+      {"version": "1.2.0", "published": "2026-11-01", "server": "recommended", "summary": "Server fixes."},
+      {"version": "1.10.0", "published": "2027-01-01", "server": "critical", "summary": "Numeric ordering check."}
+    ]
+  },
+  "cases": [
+    {"installed": "1.0.1", "target": "1.0.1", "category": null},
+    {"installed": "1.0.1", "target": "1.1.0", "category": "security"},
+    {"installed": "1.0.1", "target": "1.2.0", "category": "security"},
+    {"installed": "1.1.0", "target": "1.1.1", "category": "security"},
+    {"installed": "1.1.0", "target": "1.2.0", "category": "security"},
+    {"installed": "1.1.1", "target": "1.2.0", "category": "recommended"},
+    {"installed": "1.2.0", "target": "1.10.0", "category": "critical"},
+    {"installed": "1.9.0", "target": "1.10.0", "category": "critical"},
+    {"installed": "1.10.0", "target": "1.2.0", "category": null},
+    {"installed": "0.9.0", "target": "1.0.1", "category": "optional"}
+  ]
+}

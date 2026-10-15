@@ -143,6 +143,7 @@ server_contracts() {
   run_step 'Server installer command-line tests' "$ROOT/packaging/test-install-server.sh"
   run_step 'Server installer library tests' "$ROOT/packaging/test-installer-lib.sh"
   run_step 'One-command bootstrap tests' "$ROOT/packaging/test-bootstrap.sh"
+  run_step 'Server ket command tests' "$ROOT/packaging/test-ket-cli.sh"
   run_step 'Compose overlay selection tests' "$ROOT/packaging/test-compose-overlays.sh"
   run_step 'Public edge renderer and template contract tests' "$ROOT/packaging/test-render-edge.sh"
   run_step 'Invite helper contract tests' "$ROOT/packaging/test-create-invite.sh"

@@ -2100,6 +2100,7 @@ dependencies = [
  "hyper-util",
  "ket-core",
  "ket-invite",
+ "ket-update",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2145,6 +2146,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windows-service",
+]
+
+[[package]]
+name = "ket-update"
+version = "1.0.1"
+dependencies = [
+ "ket-core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

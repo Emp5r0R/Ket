@@ -36,15 +36,21 @@ When it finishes, you get an **invite** and a QR code.
 2. Paste the invite or scan its QR code.
 3. Tap **Connect**.
 
-Need invites for more people? On the server:
+## 3. Look after your server
 
 ```bash
-sudo /opt/ket/packaging/server/create-invite.sh --devices 2 --days 30
+sudo ket invite     # make another invite (it asks who it's for)
+sudo ket status     # check that everything is running
+sudo ket doctor     # something wrong? it finds the problem and tells you the fix
+sudo ket help       # updates, backups, uninstalling, and more
 ```
+
+Security fixes install themselves. The Ket app tells you when it needs updating.
 
 ## Learn more
 
-- [Server setup in detail](docs/SERVER_INSTALL.md): supported systems, domains and Cloudflare, upgrades, troubleshooting.
+- [Server setup in detail](docs/SERVER_INSTALL.md): supported systems, domains and Cloudflare, the `ket` command, uninstalling.
+- [How updates work](docs/UPDATES.md): what gets updated automatically, and when an app must update.
 - [Features and transports](docs/FEATURES.md): what Ket does and how each connection method is tested.
 - [How invites work](docs/INVITE_CAPSULE.md) and the [architecture](docs/ARCHITECTURE.md).
 - [Running the server by hand](docs/MANUAL_DEPLOYMENT.md) and [developing Ket](docs/DEVELOPMENT.md).

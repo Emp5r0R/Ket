@@ -1,16 +1,38 @@
 use std::{net::IpAddr, time::Duration};
 
 use async_trait::async_trait;
-use ket_core::{CreateSessionRequest, ErrorResponse, SecretString, SessionManifest, SessionStatus};
+use ket_core::{
+    CLIENT_HEADER, CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate, CreateSessionRequest, ErrorResponse,
+    SecretString, SessionManifest, SessionStatus, UpdateAdvice,
+};
 use ket_invite::{
     ENROLLMENT_NONCE_HEADER, EnrollmentNonce, EnrollmentProof, NODE_SIGNATURE_HEADER, NodePublicKey,
 };
-use reqwest::{Client, RequestBuilder, StatusCode, Url, redirect::Policy, tls::Version};
+use reqwest::{
+    Client, RequestBuilder, StatusCode, Url,
+    header::{HeaderMap, HeaderValue},
+    redirect::Policy,
+    tls::Version,
+};
 use serde::de::DeserializeOwned;
 
 use crate::ClientError;
 
 const MAX_RESPONSE_BYTES: usize = 128 * 1024;
+
+/// This app's `Ket-Client` header value, for example `linux/1.2.0`. The
+/// server uses it to decide whether this version must, should, or may update.
+pub fn client_header_value() -> Option<&'static str> {
+    if cfg!(target_os = "linux") {
+        Some(concat!("linux/", env!("CARGO_PKG_VERSION")))
+    } else if cfg!(target_os = "windows") {
+        Some(concat!("windows/", env!("CARGO_PKG_VERSION")))
+    } else if cfg!(target_os = "macos") {
+        Some(concat!("macos/", env!("CARGO_PKG_VERSION")))
+    } else {
+        None
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum InsecureHttpPolicy {
@@ -166,7 +188,12 @@ pub struct HttpControlPlane {
 
 impl HttpControlPlane {
     pub fn new() -> Result<Self, ClientError> {
+        let mut headers = HeaderMap::new();
+        if let Some(value) = client_header_value() {
+            headers.insert(CLIENT_HEADER, HeaderValue::from_static(value));
+        }
         let client = Client::builder()
+            .default_headers(headers)
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15))
             .redirect(Policy::none())
@@ -261,7 +288,9 @@ impl ControlPlane for HttpControlPlane {
             )
             .map_err(|_| ClientError::NodeIdentityMismatch)?;
         }
-        decode_json(&response.body)
+        let mut manifest: SessionManifest = decode_json(&response.body)?;
+        manifest.updates = sanitize_advice(manifest.updates.take());
+        Ok(manifest)
     }
 
     async fn session_status(
@@ -269,13 +298,16 @@ impl ControlPlane for HttpControlPlane {
         endpoint: &ControlEndpoint,
         token: &SecretString,
     ) -> Result<SessionStatus, ClientError> {
-        self.json(
-            self.client
-                .get(endpoint.route("v1/sessions/current")?)
-                .bearer_auth(token.expose_secret()),
-            StatusCode::OK,
-        )
-        .await
+        let mut status: SessionStatus = self
+            .json(
+                self.client
+                    .get(endpoint.route("v1/sessions/current")?)
+                    .bearer_auth(token.expose_secret()),
+                StatusCode::OK,
+            )
+            .await?;
+        status.updates = sanitize_advice(status.updates.take());
+        Ok(status)
     }
 
     async fn renew_session(
@@ -283,13 +315,16 @@ impl ControlPlane for HttpControlPlane {
         endpoint: &ControlEndpoint,
         token: &SecretString,
     ) -> Result<SessionStatus, ClientError> {
-        self.json(
-            self.client
-                .put(endpoint.route("v1/sessions/current")?)
-                .bearer_auth(token.expose_secret()),
-            StatusCode::OK,
-        )
-        .await
+        let mut status: SessionStatus = self
+            .json(
+                self.client
+                    .put(endpoint.route("v1/sessions/current")?)
+                    .bearer_auth(token.expose_secret()),
+                StatusCode::OK,
+            )
+            .await?;
+        status.updates = sanitize_advice(status.updates.take());
+        Ok(status)
     }
 
     async fn release_session(
@@ -352,6 +387,15 @@ fn api_error(status: StatusCode, body: &[u8]) -> ClientError {
         };
     }
     let response = serde_json::from_slice::<ErrorResponse>(body).ok();
+    if status == StatusCode::UPGRADE_REQUIRED
+        && let Some(update) = response
+            .as_ref()
+            .filter(|response| response.code == CLIENT_UPDATE_REQUIRED_CODE)
+            .and_then(|response| response.update.clone())
+            .and_then(sanitize_update)
+    {
+        return ClientError::UpdateRequired(Box::new(update));
+    }
     let code = response
         .as_ref()
         .map(|response| response.code.as_str())
@@ -373,6 +417,38 @@ fn api_error(status: StatusCode, body: &[u8]) -> ClientError {
         code,
         message,
     }
+}
+
+/// Keeps server-supplied update details displayable and safe to open: the
+/// summary is bounded text and the download page must be HTTPS.
+fn sanitize_update(mut update: ClientUpdate) -> Option<ClientUpdate> {
+    update.summary = update
+        .summary
+        .map(|summary| sanitize_message(&summary))
+        .filter(|summary| !summary.is_empty());
+    update.latest_version = sanitize_message(&update.latest_version)
+        .chars()
+        .take(32)
+        .collect();
+    let url = reqwest::Url::parse(&update.download_url).ok()?;
+    (url.scheme() == "https"
+        && url.host_str().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && update.download_url.len() <= 2_048)
+        .then_some(update)
+}
+
+/// Applies [`sanitize_update`] to the advice in a successful response; an
+/// unusable download page drops the advice rather than the session.
+pub(crate) fn sanitize_advice(advice: Option<UpdateAdvice>) -> Option<UpdateAdvice> {
+    let mut advice = advice?;
+    advice.server_version = sanitize_message(&advice.server_version)
+        .chars()
+        .take(32)
+        .collect();
+    advice.client = sanitize_update(advice.client)?;
+    Some(advice)
 }
 
 fn sanitize_message(value: &str) -> String {
@@ -432,6 +508,7 @@ mod tests {
         let body = serde_json::to_vec(&ErrorResponse {
             code: "INVALID CODE".to_owned(),
             message: format!("bad\n{}", "x".repeat(400)),
+            update: None,
         })
         .unwrap();
         let ClientError::Api { code, message, .. } = api_error(StatusCode::BAD_REQUEST, &body)
@@ -506,6 +583,94 @@ mod tests {
             .await
             .unwrap();
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_client_names_itself_and_reports_required_updates() {
+        use axum::http::HeaderMap;
+        let app = Router::new().route(
+            "/v1/sessions",
+            post(|headers: HeaderMap| async move {
+                assert_eq!(
+                    headers
+                        .get(CLIENT_HEADER)
+                        .and_then(|value| value.to_str().ok()),
+                    client_header_value()
+                );
+                (
+                    StatusCode::UPGRADE_REQUIRED,
+                    Json(serde_json::json!({
+                        "code": "client_update_required",
+                        "message": "update Ket",
+                        "update": {
+                            "status": "required",
+                            "latest_version": "9.0.0",
+                            "summary": "Critical\nfix",
+                            "download_url": "https://mirror.example.test/ket"
+                        }
+                    })),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let endpoint = ControlEndpoint::parse(&format!("http://{address}")).unwrap();
+        let error = HttpControlPlane::new()
+            .unwrap()
+            .create_session(
+                &endpoint,
+                &SecretString::from("A2345678901234567890123456789012"),
+                "Integration client",
+            )
+            .await
+            .unwrap_err();
+        assert!(error.ends_session());
+        assert!(!error.is_unauthorized());
+        assert_eq!(error.issue().code, "client_update_required");
+        let update = error.required_update().expect("update details");
+        assert_eq!(update.latest_version, "9.0.0");
+        assert_eq!(update.summary.as_deref(), Some("Criticalfix"));
+        server.abort();
+    }
+
+    #[test]
+    fn update_details_with_unsafe_download_pages_are_dropped() {
+        let body = |url: &str| {
+            serde_json::to_vec(&serde_json::json!({
+                "code": "client_update_required",
+                "message": "update Ket",
+                "update": {"status": "required", "latest_version": "9.0.0", "download_url": url}
+            }))
+            .unwrap()
+        };
+        for url in [
+            "http://mirror.example.test/",
+            "javascript:alert(1)",
+            "https://user:secret@mirror.example.test/",
+        ] {
+            let error = api_error(StatusCode::UPGRADE_REQUIRED, &body(url));
+            assert!(error.required_update().is_none(), "{url}");
+            assert!(!error.ends_session(), "{url}");
+        }
+        // A 426 without the update code is an ordinary API error.
+        let error = api_error(StatusCode::UPGRADE_REQUIRED, b"{}");
+        assert!(error.required_update().is_none());
+        assert!(
+            sanitize_advice(Some(UpdateAdvice {
+                server_version: "9.0.0".to_owned(),
+                client: ClientUpdate {
+                    status: ket_core::ClientUpdateStatus::Optional,
+                    latest_version: "9.0.0".to_owned(),
+                    required_after_epoch_seconds: None,
+                    summary: None,
+                    download_url: "ftp://mirror.example.test/".to_owned(),
+                },
+            }))
+            .is_none()
+        );
     }
 
     /// Serves enrollment the way a signing node does, optionally signing with
@@ -645,6 +810,7 @@ mod tests {
                 observed_at_epoch_seconds: 3_000_000_000,
             },
             transports: Vec::new(),
+            updates: None,
         }
     }
 }

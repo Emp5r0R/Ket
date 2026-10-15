@@ -54,6 +54,9 @@ http {
       if ($http_x_test_outcome = capacity) { return 409 '{"code":"grant_capacity_reached"}'; }
       if ($http_x_test_outcome = busy) { return 429 '{"code":"server_busy"}'; }
       if ($http_x_test_outcome = unavailable) { return 503 '{"code":"data_plane_unavailable"}'; }
+      # An app the server refuses must still see the update details, and the
+      # app's Ket-Client header must reach the control plane.
+      if ($http_ket_client = "android/0.9.0") { return 426 '{"code":"client_update_required"}'; }
       if ($http_x_test_outcome = malformed) { return 422 '{"code":"invalid_request"}'; }
       return 401 '{"code":"unauthorized","message":"credentials are invalid"}';
     }
@@ -168,6 +171,7 @@ expect 'grant expired' 403 'grant_expired' POST /v1/sessions -H 'X-Test-Outcome:
 expect 'grant capacity' 409 'grant_capacity_reached' POST /v1/sessions -H 'X-Test-Outcome: capacity' --data '{}'
 expect 'server busy' 429 'server_busy' POST /v1/sessions -H 'X-Test-Outcome: busy' --data '{}'
 expect 'node unavailable' 503 'data_plane_unavailable' POST /v1/sessions -H 'X-Test-Outcome: unavailable' --data '{}'
+expect 'app update required' 426 'client_update_required' POST /v1/sessions -H 'Ket-Client: android/0.9.0' --data '{}'
 expect 'session status' 200 'current' GET /v1/sessions/current -H 'Authorization: Bearer valid'
 expect 'XHTTP exact path' 200 "xhttp:$xhttp_path" GET "$xhttp_path"
 expect 'XHTTP subpath' 200 "xhttp:$xhttp_path/session/0" POST "$xhttp_path/session/0" --data x

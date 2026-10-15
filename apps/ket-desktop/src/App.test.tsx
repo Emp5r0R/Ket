@@ -332,6 +332,8 @@ describe("Ket desktop shell", () => {
       connected_at_epoch_seconds: expiry - 3_500,
       reconnect_attempt: 0,
       issue: null,
+      server_version: null,
+      client_update: null,
       updated_at_epoch_seconds: expiry - 3_500,
     };
     const enrolled: ClientSnapshot = {

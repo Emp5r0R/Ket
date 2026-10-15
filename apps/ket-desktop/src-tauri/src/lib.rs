@@ -234,7 +234,16 @@ async fn enroll(
         SelectionPolicy::default(),
     )
     .map_err(issue)?;
-    let snapshot = client.enroll(access_code).await.map_err(issue)?;
+    let snapshot = match client.enroll(access_code).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            // A refused app version still shows where to get the update.
+            if error.required_update().is_some() {
+                let _ = app.emit(SNAPSHOT_EVENT, client.snapshot());
+            }
+            return Err(issue(error));
+        }
+    };
 
     let mut receiver = client.subscribe();
     let watcher_app = app.clone();

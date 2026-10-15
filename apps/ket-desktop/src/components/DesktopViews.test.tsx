@@ -74,6 +74,29 @@ describe("desktop settings", () => {
     expect(onThemeChange).toHaveBeenCalledWith("light");
   });
 
+  it("shows the server version and flags a server older than the app", () => {
+    const view = (serverVersion: string | null) =>
+      render(
+        <SettingsView
+          state={testDesktopState({ snapshot: testSnapshot({ server_version: serverVersion }) })}
+          serverUrl="https://ket.example.test"
+          deviceName="Workstation"
+          busy={false}
+          themePreference="system"
+          onThemeChange={vi.fn()}
+          onForget={vi.fn(async () => undefined)}
+        />,
+      );
+    let rendered = view(null);
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
+    rendered.unmount();
+    rendered = view("1.0.0");
+    expect(screen.getByText(/older than this app/)).toHaveTextContent("sudo ket update");
+    rendered.unmount();
+    view("1.0.1");
+    expect(screen.getAllByText("Ket 1.0.1")).toHaveLength(2);
+  });
+
   it("maps every tunnel-service state and protects forget while unavailable", () => {
     const statuses = [
       ["ready", true, "Ready"],

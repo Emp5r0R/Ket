@@ -468,6 +468,7 @@ mod tests {
                     secrets: BTreeMap::new(),
                 }),
             }],
+            updates: None,
         }
     }
 
@@ -485,6 +486,7 @@ mod tests {
                 online_connections: 1,
                 observed_at_epoch_seconds: NOW,
             },
+            updates: None,
         }
     }
 

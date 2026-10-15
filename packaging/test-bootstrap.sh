@@ -28,6 +28,12 @@ printf 'ARGS:%s\n' "$*"
 [[ -f $2/packaging/installer/protocol ]] && printf 'TREE:ok\n'
 rm -rf -- "$2"
 STUB
+mkdir -p "$work/src/Ket-9.9.9/packaging/server"
+cat > "$work/src/Ket-9.9.9/packaging/server/ket.sh" <<'STUB'
+#!/usr/bin/env bash
+printf 'KET:%s\n' "$*"
+printf 'KET_INSTALL_DIR:%s\n' "${KET_INSTALL_DIR:-}"
+STUB
 # An older release without one-command support.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$work/src/Ket-1.0.1/packaging/install-server.sh"
 tar -C "$work/src" -czf "$work/tarballs/v9.9.9" Ket-9.9.9
@@ -92,6 +98,36 @@ grep -Fq "Emp5r0R/Ket/v1.0.1/packaging/install-server.sh" <<<"$output" || fail '
 if output=$(KET_REF=v0.0.0 run_bootstrap 2>&1); then fail 'a missing release was accepted'; fi
 grep -Fq 'could not download Ket v0.0.0' <<<"$output" || fail "missing download error: $output"
 if KET_REF='../main' run_bootstrap >/dev/null 2>&1; then fail 'an unsafe release name was accepted'; fi
+
+# --- update and uninstall ---------------------------------------------------
+output=$(run_bootstrap help)
+grep -Fq 'install.sh update' <<<"$output" || fail 'help does not list update'
+
+if output=$(KET_INSTALL_DIR="$work/missing" run_bootstrap update 2>&1); then fail 'update ran without an installation'; fi
+grep -Fq "no Ket installation in $work/missing" <<<"$output" || fail "missing installation error: $output"
+
+installed="$work/opt-ket"
+mkdir -p "$installed"
+printf 'KET_ADMIN_TOKEN=x\n' > "$installed/.env"
+output=$(KET_INSTALL_DIR="$installed" run_bootstrap update)
+grep -Eq "^KET:apply-update --source-dir $work/ket-setup\.[A-Za-z0-9]+ --ref v9\.9\.9 --install-dir $installed --remove-source$" <<<"$output" \
+  || fail "update did not hand over to the release's updater: $output"
+rm -rf "$work"/ket-setup.*
+
+if output=$(KET_INSTALL_DIR="$installed" KET_REF=v1.0.1 run_bootstrap update 2>&1); then fail 'a pre-protocol release updated a server'; fi
+grep -Fq 'predates the ket command' <<<"$output" || fail "missing pre-protocol update error: $output"
+
+# An installation made before the ket command is removed by the downloaded release.
+output=$(KET_INSTALL_DIR="$installed" run_bootstrap uninstall --yes)
+grep -Fxq 'KET:uninstall --yes' <<<"$output" || fail "legacy uninstall did not use the release: $output"
+grep -Fxq "KET_INSTALL_DIR:$installed" <<<"$output" || fail 'legacy uninstall lost the install directory'
+
+# An installation with the ket command removes itself without downloading.
+mkdir -p "$installed/packaging/server"
+printf '#!/usr/bin/env bash\nprintf "LOCAL:%%s\\n" "$*"\n' > "$installed/packaging/server/ket.sh"
+output=$(KET_INSTALL_DIR="$installed" KET_GITHUB_URL=http://127.0.0.1:9 run_bootstrap uninstall --purge)
+grep -Fxq 'LOCAL:uninstall --purge' <<<"$output" || fail "uninstall did not use the installed ket command: $output"
+grep -Fq 'Downloading' <<<"$output" && fail 'uninstall downloaded a release it did not need'
 
 leftovers=$(find "$work" -maxdepth 1 -name 'ket-setup.*' | wc -l)
 ((leftovers == 0)) || fail 'the bootstrap left downloaded trees behind'

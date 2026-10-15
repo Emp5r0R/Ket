@@ -34,8 +34,17 @@ print_handoff() {
   printf '\nNext:\n'
   printf '  1. Install the Ket app: %s\n' "$client_release_url"
   printf '  2. Paste or scan the invite, then connect.\n'
-  printf '\nMore invites: cd %s && sudo ./packaging/server/create-invite.sh --devices 2 --days 30\n' "$install_dir"
-  printf 'Status:       cd %s && sudo ./packaging/server/compose.sh ps\n' "$install_dir"
+  printf '\nManage this server with the ket command:\n'
+  printf '  sudo ket invite     create another invite\n'
+  printf '  sudo ket status     see how the server is doing\n'
+  printf '  sudo ket doctor     find and explain problems\n'
+  printf '  sudo ket help       everything else (updates, backups, uninstall)\n'
+  case $auto_update in
+    off) printf '\nAutomatic updates are off. Update with: sudo ket update\n' ;;
+    critical) printf '\nCritical updates are applied automatically; others wait for: sudo ket update\n' ;;
+    security) printf '\nSecurity and critical updates are applied automatically; others wait for: sudo ket update\n' ;;
+    all) printf '\nEvery new release is applied automatically.\n' ;;
+  esac
   if [[ $wireguard_enabled != true ]]; then
     printf '\nNote: this kernel has no WireGuard support, so WireGuard TLS is off; the other transports work.\n'
   fi

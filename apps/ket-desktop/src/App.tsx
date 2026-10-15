@@ -18,6 +18,7 @@ import { ProtocolsView } from "./components/ProtocolsView";
 import { StatStrip } from "./components/StatStrip";
 import { WorldMap } from "./components/WorldMap";
 import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
+import { UpdateBanner } from "./components/UpdateBanner";
 import {
   appendDiagnostic,
   formatDiagnosticReport,
@@ -135,6 +136,8 @@ const emptySnapshot: ClientSnapshot = {
   connected_at_epoch_seconds: null,
   reconnect_attempt: 0,
   issue: null,
+  server_version: null,
+  client_update: null,
   updated_at_epoch_seconds: 0,
 };
 
@@ -696,6 +699,7 @@ export default function App() {
             </button>
           </span>
         ) : null}
+        {startupStage === "blocked" ? <UpdateBanner update={state.snapshot.client_update} /> : null}
       </main>
     );
   }
@@ -725,6 +729,7 @@ export default function App() {
                 </span>
               </div>
             </header>
+            <UpdateBanner update={state.snapshot.client_update} />
             <div className="connection-layout">
               <section className="map-stage" aria-label="Server map">
                 <WorldMap location={state.snapshot.node?.location ?? null} connected={connected} />

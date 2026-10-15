@@ -16,10 +16,10 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ket_core::{
-    AccessGrantSummary, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
-    CreateAccessGrantResponse, CreateSessionRequest, ErrorResponse, HealthState, NodeStatus,
-    SecretString, SessionManifest, SessionStatus, SessionTraffic, SessionTransport,
-    TransportCredential,
+    AccessGrantSummary, CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate, CreateAccessGrantBatchRequest,
+    CreateAccessGrantRequest, CreateAccessGrantResponse, CreateSessionRequest, ErrorResponse,
+    HealthState, NodeStatus, SecretString, SessionManifest, SessionStatus, SessionTraffic,
+    SessionTransport, TransportCredential, UpdateAdvice,
 };
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -34,7 +34,7 @@ use crate::{
     config::{HysteriaObfuscation, ServerConfig},
     data_plane::{self, DataPlaneControl},
     service::{AccessService, CreatedSession, ServiceError, SessionAllocation, unix_time},
-    shadowsocks, system, xray,
+    shadowsocks, system, updates, xray,
 };
 
 #[derive(Default)]
@@ -223,6 +223,7 @@ async fn create_session(
     Json(request): Json<CreateSessionRequest>,
 ) -> Result<Response, ApiError> {
     let enrollment_nonce = enrollment_nonce(&headers)?;
+    let updates = state.config.client_updates.advice(&headers, unix_time());
     if !state.data_plane_ready.load(Ordering::Acquire) {
         return Err(ApiError::data_plane_not_ready());
     }
@@ -245,21 +246,22 @@ async fn create_session(
         resource_slot: created.resource_slot,
     };
     state.kick_sessions(&created.expired_allocations).await;
+    // The version check follows authentication, so only holders of a valid
+    // access code learn that this is a Ket server that wants an update.
+    if updates::is_required(&updates) {
+        state
+            .metrics
+            .rejected_sessions
+            .fetch_add(1, Ordering::Relaxed);
+        roll_back_session(&state, &created).await;
+        return Err(ApiError::client_update_required(updates.client));
+    }
     if let Err(error) = state.data_plane.provision(&allocation).await {
         state
             .metrics
             .rejected_sessions
             .fetch_add(1, Ordering::Relaxed);
-        match state
-            .access
-            .release_session(created.token.expose_secret())
-            .await
-        {
-            Ok(session) => state.kick_sessions(&[session]).await,
-            Err(rollback_error) => {
-                tracing::error!(%rollback_error, session_id = %created.id, "failed to roll back unprovisioned session")
-            }
-        }
+        roll_back_session(&state, &created).await;
         return Err(ApiError::data_plane_unavailable(error));
     }
     state
@@ -273,8 +275,23 @@ async fn create_session(
         access_expires_at_epoch_seconds: created.access_expires_at_epoch_seconds,
         node: build_node_status(&state).await,
         transports,
+        updates: Some(updates),
     };
     signed_manifest_response(&state, enrollment_nonce.as_ref(), &response)
+}
+
+/// Releases a session that was created but must not be used.
+async fn roll_back_session(state: &AppState, created: &CreatedSession) {
+    match state
+        .access
+        .release_session(created.token.expose_secret())
+        .await
+    {
+        Ok(session) => state.kick_sessions(&[session]).await,
+        Err(rollback_error) => {
+            tracing::error!(%rollback_error, session_id = %created.id, "failed to roll back an unusable session")
+        }
+    }
 }
 
 /// Parses the optional `Ket-Enrollment-Nonce`; a malformed value is rejected
@@ -327,16 +344,25 @@ async fn session_status(
 ) -> Result<Json<SessionStatus>, ApiError> {
     let token = bearer_token(&headers)?;
     let session = state.access.session(token).await?;
-    Ok(Json(build_session_status(&state, session).await))
+    let updates = state.config.client_updates.advice(&headers, unix_time());
+    Ok(Json(build_session_status(&state, session, updates).await))
 }
 
+/// A session whose app must update is not renewed: it ends when its current
+/// lease runs out.
 async fn renew_session(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<SessionStatus>, ApiError> {
     let token = bearer_token(&headers)?;
+    let updates = state.config.client_updates.advice(&headers, unix_time());
+    if updates::is_required(&updates) {
+        // Authenticate first so the refusal reveals nothing to a stranger.
+        state.access.session(token).await?;
+        return Err(ApiError::client_update_required(updates.client));
+    }
     let session = state.access.renew_session(token).await?;
-    Ok(Json(build_session_status(&state, session).await))
+    Ok(Json(build_session_status(&state, session, updates).await))
 }
 
 async fn release_session(
@@ -583,6 +609,7 @@ fn session_transports(state: &AppState, created: &CreatedSession) -> Vec<Session
 async fn build_session_status(
     state: &AppState,
     session: crate::service::SessionView,
+    updates: UpdateAdvice,
 ) -> SessionStatus {
     let allocation = SessionAllocation {
         id: session.id.clone(),
@@ -608,6 +635,7 @@ async fn build_session_status(
         access_expires_at_epoch_seconds: session.access_expires_at_epoch_seconds,
         node: build_node_status(state).await,
         traffic,
+        updates: Some(updates),
     }
 }
 
@@ -673,85 +701,102 @@ struct ApiError {
     status: StatusCode,
     code: &'static str,
     message: String,
+    /// Boxed so the error, returned by most handlers, stays small.
+    update: Option<Box<ClientUpdate>>,
 }
 
 impl ApiError {
-    fn unauthorized() -> Self {
+    fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self {
-            status: StatusCode::UNAUTHORIZED,
-            code: "unauthorized",
-            message: "credentials are invalid".to_owned(),
+            status,
+            code,
+            message: message.into(),
+            update: None,
         }
+    }
+
+    fn client_update_required(update: ClientUpdate) -> Self {
+        Self {
+            status: StatusCode::UPGRADE_REQUIRED,
+            code: CLIENT_UPDATE_REQUIRED_CODE,
+            message: format!(
+                "update Ket to {} or newer to keep using this server",
+                update.latest_version
+            ),
+            update: Some(Box::new(update)),
+        }
+    }
+
+    fn unauthorized() -> Self {
+        Self::new(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "credentials are invalid".to_owned(),
+        )
     }
 
     fn data_plane_unavailable(error: data_plane::DataPlaneError) -> Self {
         tracing::error!(%error, "session data-plane provisioning failed");
-        Self {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            code: "data_plane_unavailable",
-            message: "the node data plane is temporarily unavailable".to_owned(),
-        }
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "data_plane_unavailable",
+            "the node data plane is temporarily unavailable".to_owned(),
+        )
     }
 
     fn invalid_enrollment_nonce() -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            code: "invalid_request",
-            message: "the enrollment nonce is invalid".to_owned(),
-        }
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "the enrollment nonce is invalid".to_owned(),
+        )
     }
 
     fn internal() -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "internal_error",
-            message: "the server could not complete the request".to_owned(),
-        }
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "the server could not complete the request".to_owned(),
+        )
     }
 
     fn data_plane_not_ready() -> Self {
-        Self {
-            status: StatusCode::SERVICE_UNAVAILABLE,
-            code: "data_plane_unavailable",
-            message: "the node data plane is temporarily unavailable".to_owned(),
-        }
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "data_plane_unavailable",
+            "the node data plane is temporarily unavailable".to_owned(),
+        )
     }
 }
 
 impl From<ServiceError> for ApiError {
     fn from(error: ServiceError) -> Self {
         match error {
-            ServiceError::InvalidInput(message) => Self {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                code: "invalid_request",
-                message,
-            },
+            ServiceError::InvalidInput(message) => {
+                Self::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message)
+            }
             ServiceError::Unauthorized => Self::unauthorized(),
-            ServiceError::GrantExpired => Self {
-                status: StatusCode::FORBIDDEN,
-                code: "grant_expired",
-                message: error.to_string(),
-            },
-            ServiceError::GrantCapacity => Self {
-                status: StatusCode::CONFLICT,
-                code: "grant_capacity_reached",
-                message: error.to_string(),
-            },
-            ServiceError::NodeCapacity => Self {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                code: "node_capacity_reached",
-                message: error.to_string(),
-            },
-            ServiceError::Busy => Self {
-                status: StatusCode::TOO_MANY_REQUESTS,
-                code: "server_busy",
-                message: "the server is temporarily busy; retry shortly".to_owned(),
-            },
-            ServiceError::NotFound => Self {
-                status: StatusCode::NOT_FOUND,
-                code: "not_found",
-                message: error.to_string(),
-            },
+            ServiceError::GrantExpired => {
+                Self::new(StatusCode::FORBIDDEN, "grant_expired", error.to_string())
+            }
+            ServiceError::GrantCapacity => Self::new(
+                StatusCode::CONFLICT,
+                "grant_capacity_reached",
+                error.to_string(),
+            ),
+            ServiceError::NodeCapacity => Self::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "node_capacity_reached",
+                error.to_string(),
+            ),
+            ServiceError::Busy => Self::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "server_busy",
+                "the server is temporarily busy; retry shortly".to_owned(),
+            ),
+            ServiceError::NotFound => {
+                Self::new(StatusCode::NOT_FOUND, "not_found", error.to_string())
+            }
             internal => {
                 tracing::error!(error = %internal, "request failed");
                 Self::internal()
@@ -768,6 +813,7 @@ impl IntoResponse for ApiError {
             Json(ErrorResponse {
                 code: self.code.to_owned(),
                 message: self.message,
+                update: self.update.map(|update| *update),
             }),
         )
             .into_response();
@@ -2024,6 +2070,7 @@ mod tests {
             wireguard: None,
             xray: None,
             invite_issuer: None,
+            client_updates: crate::updates::ClientUpdates::default(),
         }
     }
 
@@ -2245,6 +2292,119 @@ mod tests {
         });
         config.xray = Some(xray);
         config
+    }
+
+    fn update_test_config() -> ServerConfig {
+        let mut config = test_config();
+        let policy = ket_update::ClientPolicy::new(
+            crate::updates::server_version(),
+            Some(crate::updates::server_version()),
+            ket_update::Enforcement::Enforce,
+            "https://mirror.example.test/ket",
+        )
+        .expect("policy");
+        config.client_updates = crate::updates::ClientUpdates::new(
+            policy,
+            Arc::new(ket_update::ReleaseManifest::embedded().clone()),
+        );
+        config
+    }
+
+    fn with_client(mut request: Request<Body>, client: &str) -> Request<Body> {
+        request.headers_mut().insert(
+            ket_core::CLIENT_HEADER,
+            HeaderValue::from_str(client).expect("client header"),
+        );
+        request
+    }
+
+    #[tokio::test]
+    async fn sessions_carry_update_advice_and_refuse_apps_that_must_update() {
+        let app = invite_test_app(update_test_config()).await;
+        let grant = create_test_grant(&app).await;
+        let current = format!("linux/{}", crate::updates::server_version());
+
+        // A stranger with an old app learns nothing: credentials are checked first.
+        let response = app
+            .clone()
+            .oneshot(with_client(
+                enrollment_request("A".repeat(32).as_str(), None),
+                "android/0.9.0",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // A valid code from an app below the minimum is refused, with where to update.
+        let response = app
+            .clone()
+            .oneshot(with_client(
+                enrollment_request(grant.access_code.expose_secret(), None),
+                "android/0.9.0",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+        let error: ErrorResponse = response_json(response).await;
+        assert_eq!(error.code, CLIENT_UPDATE_REQUIRED_CODE);
+        let update = error.update.expect("update details");
+        assert_eq!(update.status, ket_core::ClientUpdateStatus::Required);
+        assert_eq!(update.download_url, "https://mirror.example.test/ket");
+
+        // The refused attempt left no session behind: both device slots are free.
+        let mut tokens = Vec::new();
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(with_client(
+                    enrollment_request(grant.access_code.expose_secret(), None),
+                    &current,
+                ))
+                .await
+                .expect("request should complete");
+            assert_eq!(response.status(), StatusCode::CREATED);
+            let manifest: SessionManifest = response_json(response).await;
+            let advice = manifest.updates.expect("update advice");
+            assert_eq!(
+                advice.server_version,
+                crate::updates::server_version().to_string()
+            );
+            assert_eq!(advice.client.status, ket_core::ClientUpdateStatus::Current);
+            tokens.push(manifest.session_token);
+        }
+
+        let token = tokens[0].expose_secret();
+        let response = app
+            .clone()
+            .oneshot(with_client(
+                empty_request("GET", "/v1/sessions/current", Some(token)),
+                &current,
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::OK);
+        let status: SessionStatus = response_json(response).await;
+        assert!(status.updates.is_some());
+
+        // The same session renewed by an app that must update is not extended.
+        let response = app
+            .clone()
+            .oneshot(with_client(
+                empty_request("PUT", "/v1/sessions/current", Some(token)),
+                "linux/0.9.0",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+        let response = app
+            .clone()
+            .oneshot(with_client(
+                empty_request("PUT", "/v1/sessions/current", Some("B".repeat(44).as_str())),
+                "linux/0.9.0",
+            ))
+            .await
+            .expect("request should complete");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     fn json_request(

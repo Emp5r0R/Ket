@@ -1,3 +1,4 @@
+use ket_core::{CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -49,6 +50,8 @@ pub enum ClientError {
     Invite(ket_invite::InviteError),
     #[error("the server could not prove it is the node named in the invite")]
     NodeIdentityMismatch,
+    #[error("this server requires a newer version of Ket")]
+    UpdateRequired(Box<ClientUpdate>),
 }
 
 impl ClientError {
@@ -63,6 +66,20 @@ impl ClientError {
                 ..
             }
         )
+    }
+
+    /// The update details when the server refused this app's version.
+    pub fn required_update(&self) -> Option<&ClientUpdate> {
+        match self {
+            Self::UpdateRequired(update) => Some(update),
+            _ => None,
+        }
+    }
+
+    /// True when the session can no longer be used: the credentials were
+    /// rejected or the server requires a newer app.
+    pub fn ends_session(&self) -> bool {
+        self.is_unauthorized() || matches!(self, Self::UpdateRequired(_))
     }
 
     pub fn issue(&self) -> ClientIssue {
@@ -93,6 +110,7 @@ impl ClientError {
             Self::Local(_) => issue("local_failure", self, false),
             Self::Invite(error) => issue(error.code(), self, false),
             Self::NodeIdentityMismatch => issue("node_identity_mismatch", self, false),
+            Self::UpdateRequired(_) => issue(CLIENT_UPDATE_REQUIRED_CODE, self, false),
         }
     }
 
@@ -204,6 +222,17 @@ mod tests {
             (
                 ClientError::NodeIdentityMismatch,
                 "node_identity_mismatch",
+                false,
+            ),
+            (
+                ClientError::UpdateRequired(Box::new(ket_core::ClientUpdate {
+                    status: ket_core::ClientUpdateStatus::Required,
+                    latest_version: "9.0.0".to_owned(),
+                    required_after_epoch_seconds: None,
+                    summary: None,
+                    download_url: "https://example.test/ket".to_owned(),
+                })),
+                "client_update_required",
                 false,
             ),
         ];
