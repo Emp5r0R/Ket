@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use ket_client_core::{
-    BrokerConfig, BrokerTransportAdapter, OpenVpnStunnelAdapter, TransportAdapter,
+    BrokerConfig, BrokerTransportAdapter, ConnectOptions, OpenVpnStunnelAdapter, TransportAdapter,
 };
 use ket_core::{SessionManifest, TransportProtocol};
 
@@ -35,7 +35,7 @@ async fn openvpn_transport_carries_full_route_traffic_when_configured() {
         .await
         .expect("probe OpenVPN transport");
     let started = adapter
-        .connect(&transport, &probe)
+        .connect(&transport, &probe, &ConnectOptions::default())
         .await
         .expect("connect OpenVPN transport");
 

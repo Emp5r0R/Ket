@@ -91,7 +91,17 @@ internal object EngineConfig {
             .toString(2)
     }
 
-    fun xray(transport: AndroidXrayTransport, resolvedAddress: String, socksPort: Int): String {
+    /**
+     * With [splitTlsHello] the ClientHello leaves as 100-200 byte TLS records
+     * 10-20 ms apart, through a fragmenting dialer, so no single packet
+     * carries the server name.
+     */
+    fun xray(
+        transport: AndroidXrayTransport,
+        resolvedAddress: String,
+        socksPort: Int,
+        splitTlsHello: Boolean = false,
+    ): String {
         require(socksPort in 1..65535) { "SOCKS port is invalid" }
         require(resolvedAddress.isNotBlank()) { "Resolved server address is missing" }
         val user = JSONObject()
@@ -139,6 +149,10 @@ internal object EngineConfig {
             }
             else -> throw IllegalArgumentException("Unsupported Xray transport")
         }
+        val outbounds = org.json.JSONArray()
+        if (splitTlsHello) {
+            streamSettings.put("sockopt", JSONObject().put("dialerProxy", FRAGMENT_TAG))
+        }
         val document = JSONObject()
             .put("log", JSONObject().put("loglevel", "warning"))
             .put(
@@ -161,7 +175,7 @@ internal object EngineConfig {
             )
             .put(
                 "outbounds",
-                org.json.JSONArray().put(
+                outbounds.put(
                     JSONObject()
                         .put("tag", tag)
                         .put("protocol", "vless")
@@ -183,8 +197,27 @@ internal object EngineConfig {
                         .put("streamSettings", streamSettings),
                 ),
             )
+        if (splitTlsHello) {
+            outbounds.put(
+                JSONObject()
+                    .put("tag", FRAGMENT_TAG)
+                    .put("protocol", "freedom")
+                    .put(
+                        "settings",
+                        JSONObject().put(
+                            "fragment",
+                            JSONObject()
+                                .put("packets", "tlshello")
+                                .put("length", "100-200")
+                                .put("interval", "10-20"),
+                        ),
+                    ),
+            )
+        }
         return document.toString(2)
     }
+
+    private const val FRAGMENT_TAG = "ket-fragment"
 
     fun hysteria(
         transport: HysteriaTransport,

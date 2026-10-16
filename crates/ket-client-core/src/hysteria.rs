@@ -17,7 +17,7 @@ use tokio::{
 use zeroize::Zeroize;
 
 use crate::{
-    ClientError, ProbeReport, StartedTunnel, TransportAdapter,
+    ClientError, ConnectOptions, ProbeReport, StartedTunnel, TransportAdapter,
     full_route::{
         FullRouteBridge, reserve_proxy_port, stop_bridge, stop_child, supervise, wait_until_stable,
     },
@@ -134,6 +134,7 @@ impl TransportAdapter for Hysteria2Adapter {
         &self,
         transport: &SessionTransport,
         probe: &ProbeReport,
+        _options: &ConnectOptions,
     ) -> Result<StartedTunnel, ClientError> {
         validate_transport(transport)?;
         let server = probe.resolved_addresses.first().ok_or_else(|| {
@@ -751,7 +752,10 @@ mod tests {
         transport.profile.endpoint = "localhost".to_owned();
 
         let probe = adapter.probe(&transport).await.unwrap();
-        let started = adapter.connect(&transport, &probe).await.unwrap();
+        let started = adapter
+            .connect(&transport, &probe, &ConnectOptions::default())
+            .await
+            .unwrap();
         assert!(matches!(
             *started.tunnel.status().borrow(),
             TunnelStatus::Connected

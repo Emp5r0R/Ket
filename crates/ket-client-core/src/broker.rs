@@ -13,7 +13,8 @@ use tokio::{
 };
 
 use crate::{
-    ActiveTunnel, ClientError, ProbeReport, StartedTunnel, TransportAdapter, TunnelStatus,
+    ActiveTunnel, ClientError, ConnectOptions, ProbeReport, StartedTunnel, TransportAdapter,
+    TunnelStatus,
 };
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(50);
@@ -134,12 +135,14 @@ impl TransportAdapter for BrokerTransportAdapter {
         &self,
         transport: &SessionTransport,
         probe: &ProbeReport,
+        options: &ConnectOptions,
     ) -> Result<StartedTunnel, ClientError> {
         match transact(
             &self.config,
             BrokerRequest::Connect {
                 transport: transport.clone(),
                 resolved_addresses: probe.resolved_addresses.clone(),
+                options: *options,
             },
             &transport.profile.id,
         )

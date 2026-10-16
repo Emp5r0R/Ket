@@ -1,4 +1,15 @@
-import { Binary, KeyRound, Laptop, Monitor, Moon, Server, ShieldCheck, Sun, Trash2 } from "lucide-react";
+import {
+  Binary,
+  KeyRound,
+  Laptop,
+  Monitor,
+  Moon,
+  Scissors,
+  Server,
+  ShieldCheck,
+  Sun,
+  Trash2,
+} from "lucide-react";
 import { endpointHost } from "../lib/format";
 import { compareVersions } from "../lib/updates";
 import type { ThemePreference } from "../App";
@@ -11,6 +22,8 @@ interface SettingsViewProps {
   busy: boolean;
   themePreference: ThemePreference;
   onThemeChange: (preference: ThemePreference) => void;
+  splitTlsHello: boolean;
+  onSplitTlsHelloChange: (enabled: boolean) => void;
   onForget: () => Promise<void>;
 }
 
@@ -27,6 +40,8 @@ export function SettingsView({
   busy,
   themePreference,
   onThemeChange,
+  splitTlsHello,
+  onSplitTlsHelloChange,
   onForget,
 }: SettingsViewProps) {
   const tunnelStatus = state.engine.broker_available
@@ -98,6 +113,31 @@ export function SettingsView({
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="settings-section" aria-labelledby="connection-heading">
+        <div className="settings-heading">
+          <div>
+            <h2 id="connection-heading">Connection</h2>
+            <span>Applies from the next connection.</span>
+          </div>
+        </div>
+        <label className="settings-toggle">
+          <span className="settings-row-icon"><Scissors size={18} aria-hidden="true" /></span>
+          <span>
+            <strong>Split the TLS greeting</strong>
+            <small>
+              Sends the first message of VLESS + REALITY and HTTPS Stealth in small pieces,
+              so a filter that reads the server name from one packet misses it. Try it if
+              those two are blocked; it adds a fraction of a second to connecting.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            checked={splitTlsHello}
+            onChange={(event) => onSplitTlsHelloChange(event.target.checked)}
+          />
+        </label>
       </section>
 
       <section className="settings-section danger-section" aria-labelledby="access-heading">

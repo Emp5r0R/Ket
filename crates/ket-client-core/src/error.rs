@@ -33,6 +33,8 @@ pub enum ClientError {
     InvalidResponse(String),
     #[error("no compatible transport is available")]
     NoCompatibleTransport,
+    #[error("{0} is not available for this invite; choose Automatic or another protocol")]
+    PreferredProtocolUnavailable(String),
     #[error("transport {transport_id} failed: {message}")]
     DnsResolution {
         transport_id: String,
@@ -101,6 +103,9 @@ impl ClientError {
             Self::ResponseTooLarge => issue("response_too_large", self, false),
             Self::InvalidResponse(_) => issue("invalid_server_response", self, false),
             Self::NoCompatibleTransport => issue("no_compatible_transport", self, false),
+            Self::PreferredProtocolUnavailable(_) => {
+                issue("preferred_protocol_unavailable", self, false)
+            }
             Self::DnsResolution { .. } => issue("transport_dns_failed", self, true),
             Self::Transport { retryable, .. } => ClientIssue {
                 code: "transport_failed".to_owned(),

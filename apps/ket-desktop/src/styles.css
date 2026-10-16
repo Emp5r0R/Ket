@@ -813,6 +813,32 @@ input:disabled {
   gap: 8px;
 }
 
+.fallback-note {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--line);
+  border-radius: 3px;
+  color: var(--muted);
+  background: var(--hover);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fallback-note ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fallback-note strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+
 .inline-issue button {
   width: max-content;
   padding: 0;
@@ -1543,6 +1569,37 @@ input:disabled {
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.settings-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px 16px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-toggle strong {
+  display: block;
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.settings-toggle small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--green-dark);
+  cursor: pointer;
 }
 
 .danger-section {

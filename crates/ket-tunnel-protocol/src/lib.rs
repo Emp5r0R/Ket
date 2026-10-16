@@ -46,6 +46,17 @@ pub struct HandshakeResult {
     pub accepted: bool,
 }
 
+/// Connection settings chosen on this device. An engine that cannot apply a
+/// setting ignores it.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ConnectOptions {
+    /// Split the TLS ClientHello across several packets, so a filter that
+    /// reads the server name from a single packet does not see it. Applies
+    /// to the Xray transports (VLESS + REALITY and HTTPS Stealth).
+    #[serde(default)]
+    pub split_tls_hello: bool,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "command")]
 pub enum BrokerRequest {
@@ -56,6 +67,9 @@ pub enum BrokerRequest {
     Connect {
         transport: SessionTransport,
         resolved_addresses: Vec<SocketAddr>,
+        /// Absent from apps older than the setting, which means the defaults.
+        #[serde(default)]
+        options: ConnectOptions,
     },
     Status {
         tunnel_id: String,
@@ -79,10 +93,12 @@ impl std::fmt::Debug for BrokerRequest {
             Self::Connect {
                 transport,
                 resolved_addresses,
+                options,
             } => formatter
                 .debug_struct("Connect")
                 .field("transport", transport)
                 .field("resolved_addresses", resolved_addresses)
+                .field("options", options)
                 .finish(),
             Self::Status { .. } => formatter.write_str("Status { tunnel_id: [REDACTED] }"),
             Self::Heartbeat { .. } => formatter.write_str("Heartbeat { tunnel_id: [REDACTED] }"),
@@ -429,6 +445,49 @@ mod tests {
             write_frame(&mut sink, &oversized).await,
             Err(FrameError::TooLarge)
         ));
+    }
+
+    #[test]
+    fn connect_requests_carry_options_and_older_apps_get_the_defaults() {
+        let transport = serde_json::json!({
+            "id": "https-stealth-primary",
+            "display_name": "HTTPS Stealth",
+            "protocol": "stealth",
+            "endpoint": "vpn.example.test",
+            "port": 443,
+            "network": "tcp",
+            "priority": 1,
+            "options": {}
+        });
+        let older = serde_json::json!({
+            "command": "connect",
+            "transport": transport,
+            "resolved_addresses": ["203.0.113.9:443"]
+        });
+        match serde_json::from_value::<BrokerRequest>(older).unwrap() {
+            BrokerRequest::Connect { options, .. } => {
+                assert_eq!(options, ConnectOptions::default())
+            }
+            _ => panic!("a connect request"),
+        }
+
+        let split = ConnectOptions {
+            split_tls_hello: true,
+        };
+        let request = serde_json::to_value(BrokerRequest::Connect {
+            transport: serde_json::from_value(transport).unwrap(),
+            resolved_addresses: vec!["203.0.113.9:443".parse().unwrap()],
+            options: split,
+        })
+        .unwrap();
+        assert_eq!(
+            request["options"],
+            serde_json::json!({"split_tls_hello": true})
+        );
+        match serde_json::from_value::<BrokerRequest>(request).unwrap() {
+            BrokerRequest::Connect { options, .. } => assert_eq!(options, split),
+            _ => panic!("a connect request"),
+        }
     }
 
     #[test]

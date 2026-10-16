@@ -2,12 +2,13 @@
 //! and connects a full-route tunnel with the same client code the desktop
 //! broker runs, then holds it until Ctrl-C or SIGTERM and disconnects.
 //!
-//!   connect_check --engines DIR --runtime DIR [--protocol NAME]
+//!   connect_check --engines DIR --runtime DIR [--protocol NAME] [--split-tls-hello]
 //!
 //! `--engines` holds the engine binaries under their installed names
 //! (`xray`, `hysteria`, `sslocal`, `tun2proxy`, `wstunnel`, `openvpn`,
 //! `stunnel`); missing engines simply drop their transports. `--protocol`
-//! takes a contract name such as `vless_xtls_reality`. Needs root on Linux,
+//! takes a contract name such as `vless_xtls_reality`; `--split-tls-hello`
+//! turns on the setting of that name. Needs root on Linux,
 //! like the broker (Administrator on Windows). Prints `connected protocol=…` once the route is up and
 //! `disconnected` after release; exits non-zero on any failure.
 
@@ -17,8 +18,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ket_client_core::{
-    HttpControlPlane, Hysteria2Adapter, InviteEnrollment, KetClient, OpenVpnStunnelAdapter,
-    SelectionPolicy, Shadowsocks2022Adapter, TransportAdapter, WireGuardTlsAdapter, XrayAdapter,
+    ConnectOptions, HttpControlPlane, Hysteria2Adapter, InviteEnrollment, KetClient,
+    OpenVpnStunnelAdapter, SelectionPolicy, Shadowsocks2022Adapter, TransportAdapter,
+    WireGuardTlsAdapter, XrayAdapter,
 };
 use ket_core::TransportProtocol;
 
@@ -26,6 +28,7 @@ struct Options {
     engines: PathBuf,
     runtime: PathBuf,
     protocol: Option<TransportProtocol>,
+    connect: ConnectOptions,
 }
 
 #[tokio::main]
@@ -43,6 +46,7 @@ fn parse_options() -> Result<Options, String> {
     let mut engines = None;
     let mut runtime = None;
     let mut protocol = None;
+    let mut connect = ConnectOptions::default();
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         let mut value = || {
@@ -60,6 +64,7 @@ fn parse_options() -> Result<Options, String> {
                         .map_err(|_| format!("unknown protocol: {name}"))?,
                 );
             }
+            "--split-tls-hello" => connect.split_tls_hello = true,
             other => return Err(format!("unknown option: {other}")),
         }
     }
@@ -67,6 +72,7 @@ fn parse_options() -> Result<Options, String> {
         engines: engines.ok_or("--engines is required")?,
         runtime: runtime.ok_or("--runtime is required")?,
         protocol,
+        connect,
     })
 }
 
@@ -154,6 +160,7 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|error| format!("enrollment: {error}"))?;
 
+    client.set_connect_options(options.connect).await;
     let connected = client.connect_with_protocol(options.protocol).await;
     let held = match &connected {
         Ok(snapshot) => {

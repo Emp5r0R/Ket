@@ -4,6 +4,10 @@ Everything Ket implements today, and the qualification status of each transport.
 
 ## Since v1.1.0 (on `main`, not yet released)
 
+- Invite control in the `ket` command: see an invite and the devices connected through it, pause and resume it, change its devices, end date, and name, and limit which protocols it may use; the server enforces the limit for every protocol ([SERVER_INSTALL.md](SERVER_INSTALL.md#managing-the-server), [CONTROL_API.md](CONTROL_API.md#admin-endpoints)).
+- Apps keep a paused invite and connect again once it resumes, and follow the end date the server reports.
+- "Split the TLS greeting" (Settings, off by default) on desktop and Android sends the ClientHello of VLESS + REALITY and HTTPS Stealth as small TLS records 10-20 ms apart, so a filter that reads the server name from one packet misses it. A test runs the pinned Xray and checks what reaches a server.
+- The apps say why they are not using the protocol they tried first: each protocol Automatic mode left, or a connection lost, is listed with its reason. A chosen protocol the invite no longer offers is named instead of a generic failure.
 - Android split tunneling: choose all apps, only chosen apps, or all except chosen apps ([ANDROID.md](ANDROID.md#apps-that-use-ket)).
 - `ket doctor` flags a Cloudflare Tunnel that sends the Ket hostname past the edge to the control plane.
 - WireGuard TLS loads sites by name on desktop and Android. Before, it connected but resolved names to addresses the server could not route ([DNS_LEAKS.md](DNS_LEAKS.md#wireguard-name-resolution)).
@@ -16,7 +20,7 @@ Everything Ket implements today, and the qualification status of each transport.
 - Signed invites: one `ket:invite:` string or QR code replaces the server URL and access code, and pins the node's Ed25519 key so enrollment proves it reached the right server ([INVITE_CAPSULE.md](INVITE_CAPSULE.md)).
 - Invite entry on desktop (paste, QR image, pasted screenshot) and Android (paste, camera, QR image); `sudo ket invite` with a terminal QR on servers.
 - One-command server setup for any modern systemd Linux with automatic Cloudflare detection ([SERVER_INSTALL.md](SERVER_INSTALL.md)).
-- The `ket` server command: guided invites; list, inspect, pause, resume, edit (devices, end date, which protocols), and revoke invites; status, a troubleshooting `doctor`, logs, backups, key rotation, update, rollback, and uninstall ([SERVER_INSTALL.md](SERVER_INSTALL.md#managing-the-server)).
+- The `ket` server command: guided invites, invite list and revoke, status, a troubleshooting `doctor`, logs, backups, key rotation, update, rollback, and uninstall ([SERVER_INSTALL.md](SERVER_INSTALL.md#managing-the-server)).
 - An update lifecycle: every release is rated for apps and servers; servers apply security fixes on their own with a health-checked, self-reverting swap, and tell each app whether its update is optional, recommended, security (with a deadline), or required ([UPDATES.md](UPDATES.md)).
 - Published multi-architecture server images on release, so installs and updates need not compile on the VPS.
 - A smaller Android download: an arm64 APK, about half the size, next to the universal APK.

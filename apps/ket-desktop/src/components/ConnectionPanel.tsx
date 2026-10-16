@@ -18,6 +18,7 @@ import {
   type ProtocolPreference,
 } from "../lib/protocols";
 import type { ClientSnapshot, EngineReadiness } from "../types";
+import { FallbackNote } from "./FallbackNote";
 import { ProtocolMenu } from "./ProtocolMenu";
 
 interface ConnectionPanelProps {
@@ -131,6 +132,7 @@ export function ConnectionPanel({
           <span>Transport engines are not installed.</span>
         </div>
       ) : null}
+      <FallbackNote snapshot={snapshot} />
       {snapshot.issue ? (
         <div className="inline-issue" role="alert">
           <span>{snapshot.issue.message}</span>

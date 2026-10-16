@@ -210,11 +210,12 @@ invites_show() {
   now=$(date +%s)
   jq -r --argjson now "$now" '
     def when: strftime("%Y-%m-%d %H:%M UTC");
+    def count($unit): "\(.) \($unit)\(if . == 1 then "" else "s" end)";
     def left: (. - $now) as $s
       | if $s <= 0 then "ended"
-        elif $s >= 86400 then "in \($s / 86400 | floor) days"
-        elif $s >= 3600 then "in \($s / 3600 | floor) hours"
-        else "in \([($s / 60 | floor), 1] | max) minutes" end;
+        elif $s >= 86400 then "in \($s / 86400 | floor | count("day"))"
+        elif $s >= 3600 then "in \($s / 3600 | floor | count("hour"))"
+        else "in \([($s / 60 | floor), 1] | max | count("minute"))" end;
     "Invite \(.id): \(.label | gsub("[[:cntrl:]]"; ""))",
     "  Status:     \(if .expires_at_epoch_seconds != null and .expires_at_epoch_seconds <= $now then "expired"
                       elif .paused then "paused (resume with: sudo ket invites resume \(.id))"

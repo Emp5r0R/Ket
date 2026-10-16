@@ -55,6 +55,7 @@ export function testSnapshot(overrides: Partial<ClientSnapshot> = {}): ClientSna
     access_expires_at_epoch_seconds: 3_600,
     connected_at_epoch_seconds: null,
     reconnect_attempt: 0,
+    fallbacks: [],
     issue: null,
     server_version: null,
     client_update: null,

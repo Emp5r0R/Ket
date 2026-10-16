@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use ket_client_core::{TransportAdapter, XrayAdapter};
+use ket_client_core::{ConnectOptions, TransportAdapter, XrayAdapter};
 use ket_core::{SessionManifest, TransportProtocol};
 
 #[tokio::test]
@@ -33,7 +33,7 @@ async fn xray_transport_carries_full_route_traffic_when_configured() {
         .await
         .expect("probe Reality transport");
     let started = adapter
-        .connect(&transport, &probe)
+        .connect(&transport, &probe, &ConnectOptions::default())
         .await
         .expect("connect Reality transport");
 

@@ -147,6 +147,7 @@ impl BrokerService {
             BrokerRequest::Connect {
                 transport,
                 resolved_addresses,
+                options,
             } => {
                 let Some(adapter) = self.adapter_for(&transport) else {
                     return fault("unsupported_transport", "transport is not supported", false);
@@ -167,7 +168,7 @@ impl BrokerService {
                     resolved_addresses,
                     elapsed: Duration::ZERO,
                 };
-                match adapter.connect(&transport, &probe).await {
+                match adapter.connect(&transport, &probe, &options).await {
                     Ok(started) => {
                         let tunnel_id = random_id();
                         self.tunnels.lock().await.insert(
@@ -616,7 +617,8 @@ mod tests {
 
     use async_trait::async_trait;
     use ket_client_core::{
-        BrokerConfig, BrokerTransportAdapter, ClientError, ProbeReport, StartedTunnel, TunnelStatus,
+        BrokerConfig, BrokerTransportAdapter, ClientError, ConnectOptions, ProbeReport,
+        StartedTunnel, TunnelStatus,
     };
     use ket_core::{Network, SessionTransport, TransportProfile, TransportProtocol};
     use tokio::{
@@ -642,6 +644,7 @@ mod tests {
             &self,
             _transport: &SessionTransport,
             _probe: &ProbeReport,
+            _options: &ConnectOptions,
         ) -> Result<StartedTunnel, ClientError> {
             unreachable!()
         }
@@ -720,6 +723,7 @@ mod tests {
             &self,
             _transport: &SessionTransport,
             _probe: &ProbeReport,
+            _options: &ConnectOptions,
         ) -> Result<StartedTunnel, ClientError> {
             self.connections.fetch_add(1, Ordering::SeqCst);
             let (_, status) = watch::channel(TunnelStatus::Connected);
@@ -886,6 +890,7 @@ mod tests {
                         Ipv4Addr::new(203, 0, 113, 9),
                         443,
                     ))],
+                    options: ConnectOptions::default(),
                 })
                 .await
         });

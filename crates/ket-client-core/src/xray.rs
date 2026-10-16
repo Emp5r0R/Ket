@@ -15,7 +15,7 @@ use tokio::{
 };
 
 use crate::{
-    ClientError, ProbeReport, StartedTunnel, TransportAdapter,
+    ClientError, ConnectOptions, ProbeReport, StartedTunnel, TransportAdapter,
     full_route::{
         FullRouteBridge, reserve_proxy_port, stop_bridge, stop_child, supervise, wait_until_stable,
     },
@@ -110,6 +110,7 @@ impl TransportAdapter for XrayAdapter {
         &self,
         transport: &SessionTransport,
         probe: &ProbeReport,
+        options: &ConnectOptions,
     ) -> Result<StartedTunnel, ClientError> {
         validate_transport(transport)?;
         let server = probe.resolved_addresses.first().ok_or_else(|| {
@@ -121,7 +122,7 @@ impl TransportAdapter for XrayAdapter {
         })?;
         let started = Instant::now();
         let socks_port = reserve_proxy_port(&transport.profile.id).await?;
-        let document = render_client_config(transport, server.ip(), socks_port)?;
+        let document = render_client_config(transport, server.ip(), socks_port, options)?;
         let config = EphemeralConfig::create(&self.runtime_dir, "xray", document)
             .await
             .map_err(|message| ClientError::transport(&transport.profile.id, message, false))?;
@@ -496,10 +497,16 @@ fn required_secret<'a>(transport: &'a SessionTransport, key: &str) -> Result<&'a
         })
 }
 
+/// The outbound that splits the TLS ClientHello when the user asked for it:
+/// 100-200 byte pieces, 10-20 ms apart, so no single packet carries the
+/// server name and a filter that does not reassemble cannot read it.
+const FRAGMENT_TAG: &str = "ket-fragment";
+
 fn render_client_config(
     transport: &SessionTransport,
     server_address: IpAddr,
     socks_port: u16,
+    connect_options: &ConnectOptions,
 ) -> Result<Vec<u8>, ClientError> {
     validate_transport(transport)?;
     let credential = transport.credential.as_ref().expect("validated credential");
@@ -548,6 +555,28 @@ fn render_client_config(
         ),
         _ => unreachable!("transport validated above"),
     };
+    let mut outbounds = vec![json!({
+        "tag": tag,
+        "protocol": "vless",
+        "settings": {
+            "vnext": [{
+                "address": server_address.to_string(),
+                "port": transport.profile.port,
+                "users": [user]
+            }]
+        },
+        "streamSettings": stream_settings
+    })];
+    if connect_options.split_tls_hello {
+        outbounds[0]["streamSettings"]["sockopt"] = json!({ "dialerProxy": FRAGMENT_TAG });
+        outbounds.push(json!({
+            "tag": FRAGMENT_TAG,
+            "protocol": "freedom",
+            "settings": {
+                "fragment": { "packets": "tlshello", "length": "100-200", "interval": "10-20" }
+            }
+        }));
+    }
     let document = json!({
         "log": { "loglevel": "warning" },
         "inbounds": [{
@@ -562,18 +591,7 @@ fn render_client_config(
                 "routeOnly": true
             }
         }],
-        "outbounds": [{
-            "tag": tag,
-            "protocol": "vless",
-            "settings": {
-                "vnext": [{
-                    "address": server_address.to_string(),
-                    "port": transport.profile.port,
-                    "users": [user]
-                }]
-            },
-            "streamSettings": stream_settings
-        }]
+        "outbounds": outbounds
     });
     serde_json::to_vec_pretty(&document).map_err(|_| {
         ClientError::transport(
@@ -667,9 +685,13 @@ mod tests {
     #[test]
     fn renders_a_strict_reality_client_without_downgrade_flags() {
         let transport = test_transport();
-        let document =
-            render_client_config(&transport, "203.0.113.9".parse().expect("test IP"), 10808)
-                .expect("render config");
+        let document = render_client_config(
+            &transport,
+            "203.0.113.9".parse().expect("test IP"),
+            10808,
+            &ConnectOptions::default(),
+        )
+        .expect("render config");
         let config: serde_json::Value = serde_json::from_slice(&document).expect("valid JSON");
         let reality = &config["outbounds"][0]["streamSettings"]["realitySettings"];
         assert_eq!(config["inbounds"][0]["protocol"], "socks");
@@ -687,9 +709,13 @@ mod tests {
     #[test]
     fn renders_a_strict_xhttp_tls_client_for_cdn_transport() {
         let transport = test_xhttp_transport();
-        let document =
-            render_client_config(&transport, "203.0.113.9".parse().expect("test IP"), 10808)
-                .expect("render config");
+        let document = render_client_config(
+            &transport,
+            "203.0.113.9".parse().expect("test IP"),
+            10808,
+            &ConnectOptions::default(),
+        )
+        .expect("render config");
         let config: serde_json::Value = serde_json::from_slice(&document).expect("valid JSON");
         let outbound = &config["outbounds"][0];
         let stream = &outbound["streamSettings"];
@@ -752,11 +778,48 @@ mod tests {
     }
 
     #[test]
-    fn pinned_xray_binary_accepts_rendered_config_when_supplied() {
-        let Some(binary) = std::env::var_os("KET_TEST_XRAY_BINARY") else {
-            return;
+    fn splitting_the_tls_greeting_adds_a_fragment_dialer_only_when_asked() {
+        let split = ConnectOptions {
+            split_tls_hello: true,
         };
-        let binary = PathBuf::from(binary);
+        for transport in [test_transport(), test_xhttp_transport()] {
+            let address = "203.0.113.9".parse().expect("test IP");
+            let plain: serde_json::Value = serde_json::from_slice(
+                &render_client_config(&transport, address, 10808, &ConnectOptions::default())
+                    .expect("render config"),
+            )
+            .expect("valid JSON");
+            assert_eq!(plain["outbounds"].as_array().map(Vec::len), Some(1));
+            assert!(
+                plain["outbounds"][0]["streamSettings"]
+                    .get("sockopt")
+                    .is_none()
+            );
+
+            let config: serde_json::Value = serde_json::from_slice(
+                &render_client_config(&transport, address, 10808, &split).expect("render config"),
+            )
+            .expect("valid JSON");
+            let outbounds = config["outbounds"].as_array().expect("outbounds");
+            assert_eq!(outbounds.len(), 2);
+            assert_eq!(
+                outbounds[0]["streamSettings"]["sockopt"]["dialerProxy"],
+                FRAGMENT_TAG
+            );
+            assert_eq!(outbounds[1]["tag"], FRAGMENT_TAG);
+            assert_eq!(outbounds[1]["protocol"], "freedom");
+            assert_eq!(outbounds[1]["settings"]["fragment"]["packets"], "tlshello");
+            assert_eq!(
+                outbounds[0]["streamSettings"]["security"],
+                plain["outbounds"][0]["streamSettings"]["security"]
+            );
+        }
+    }
+
+    /// The Xray binary named by `KET_TEST_XRAY_BINARY` (CI sets it to the
+    /// pinned engine), relative to the workspace root.
+    fn pinned_xray_binary() -> Option<PathBuf> {
+        let binary = PathBuf::from(std::env::var_os("KET_TEST_XRAY_BINARY")?);
         let binary = if binary.is_absolute() {
             binary
         } else {
@@ -764,24 +827,140 @@ mod tests {
                 .join("../..")
                 .join(binary)
         };
-        let binary = fs::canonicalize(binary).expect("resolve Xray test binary");
+        Some(fs::canonicalize(binary).expect("resolve Xray test binary"))
+    }
+
+    #[test]
+    fn pinned_xray_binary_accepts_rendered_config_when_supplied() {
+        let Some(binary) = pinned_xray_binary() else {
+            return;
+        };
         for transport in [test_transport(), test_xhttp_transport()] {
-            let document =
-                render_client_config(&transport, "203.0.113.9".parse().expect("test IP"), 10808)
-                    .expect("render config");
-            let path = std::env::temp_dir().join(format!(
-                "ket-xray-validation-{}.json",
-                rand::thread_rng().r#gen::<u64>()
-            ));
-            fs::write(&path, document).expect("write test config");
-            let status = StdCommand::new(&binary)
-                .args(["run", "-test", "-c"])
-                .arg(&path)
-                .status()
-                .expect("run Xray config validation");
-            let _ = fs::remove_file(path);
-            assert!(status.success());
+            for split_tls_hello in [false, true] {
+                let document = render_client_config(
+                    &transport,
+                    "203.0.113.9".parse().expect("test IP"),
+                    10808,
+                    &ConnectOptions { split_tls_hello },
+                )
+                .expect("render config");
+                let path = std::env::temp_dir().join(format!(
+                    "ket-xray-validation-{}.json",
+                    rand::thread_rng().r#gen::<u64>()
+                ));
+                fs::write(&path, document).expect("write test config");
+                let status = StdCommand::new(&binary)
+                    .args(["run", "-test", "-c"])
+                    .arg(&path)
+                    .status()
+                    .expect("run Xray config validation");
+                let _ = fs::remove_file(path);
+                assert!(status.success());
+            }
         }
+    }
+
+    /// Runs the pinned Xray against a local listener and proves what reaches
+    /// the server: one whole ClientHello normally, small TLS records when the
+    /// greeting is split.
+    #[tokio::test]
+    async fn pinned_xray_binary_splits_the_tls_greeting_only_when_asked() {
+        let Some(binary) = pinned_xray_binary() else {
+            return;
+        };
+        for transport in [test_transport(), test_xhttp_transport()] {
+            let whole = first_tls_record_length(&binary, transport.clone(), false).await;
+            let split = first_tls_record_length(&binary, transport.clone(), true).await;
+            assert!(
+                whole >= 512,
+                "{}: the plain ClientHello is {whole} bytes",
+                transport.profile.id
+            );
+            assert!(
+                split <= 200,
+                "{}: the first split record is {split} bytes",
+                transport.profile.id
+            );
+        }
+    }
+
+    async fn first_tls_record_length(
+        binary: &std::path::Path,
+        mut transport: SessionTransport,
+        split_tls_hello: bool,
+    ) -> usize {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listen");
+        transport.profile.port = server.local_addr().expect("listener address").port();
+        if let Some(password) = transport
+            .credential
+            .as_mut()
+            .and_then(|credential| credential.secrets.get_mut("reality_password"))
+        {
+            // Xray cannot build a REALITY greeting for the fixture's all-zero
+            // key, so this one is a real X25519 public key.
+            *password = SecretString::from("aT5S8EocCRt44ZL_G0B2Wf3nYSknKv7wRiIw4UZ6RkI");
+        }
+        let socks_port = reserve_proxy_port("test").await.expect("SOCKS port");
+        let document = render_client_config(
+            &transport,
+            "127.0.0.1".parse().expect("loopback"),
+            socks_port,
+            &ConnectOptions { split_tls_hello },
+        )
+        .expect("render config");
+        let path = std::env::temp_dir().join(format!(
+            "ket-xray-split-{}.json",
+            rand::thread_rng().r#gen::<u64>()
+        ));
+        fs::write(&path, document).expect("write test config");
+        let mut xray = Command::new(binary)
+            .args(["run", "-c"])
+            .arg(&path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("start Xray");
+        wait_for_socks(&mut xray, socks_port, Duration::from_secs(10), "test")
+            .await
+            .expect("Xray SOCKS proxy");
+
+        // A SOCKS5 CONNECT and a request make Xray dial the server.
+        let mut socks = TcpStream::connect(("127.0.0.1", socks_port))
+            .await
+            .expect("SOCKS");
+        let mut reply = [0_u8; 10];
+        socks.write_all(&[5, 1, 0]).await.expect("SOCKS greeting");
+        socks
+            .read_exact(&mut reply[..2])
+            .await
+            .expect("SOCKS method");
+        socks
+            .write_all(&[5, 1, 0, 1, 192, 0, 2, 1, 0, 80])
+            .await
+            .expect("SOCKS connect");
+        socks.read_exact(&mut reply).await.expect("SOCKS reply");
+        socks
+            .write_all(b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n")
+            .await
+            .expect("request");
+        let (mut connection, _) = timeout(Duration::from_secs(10), server.accept())
+            .await
+            .expect("Xray reaches the server")
+            .expect("accept");
+        let mut header = [0_u8; 5];
+        timeout(Duration::from_secs(10), connection.read_exact(&mut header))
+            .await
+            .expect("TLS record header in time")
+            .expect("read TLS record header");
+        let _ = xray.kill().await;
+        let _ = fs::remove_file(path);
+        assert_eq!(header[0], 0x16, "a TLS handshake record");
+        usize::from(u16::from_be_bytes([header[3], header[4]]))
     }
 
     fn test_transport() -> SessionTransport {

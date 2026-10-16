@@ -245,6 +245,7 @@ make_install "$install_dir" v1.1.0
   output=$(cmd_invites show Grant00001)
   contains 'show devices' "$output" 'Devices:    1 of 3 connected'
   contains 'show end' "$output" '(in 5 days)'
+  equals 'one hour is singular' "$(details=$(jq -c --argjson end "$((now + 3700))" '.expires_at_epoch_seconds = $end' <<<"$details") cmd_invites show Grant00001 | sed -n 's/^  Ends: .*(\(.*\))$/\1/p')" 'in 1 hour'
   contains 'show protocols' "$output" 'Protocols:  all'
   contains 'show connected device' "$output" 'Ket Android'
   contains 'show traffic' "$output" '1.5 MB'

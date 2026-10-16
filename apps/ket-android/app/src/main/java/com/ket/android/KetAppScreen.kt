@@ -101,6 +101,9 @@ import com.ket.android.invite.NodePublicKey
 import kotlinx.coroutines.delay
 import com.ket.android.splittunnel.InstalledApp
 import com.ket.android.splittunnel.SplitTunnelPolicy
+import com.ket.android.connection.ConnectionOptions
+import com.ket.android.connection.ConnectionOptionsSection
+import com.ket.android.connection.FallbackNotes
 import com.ket.android.splittunnel.SplitTunnelSection
 
 private val KetDarkInk = Color(0xFF101311)
@@ -298,6 +301,8 @@ internal fun KetApp(
     onThemeModeChange: (KetThemeMode) -> Unit = {},
     splitTunnel: SplitTunnelPolicy = SplitTunnelPolicy.AllApps,
     onSplitTunnelChange: (SplitTunnelPolicy) -> Unit = {},
+    connectionOptions: ConnectionOptions = ConnectionOptions(),
+    onConnectionOptionsChange: (ConnectionOptions) -> Unit = {},
     loadInstalledApps: () -> List<InstalledApp> = { emptyList() },
     onForgetProfile: () -> Unit = {},
     diagnosticReport: String = "Ket Android connection diagnostics\nevents:\nnone\n",
@@ -545,6 +550,7 @@ internal fun KetApp(
                                 onChange = onSplitTunnelChange,
                                 loadApps = loadInstalledApps,
                             )
+                            ConnectionOptionsSection(connectionOptions, onConnectionOptionsChange)
                             if (profileSaved) {
                                 SavedProfile(serverUrl, accessRemainingSeconds, forgetProfile)
                             }
@@ -655,6 +661,10 @@ private fun ConnectionControlPanel(
                     snapshot.transportName.ifBlank { "Automatic transport" },
                 )
             }
+            FallbackNotes(
+                notes = snapshot.fallbacks,
+                activeTransportName = snapshot.transportName.takeIf { snapshot.phase == TunnelPhase.Connected },
+            )
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
             ProtocolPreferenceSelector(
                 selected = preferredProtocol,

@@ -172,6 +172,7 @@ jobs:
       - run: ./packaging/fetch-wstunnel.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/wstunnel
       - run: ./packaging/fetch-tun2proxy.sh linux-amd64 apps/ket-desktop/src-tauri/binaries/tun2proxy
       - run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray cargo test --locked -p ket-client-core xray::tests::pinned_xray_binary_accepts_rendered_config_when_supplied
+      - run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray cargo test --locked -p ket-client-core xray::tests::pinned_xray_binary_splits_the_tls_greeting_only_when_asked
       - run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray cargo test --locked -p ket-client-core wireguard::tests::pinned_xray_binary_accepts_wireguard_config_when_supplied
       - run: KET_TEST_SHADOWSOCKS_LOCAL_BINARY=apps/ket-desktop/src-tauri/binaries/sslocal cargo test --locked -p ket-client-core shadowsocks::tests::pinned_sslocal_accepts_rendered_config_when_supplied
       - run: ./packaging/validate-desktop-assets.sh linux
@@ -243,6 +244,8 @@ jobs:
         run: cp apps/ket-desktop/src-tauri/binaries/wintun.dll apps/ket-desktop/src-tauri/binaries/openvpn/wintun.dll
       - shell: bash
         run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray.exe cargo test --locked -p ket-client-core xray::tests::pinned_xray_binary_accepts_rendered_config_when_supplied
+      - shell: bash
+        run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray.exe cargo test --locked -p ket-client-core xray::tests::pinned_xray_binary_splits_the_tls_greeting_only_when_asked
       - shell: bash
         run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray.exe cargo test --locked -p ket-client-core wireguard::tests::pinned_xray_binary_accepts_wireguard_config_when_supplied
       - shell: bash

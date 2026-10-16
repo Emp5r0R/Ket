@@ -54,6 +54,7 @@ describe("desktop navigation and protocol guides", () => {
 describe("desktop settings", () => {
   it("shows sanitized runtime details and changes theme", () => {
     const onThemeChange = vi.fn();
+    const onSplitTlsHelloChange = vi.fn();
     render(
       <SettingsView
         state={testDesktopState()}
@@ -62,6 +63,8 @@ describe("desktop settings", () => {
         busy={false}
         themePreference="dark"
         onThemeChange={onThemeChange}
+        splitTlsHello={false}
+        onSplitTlsHelloChange={onSplitTlsHelloChange}
         onForget={vi.fn(async () => undefined)}
       />,
     );
@@ -72,6 +75,10 @@ describe("desktop settings", () => {
     expect(screen.getByRole("radio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByRole("radio", { name: "Light" }));
     expect(onThemeChange).toHaveBeenCalledWith("light");
+    const split = screen.getByRole("checkbox", { name: /Split the TLS greeting/ });
+    expect(split).not.toBeChecked();
+    fireEvent.click(split);
+    expect(onSplitTlsHelloChange).toHaveBeenCalledWith(true);
   });
 
   it("shows the server version and flags a server older than the app", () => {
@@ -84,6 +91,8 @@ describe("desktop settings", () => {
           busy={false}
           themePreference="system"
           onThemeChange={vi.fn()}
+          splitTlsHello={false}
+          onSplitTlsHelloChange={vi.fn()}
           onForget={vi.fn(async () => undefined)}
         />,
       );
@@ -121,6 +130,8 @@ describe("desktop settings", () => {
           busy={false}
           themePreference="system"
           onThemeChange={vi.fn()}
+          splitTlsHello={false}
+          onSplitTlsHelloChange={vi.fn()}
           onForget={vi.fn(async () => undefined)}
         />,
       );
@@ -142,6 +153,8 @@ describe("desktop settings", () => {
         busy={false}
         themePreference="system"
         onThemeChange={vi.fn()}
+        splitTlsHello={false}
+        onSplitTlsHelloChange={vi.fn()}
         onForget={onForget}
       />,
     );

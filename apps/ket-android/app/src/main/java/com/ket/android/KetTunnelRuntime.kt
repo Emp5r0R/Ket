@@ -3,6 +3,7 @@ package com.ket.android
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import com.ket.android.connection.TransportFallbackNote
 import com.ket.android.invite.NodePublicKey
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
@@ -34,6 +35,8 @@ data class TunnelSnapshot(
     val serverVersion: String? = null,
     /** The server's advice for this app; survives failures so a refusal can show where to update. */
     val clientUpdate: AndroidClientUpdate? = null,
+    /** The transports the latest connection attempt left, and why, oldest first. */
+    val fallbacks: List<TransportFallbackNote> = emptyList(),
 )
 
 internal class TunnelLaunchSpec(

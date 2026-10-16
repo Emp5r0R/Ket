@@ -19,7 +19,7 @@ use tokio::{
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    ClientError, ProbeReport, StartedTunnel, TransportAdapter,
+    ClientError, ConnectOptions, ProbeReport, StartedTunnel, TransportAdapter,
     full_route::{reserve_proxy_port, stop_child, supervise_pair, wait_until_pair_stable},
     runtime::EphemeralConfig,
     system_dns::SystemDnsManager,
@@ -121,6 +121,7 @@ impl TransportAdapter for OpenVpnStunnelAdapter {
         &self,
         transport: &SessionTransport,
         probe: &ProbeReport,
+        _options: &ConnectOptions,
     ) -> Result<StartedTunnel, ClientError> {
         validate_transport(transport)?;
         let server = probe.resolved_addresses.first().ok_or_else(|| {

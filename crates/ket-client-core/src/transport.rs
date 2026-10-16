@@ -5,7 +5,7 @@ use ket_core::SessionTransport;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-use crate::ClientError;
+use crate::{ClientError, ConnectOptions};
 
 #[derive(Clone, Debug)]
 pub struct ProbeReport {
@@ -41,6 +41,7 @@ pub trait TransportAdapter: Send + Sync {
         &self,
         transport: &SessionTransport,
         probe: &ProbeReport,
+        options: &ConnectOptions,
     ) -> Result<StartedTunnel, ClientError>;
 }
 

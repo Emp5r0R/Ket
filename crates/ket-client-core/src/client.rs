@@ -12,10 +12,13 @@ use tokio::{
 use crate::route_health::{HttpsRouteHealthProbe, RouteHealthProbe};
 use crate::validation::{validate_manifest, validate_status};
 use crate::{
-    ActiveTunnel, ClientError, ClientPhase, ClientSnapshot, ControlEndpoint, ControlPlane,
-    ProbeReport, SelectionPolicy, TransportAdapter, TransportHistory, TransportSelector,
-    TransportSummary, TunnelStatus,
+    ActiveTunnel, ClientError, ClientIssue, ClientPhase, ClientSnapshot, ConnectOptions,
+    ControlEndpoint, ControlPlane, ProbeReport, SelectionPolicy, TransportAdapter,
+    TransportFallback, TransportHistory, TransportSelector, TransportSummary, TunnelStatus,
 };
+
+/// How many fallback reasons a snapshot keeps while a reconnect loop runs.
+const MAX_FALLBACKS: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProbeIdentity {
@@ -49,6 +52,7 @@ struct RuntimeState {
     tunnel: Option<Arc<dyn ActiveTunnel>>,
     connection_requested: bool,
     preferred_protocol: Option<TransportProtocol>,
+    connect_options: ConnectOptions,
     history: TransportHistory,
     probes: BTreeMap<String, CachedProbe>,
 }
@@ -117,6 +121,7 @@ impl KetClient {
                 tunnel: None,
                 connection_requested: false,
                 preferred_protocol: None,
+                connect_options: ConnectOptions::default(),
                 history: TransportHistory::default(),
                 probes: BTreeMap::new(),
             }),
@@ -208,6 +213,11 @@ impl KetClient {
         self.connect_with_protocol(None).await
     }
 
+    /// Settings for every later connection, including automatic reconnects.
+    pub async fn set_connect_options(&self, options: ConnectOptions) {
+        self.runtime.lock().await.connect_options = options;
+    }
+
     pub async fn connect_with_protocol(
         &self,
         preferred_protocol: Option<TransportProtocol>,
@@ -264,7 +274,12 @@ impl KetClient {
             self.runtime.lock().await.tunnel = None;
             self.stop_and_retain_on_failure(Arc::clone(tunnel)).await?;
             if connection_requested {
-                self.record_failure(transport_id).await;
+                let reason = match status {
+                    TunnelStatus::Failed(message) => message.clone(),
+                    _ => "the connection stopped".to_owned(),
+                };
+                self.record_lost_tunnel(transport_id, "transport_lost", reason)
+                    .await;
                 return self.reconnect_locked().await;
             }
             let enrolled = self.runtime.lock().await.session.is_some();
@@ -331,7 +346,12 @@ impl KetClient {
                     return Err(error);
                 };
                 self.stop_and_retain_on_failure(tunnel).await?;
-                self.record_failure(&transport_id).await;
+                self.record_lost_tunnel(
+                    &transport_id,
+                    "route_unhealthy",
+                    "the protected route stopped reaching the server".to_owned(),
+                )
+                .await;
                 self.reconnect_locked().await
             }
             Err(error) => Err(error),
@@ -521,10 +541,11 @@ impl KetClient {
         if let Some(tunnel) = stale_tunnel {
             self.stop_and_retain_on_failure(tunnel).await?;
         }
-        let candidates = {
+        let (candidates, options, missing_preference) = {
             let runtime = self.runtime.lock().await;
             let session = runtime.session.as_ref().ok_or(ClientError::NotEnrolled)?;
-            self.selector
+            let candidates = self
+                .selector
                 .rank_with_preference(
                     &session.transports,
                     &self.adapters,
@@ -534,10 +555,26 @@ impl KetClient {
                 )
                 .into_iter()
                 .cloned()
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            let missing_preference = runtime.preferred_protocol.clone().filter(|protocol| {
+                !session
+                    .transports
+                    .iter()
+                    .any(|transport| &transport.profile.protocol == protocol)
+            });
+            (candidates, runtime.connect_options, missing_preference)
         };
+        if !reconnecting {
+            // A reconnect keeps the reason the previous tunnel was left.
+            self.update_snapshot(|snapshot| snapshot.fallbacks.clear());
+        }
         if candidates.is_empty() {
-            let error = ClientError::NoCompatibleTransport;
+            let error = match missing_preference {
+                Some(protocol) => {
+                    ClientError::PreferredProtocolUnavailable(protocol_label(&protocol))
+                }
+                None => ClientError::NoCompatibleTransport,
+            };
             self.fail(&error);
             return Err(error);
         }
@@ -573,7 +610,7 @@ impl KetClient {
                     if let Some(probe) = self.cached_probe(&transport, &error).await {
                         probe
                     } else {
-                        self.record_failure(&transport.profile.id).await;
+                        self.record_failure(&summary, &error).await;
                         last_error = Some(error);
                         continue;
                     }
@@ -587,7 +624,7 @@ impl KetClient {
                 };
             });
             let connected = tokio::select! {
-                result = adapter.connect(&transport, &probe) => Some(result),
+                result = adapter.connect(&transport, &probe, &options) => Some(result),
                 changed = cancellation.changed() => {
                     debug_assert!(changed.is_ok(), "KetClient owns the cancellation sender");
                     None
@@ -624,7 +661,7 @@ impl KetClient {
                     return Ok(self.snapshot());
                 }
                 Some(Err(error)) => {
-                    self.record_failure(&transport.profile.id).await;
+                    self.record_failure(&summary, &error).await;
                     last_error = Some(error);
                 }
             }
@@ -809,12 +846,47 @@ impl KetClient {
         });
     }
 
-    async fn record_failure(&self, transport_id: &str) {
+    /// Cools a transport down after it failed to connect and records why.
+    async fn record_failure(&self, transport: &TransportSummary, error: &ClientError) {
+        self.cool_down(&transport.id).await;
+        self.note_fallback(transport.clone(), error.issue());
+    }
+
+    /// Cools down a transport whose connected tunnel was lost and records why.
+    async fn record_lost_tunnel(&self, transport_id: &str, code: &str, message: String) {
+        self.cool_down(transport_id).await;
+        let transport = self
+            .snapshot()
+            .active_transport
+            .filter(|transport| transport.id == transport_id);
+        if let Some(transport) = transport {
+            self.note_fallback(
+                transport,
+                ClientIssue {
+                    code: code.to_owned(),
+                    message,
+                    retryable: true,
+                },
+            );
+        }
+    }
+
+    async fn cool_down(&self, transport_id: &str) {
         self.runtime.lock().await.history.record_failure(
             transport_id,
             unix_time(),
             self.selector.policy().failure_cooldown_seconds,
         );
+    }
+
+    fn note_fallback(&self, transport: TransportSummary, issue: ClientIssue) {
+        self.update_snapshot(|snapshot| {
+            snapshot
+                .fallbacks
+                .push(TransportFallback { transport, issue });
+            let excess = snapshot.fallbacks.len().saturating_sub(MAX_FALLBACKS);
+            snapshot.fallbacks.drain(..excess);
+        });
     }
 
     async fn stop_and_retain_on_failure(
@@ -926,6 +998,21 @@ fn unix_time() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// How the apps name a protocol when no server profile names it.
+fn protocol_label(protocol: &TransportProtocol) -> String {
+    match protocol {
+        TransportProtocol::Hysteria2 => "Hysteria 2",
+        TransportProtocol::Ikev2 => "IKEv2",
+        TransportProtocol::OpenVpnStunnel => "OpenVPN TLS",
+        TransportProtocol::Shadowsocks2022 => "Shadowsocks 2022",
+        TransportProtocol::Stealth => "HTTPS Stealth",
+        TransportProtocol::VlessXtlsReality => "VLESS + REALITY",
+        TransportProtocol::WireGuard => "WireGuard TLS",
+        TransportProtocol::XorScrambled => "Hysteria XOR",
+    }
+    .to_owned()
 }
 
 fn renewal_deadline(now: u64, expires_at: u64) -> u64 {
@@ -1551,6 +1638,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_snapshot_says_why_each_transport_was_left() {
+        let mut manifest = test_manifest();
+        manifest.transports = vec![
+            test_reality_transport("reality-primary", 1),
+            test_transport("hy2-fallback", 2),
+        ];
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        adapter.set_blocked(["reality-primary"]);
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![adapter.clone()],
+            SelectionPolicy {
+                max_attempts: 2,
+                preferred_protocol: None,
+                failure_cooldown_seconds: 15,
+            },
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        let split = ConnectOptions {
+            split_tls_hello: true,
+        };
+        client.set_connect_options(split).await;
+
+        let connected = client.connect().await.unwrap();
+        assert_eq!(connected.fallbacks.len(), 1);
+        assert_eq!(connected.fallbacks[0].transport.id, "reality-primary");
+        assert_eq!(connected.fallbacks[0].issue.code, "transport_failed");
+        assert!(
+            connected.fallbacks[0]
+                .issue
+                .message
+                .contains("simulated censorship")
+        );
+        assert_eq!(
+            *adapter.connect_options.lock().unwrap(),
+            [split],
+            "the chosen options reach the engine"
+        );
+
+        // A lost tunnel is a reason too, and a reconnect keeps it.
+        adapter.set_blocked([]);
+        adapter.fail("hy2-fallback");
+        let recovered = client.maintain_once().await.unwrap();
+        assert_eq!(recovered.phase, ClientPhase::Connected);
+        let reasons = recovered
+            .fallbacks
+            .iter()
+            .map(|fallback| (fallback.transport.id.as_str(), fallback.issue.code.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reasons,
+            [
+                ("reality-primary", "transport_failed"),
+                ("hy2-fallback", "transport_lost")
+            ]
+        );
+        assert_eq!(adapter.connect_options.lock().unwrap().len(), 2);
+        assert!(adapter.connect_options.lock().unwrap()[1].split_tls_hello);
+
+        // Connecting again by hand starts a fresh account.
+        client.stop_tunnel().await.unwrap();
+        let fresh = client.connect().await.unwrap();
+        assert!(fresh.fallbacks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_chosen_protocol_the_invite_no_longer_offers_is_named() {
+        let api = Arc::new(MockApi::new(test_manifest()));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![adapter],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+
+        let error = client
+            .connect_with_protocol(Some(TransportProtocol::Stealth))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ClientError::PreferredProtocolUnavailable(_)
+        ));
+        let issue = client.snapshot().issue.unwrap();
+        assert_eq!(issue.code, "preferred_protocol_unavailable");
+        assert_eq!(
+            issue.message,
+            "HTTPS Stealth is not available for this invite; choose Automatic or another protocol"
+        );
+    }
+
+    #[tokio::test]
     async fn maintenance_retries_after_a_fully_blocked_recovery_round() {
         let mut manifest = test_manifest();
         manifest.transports = vec![
@@ -1750,6 +1943,7 @@ mod tests {
         tunnels: StdMutex<BTreeMap<String, watch::Sender<TunnelStatus>>>,
         probe_attempts: AtomicUsize,
         connection_attempts: AtomicUsize,
+        connect_options: StdMutex<Vec<ConnectOptions>>,
         stops: Arc<AtomicUsize>,
         stop_failure: Arc<AtomicBool>,
     }
@@ -1795,6 +1989,7 @@ mod tests {
             &self,
             _transport: &SessionTransport,
             _probe: &ProbeReport,
+            _options: &ConnectOptions,
         ) -> Result<StartedTunnel, ClientError> {
             std::future::pending().await
         }
@@ -1808,6 +2003,7 @@ mod tests {
                 tunnels: StdMutex::new(BTreeMap::new()),
                 probe_attempts: AtomicUsize::new(0),
                 connection_attempts: AtomicUsize::new(0),
+                connect_options: StdMutex::new(Vec::new()),
                 stops: Arc::new(AtomicUsize::new(0)),
                 stop_failure: Arc::new(AtomicBool::new(false)),
             }
@@ -1875,8 +2071,13 @@ mod tests {
             &self,
             transport: &SessionTransport,
             _probe: &ProbeReport,
+            options: &ConnectOptions,
         ) -> Result<StartedTunnel, ClientError> {
             self.connection_attempts.fetch_add(1, Ordering::SeqCst);
+            self.connect_options
+                .lock()
+                .expect("connect options lock")
+                .push(*options);
             let (status, _) = watch::channel(TunnelStatus::Connected);
             self.tunnels
                 .lock()
@@ -1951,6 +2152,7 @@ mod tests {
             &self,
             transport: &SessionTransport,
             _probe: &ProbeReport,
+            _options: &ConnectOptions,
         ) -> Result<StartedTunnel, ClientError> {
             Ok(StartedTunnel {
                 tunnel: Arc::new(MockTunnel {

@@ -5,7 +5,7 @@
 #
 #   scripts/dns-leak-lab.sh SSH_TARGET [--ssh-key FILE] [--protocol NAME]...
 #                           [--resolver resolved|plain]... [--cache DIR]
-#                           [--client FILE] [--deb FILE]
+#                           [--client FILE] [--deb FILE] [--split-tls-hello]
 #
 # For each resolver setup and protocol it:
 #   1. checks the capture sees direct lookups without Ket (baseline),
@@ -22,7 +22,8 @@
 # the connect_check example (such as an older commit's) instead of this
 # tree's. OpenVPN and stunnel are built from source for packages, so the lab
 # takes them from a Ket .deb given with --deb (then open_vpn_stunnel works). Needs Docker with privileged containers; the invite is revoked
-# afterwards.
+# afterwards. --split-tls-hello connects with that setting on (VLESS + REALITY
+# and HTTPS Stealth send their TLS greeting in pieces).
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -41,6 +42,8 @@ readonly ENGINES=(xray tun2proxy hysteria sslocal wstunnel)
 failures=0
 container=''
 label=''
+# Extra connect_check options, such as --split-tls-hello.
+client_flags=()
 network_resolver=''
 
 step() { printf '\n== %s\n' "$1"; }
@@ -181,7 +184,7 @@ run_protocol() {
   before=$(resolver_snapshot)
   printf '%s\n' "$invite" | docker exec -i "$container" systemd-run --quiet --wait --pipe --collect \
     --unit ket-leak-client "${sandbox[@]}" \
-    /opt/ket/connect_check --engines /opt/ket/engines --runtime /run/ket --protocol "$protocol" \
+    /opt/ket/connect_check --engines /opt/ket/engines --runtime /run/ket --protocol "$protocol" "${client_flags[@]}" \
     >"$client_log" 2>&1 &
   local client=$!
   for attempt in $(seq 1 90); do
@@ -244,6 +247,7 @@ main() {
       --cache) [[ $# -ge 2 ]] || die '--cache needs a directory'; cache=$2; shift 2 ;;
       --client) [[ $# -ge 2 && -f $2 ]] || die '--client needs a connect_check binary'; probe=$(realpath "$2"); shift 2 ;;
       --deb) [[ $# -ge 2 && -f $2 ]] || die '--deb needs a Ket .deb'; deb=$2; shift 2 ;;
+      --split-tls-hello) client_flags+=(--split-tls-hello); shift ;;
       *) die "unknown option: $1" ;;
     esac
   done

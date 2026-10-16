@@ -349,6 +349,7 @@ describe("Ket desktop shell", () => {
       access_expires_at_epoch_seconds: expiry,
       connected_at_epoch_seconds: expiry - 3_500,
       reconnect_attempt: 0,
+      fallbacks: [],
       issue: null,
       server_version: null,
       client_update: null,
@@ -381,6 +382,8 @@ describe("Ket desktop shell", () => {
     });
     const enroll = vi.spyOn(bridge, "enroll").mockResolvedValue(enrolled);
     const connect = vi.spyOn(bridge, "connect").mockResolvedValue(connected);
+    // The saved Settings choice reaches the automatic reconnect too.
+    localStorage.setItem("ket.split-tls-hello", "on");
     const { default: App } = await import("./App");
     render(<App />);
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Liberated"));
@@ -400,7 +403,7 @@ describe("Ket desktop shell", () => {
     });
 
     await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(connect).toHaveBeenCalledWith("stealth"));
+    await waitFor(() => expect(connect).toHaveBeenCalledWith("stealth", { splitTlsHello: true }));
     expect(localStorage.getItem("ket.access-code")).toBe("U".repeat(32));
   });
 

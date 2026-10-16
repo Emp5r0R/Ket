@@ -18,7 +18,7 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    ClientError, ProbeReport, StartedTunnel, TransportAdapter,
+    ClientError, ConnectOptions, ProbeReport, StartedTunnel, TransportAdapter,
     full_route::{
         FullRouteBridge, reserve_proxy_port, stop_bridge, stop_child, supervise, wait_until_stable,
     },
@@ -95,6 +95,7 @@ impl TransportAdapter for Shadowsocks2022Adapter {
         &self,
         transport: &SessionTransport,
         probe: &ProbeReport,
+        _options: &ConnectOptions,
     ) -> Result<StartedTunnel, ClientError> {
         validate_transport(transport)?;
         let server = probe.resolved_addresses.first().ok_or_else(|| {

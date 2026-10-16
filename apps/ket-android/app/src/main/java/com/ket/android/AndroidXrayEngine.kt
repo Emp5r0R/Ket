@@ -14,6 +14,7 @@ internal class AndroidXrayEngine(
     private val service: KetVpnService,
     private val transport: AndroidXrayTransport,
     private val resolvedEndpoint: InetAddress,
+    private val splitTlsHello: Boolean,
 ) : AndroidTransportEngine {
     private var process: Process? = null
     private var configFile: File? = null
@@ -32,6 +33,7 @@ internal class AndroidXrayEngine(
                 transport,
                 resolvedEndpoint.hostAddress ?: error("Server address is unavailable"),
                 socksPort,
+                splitTlsHello,
             ),
         )
         val check = ProcessBuilder(engine.absolutePath, "run", "-test", "-c", configFile!!.absolutePath)

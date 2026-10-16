@@ -129,6 +129,8 @@ impl Default for TransportSelector {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
+    use crate::ConnectOptions;
+
     use async_trait::async_trait;
     use ket_core::{Network, TransportCredential, TransportProfile};
 
@@ -152,6 +154,7 @@ mod tests {
             &self,
             _transport: &SessionTransport,
             _probe: &ProbeReport,
+            _options: &ConnectOptions,
         ) -> Result<StartedTunnel, ClientError> {
             unreachable!("ranking must not connect transports")
         }

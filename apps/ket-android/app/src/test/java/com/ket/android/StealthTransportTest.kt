@@ -47,6 +47,27 @@ class StealthTransportTest {
         }
     }
 
+    @Test
+    fun `splitting the TLS greeting adds a fragment dialer only when asked`() {
+        val transport = AndroidTransportSelector.parse(JSONArray().put(stealthTransport())).first()
+            as StealthTransport
+        val plain = JSONObject(EngineConfig.xray(transport, "203.0.113.9", 10808))
+        assertEquals(1, plain.getJSONArray("outbounds").length())
+        assertFalse(plain.getJSONArray("outbounds").getJSONObject(0).getJSONObject("streamSettings").has("sockopt"))
+
+        val split = JSONObject(EngineConfig.xray(transport, "203.0.113.9", 10808, splitTlsHello = true))
+        val outbounds = split.getJSONArray("outbounds")
+        assertEquals(2, outbounds.length())
+        assertEquals(
+            "ket-fragment",
+            outbounds.getJSONObject(0).getJSONObject("streamSettings").getJSONObject("sockopt").getString("dialerProxy"),
+        )
+        val fragment = outbounds.getJSONObject(1)
+        assertEquals("ket-fragment", fragment.getString("tag"))
+        assertEquals("freedom", fragment.getString("protocol"))
+        assertEquals("tlshello", fragment.getJSONObject("settings").getJSONObject("fragment").getString("packets"))
+    }
+
     private fun stealthTransport(): JSONObject = JSONObject()
         .put("id", "https-stealth-primary")
         .put("protocol", "stealth")

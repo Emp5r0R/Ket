@@ -4,8 +4,9 @@ use std::{
 };
 
 use ket_client_core::{
-    BrokerConfig, BrokerTransportAdapter, ClientIssue, ClientSnapshot, ControlEndpoint,
-    HttpControlPlane, InviteEnrollment, KetClient, MaintenanceTask, SelectionPolicy,
+    BrokerConfig, BrokerTransportAdapter, ClientIssue, ClientSnapshot, ConnectOptions,
+    ControlEndpoint, HttpControlPlane, InviteEnrollment, KetClient, MaintenanceTask,
+    SelectionPolicy,
 };
 use ket_core::TransportProtocol;
 use serde::Serialize;
@@ -270,6 +271,7 @@ async fn enroll(
 async fn connect(
     controller: State<'_, DesktopController>,
     preferred_protocol: Option<String>,
+    split_tls_hello: Option<bool>,
 ) -> Result<ClientSnapshot, ClientIssue> {
     let client = controller
         .session
@@ -282,6 +284,11 @@ async fn connect(
         .as_deref()
         .map(parse_protocol)
         .transpose()?;
+    client
+        .set_connect_options(ConnectOptions {
+            split_tls_hello: split_tls_hello.unwrap_or(false),
+        })
+        .await;
     client
         .connect_with_protocol(preferred_protocol)
         .await

@@ -37,6 +37,12 @@ Settings, "Apps that use Ket", chooses between all apps (the default), only chos
 
 Apps outside the VPN reach the network directly, with no Ket protection and their own DNS. Under Android's "Block connections without VPN" (lockdown), apps outside the VPN have no network at all.
 
+## Connection settings and fallback reasons
+
+Settings, "Split the TLS greeting" (off by default), makes Xray send the ClientHello of VLESS + REALITY and HTTPS Stealth as 100-200 byte TLS records 10-20 ms apart, through a fragmenting dialer, so a filter that reads the server name from one packet misses it. It is read from ordinary app preferences each time a transport starts, so it also applies to always-on starts.
+
+When Automatic mode leaves a protocol, or recovery replaces a lost one, the connection card lists each protocol it left with the reason ("Using HTTPS Stealth because: VLESS + REALITY: ..."). A fresh connection clears the list; a recovery keeps it, capped at eight entries. A chosen protocol that the invite no longer offers fails with a message naming it, instead of a generic startup failure.
+
 ## Native supply chain
 
 `packaging/prepare-android-engines.sh` downloads checksum-pinned Hysteria 2.10 and OpenVPN for Android 0.7.64 executables/libraries for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`, Xray-core 26.3.27 and shadowsocks-rust 1.24.0 for `arm64-v8a` and `x86_64`, and wstunnel 10.6.2 for `arm64-v8a`. It also verifies and expands the complete hev-socks5-tunnel 2.14.0 source release. NDK r27d compiles hev and Ket's small API-26-compatible FD receiver for every ABI. The official Shadowsocks and wstunnel binaries target Android API 28; wstunnel is currently arm64-only. Unsupported devices retain ranked fallback rather than weakening a profile.

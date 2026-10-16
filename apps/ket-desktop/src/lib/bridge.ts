@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ClientIssue,
   ClientSnapshot,
+  ConnectOptions,
   DesktopState,
   EnrollmentInput,
   InviteDetails,
@@ -17,7 +18,7 @@ export interface DesktopBridge {
   /** Decodes and verifies an invite QR image natively; bytes travel as a raw IPC body. */
   decodeInviteQr(image: Uint8Array): Promise<InviteDetails>;
   enroll(input: EnrollmentInput): Promise<ClientSnapshot>;
-  connect(preferredProtocol: ProtocolId | null): Promise<ClientSnapshot>;
+  connect(preferredProtocol: ProtocolId | null, options: ConnectOptions): Promise<ClientSnapshot>;
   stop(): Promise<ClientSnapshot>;
   refresh(): Promise<ClientSnapshot>;
   forget(): Promise<ClientSnapshot>;
@@ -35,7 +36,11 @@ const tauriBridge: DesktopBridge = {
       deviceName: input.deviceName,
       nodeKey: input.nodeKey,
     }),
-  connect: (preferredProtocol) => invoke<ClientSnapshot>("connect", { preferredProtocol }),
+  connect: (preferredProtocol, options) =>
+    invoke<ClientSnapshot>("connect", {
+      preferredProtocol,
+      splitTlsHello: options.splitTlsHello,
+    }),
   stop: () => invoke<ClientSnapshot>("stop_tunnel"),
   refresh: () => invoke<ClientSnapshot>("refresh"),
   forget: () => invoke<ClientSnapshot>("forget"),
@@ -103,6 +108,7 @@ function demoSnapshot(
     access_expires_at_epoch_seconds: phase === "disconnected" ? null : now() + 86_400,
     connected_at_epoch_seconds: connected ? now() - 1_842 : null,
     reconnect_attempt: 0,
+    fallbacks: [],
     issue: null,
     server_version: null,
     client_update: null,

@@ -14,6 +14,8 @@ import androidx.core.content.edit
 import com.ket.android.invite.NodePublicKey
 import com.ket.android.splittunnel.InstalledApps
 import com.ket.android.splittunnel.SplitTunnelPolicy
+import com.ket.android.connection.ConnectionOptions
+import com.ket.android.connection.ConnectionOptionsStore
 import com.ket.android.splittunnel.SplitTunnelStore
 
 private data class PendingConnectionRequest(
@@ -46,6 +48,7 @@ class MainActivity : ComponentActivity() {
     private val tunnelState = mutableStateOf(KetTunnelRuntime.snapshot())
     private val themeMode = mutableStateOf(KetThemeMode.System)
     private val splitTunnel = mutableStateOf(SplitTunnelPolicy.AllApps)
+    private val connectionOptions = mutableStateOf(ConnectionOptions())
     private val startupMode = mutableStateOf(KetStartupMode.Ready)
     private var startupRestoreStarted = false
     private var subscription: AutoCloseable? = null
@@ -82,6 +85,8 @@ class MainActivity : ComponentActivity() {
         themeMode.value = KetThemeMode.fromStored(preferences.getString(THEME_MODE_KEY, null))
         val splitTunnelStore = SplitTunnelStore(this)
         splitTunnel.value = splitTunnelStore.load()
+        val connectionOptionsStore = ConnectionOptionsStore(this)
+        connectionOptions.value = connectionOptionsStore.load()
         val savedCredentialsResult = runCatching {
             AndroidTunnelCredentialStore.get(this).load()?.let { credentials ->
                 if (credentials.accessExpired()) {
@@ -156,6 +161,11 @@ class MainActivity : ComponentActivity() {
                             splitTunnelStore.save(policy)
                         },
                         loadInstalledApps = { InstalledApps.launchable(this) },
+                        connectionOptions = connectionOptions.value,
+                        onConnectionOptionsChange = { options ->
+                            connectionOptions.value = options
+                            connectionOptionsStore.save(options)
+                        },
                         onForgetProfile = {
                             runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
                         },

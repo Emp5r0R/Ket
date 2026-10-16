@@ -39,6 +39,7 @@ const SERVER_KEY = "ket.server-url";
 const ACCESS_CODE_KEY = "ket.access-code";
 const DEVICE_KEY = "ket.device-name";
 const PROTOCOL_KEY = "ket.protocol-preference";
+const SPLIT_TLS_HELLO_KEY = "ket.split-tls-hello";
 const ACCESS_EXPIRY_KEY = "ket.access-expires-at";
 const NODE_KEY_KEY = "ket.node-key";
 const THEME_KEY = "ket.theme";
@@ -151,6 +152,7 @@ const emptySnapshot: ClientSnapshot = {
   access_expires_at_epoch_seconds: null,
   connected_at_epoch_seconds: null,
   reconnect_attempt: 0,
+  fallbacks: [],
   issue: null,
   server_version: null,
   client_update: null,
@@ -192,6 +194,10 @@ export default function App() {
     () => localStorage.getItem(DEVICE_KEY) ?? "Ket desktop",
   );
   const [history, setHistory] = useState<TrafficPoint[]>([]);
+  const [splitTlsHello, setSplitTlsHello] = useState(
+    () => localStorage.getItem(SPLIT_TLS_HELLO_KEY) === "on",
+  );
+  const splitTlsHelloRef = useRef(splitTlsHello);
   const [protocolPreference, setProtocolPreference] = useState<ProtocolPreference>(() => {
     const saved = localStorage.getItem(PROTOCOL_KEY);
     return saved === "auto" || (saved !== null && isProtocolId(saved)) ? saved : "auto";
@@ -308,7 +314,7 @@ export default function App() {
         if (!connectionRequestedRef.current) return;
         void run(
           "connect",
-          () => bridge.connect(preference === "auto" ? null : preference),
+          () => connectWith(preference),
           preference,
         );
       });
@@ -650,6 +656,21 @@ export default function App() {
     await bridge.forget().catch(() => undefined);
   };
 
+  const connectWith = (preference: ProtocolPreference) =>
+    bridge.connect(preference === "auto" ? null : preference, {
+      splitTlsHello: splitTlsHelloRef.current,
+    });
+
+  const chooseSplitTlsHello = (enabled: boolean) => {
+    splitTlsHelloRef.current = enabled;
+    setSplitTlsHello(enabled);
+    if (enabled) {
+      localStorage.setItem(SPLIT_TLS_HELLO_KEY, "on");
+    } else {
+      localStorage.removeItem(SPLIT_TLS_HELLO_KEY);
+    }
+  };
+
   const chooseProtocol = (preference: ProtocolPreference) => {
     setProtocolPreference(preference);
     localStorage.setItem(PROTOCOL_KEY, preference);
@@ -781,7 +802,7 @@ export default function App() {
                     connectionRequestedRef.current = true;
                     return run(
                       "connect",
-                      () => bridge.connect(protocolPreference === "auto" ? null : protocolPreference),
+                      () => connectWith(protocolPreference),
                       protocolPreference,
                     );
                   }}
@@ -824,6 +845,8 @@ export default function App() {
             busy={busy}
             themePreference={themePreference}
             onThemeChange={chooseTheme}
+            splitTlsHello={splitTlsHello}
+            onSplitTlsHelloChange={chooseSplitTlsHello}
             onForget={forget}
           />
         ) : null}

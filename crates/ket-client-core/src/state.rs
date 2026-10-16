@@ -40,6 +40,14 @@ impl From<&TransportProfile> for TransportSummary {
     }
 }
 
+/// A transport the latest connection attempt tried and left, and why, so an
+/// app can say why it is not using the protocol it tried first.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TransportFallback {
+    pub transport: TransportSummary,
+    pub issue: ClientIssue,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct ClientSnapshot {
     pub phase: ClientPhase,
@@ -54,6 +62,9 @@ pub struct ClientSnapshot {
     pub connected_at_epoch_seconds: Option<u64>,
     pub reconnect_attempt: u32,
     pub issue: Option<ClientIssue>,
+    /// The transports the latest connection attempt gave up on, in order.
+    #[serde(default)]
+    pub fallbacks: Vec<TransportFallback>,
     /// The server's Ket version, from its last session response.
     #[serde(default)]
     pub server_version: Option<String>,

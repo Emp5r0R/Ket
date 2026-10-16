@@ -32,6 +32,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import com.ket.android.connection.ConnectionOptions
+import com.ket.android.connection.ConnectionOptionsStore
+import com.ket.android.connection.TransportFallbackNote
+import com.ket.android.connection.TransportFallbacks
 import com.ket.android.splittunnel.InstalledApps
 import com.ket.android.splittunnel.SplitTunnelRules
 import com.ket.android.splittunnel.SplitTunnelStore
@@ -200,6 +204,12 @@ class KetVpnService : VpnService() {
 
     private fun startLocalRoute(spec: TunnelLaunchSpec, reconnectAttempt: Int): SelectedTransport {
         val failures = mutableListOf<String>()
+        val options = runCatching { ConnectionOptionsStore(this).load() }.getOrDefault(ConnectionOptions())
+        // A recovery keeps the reason the previous transport was left.
+        if (reconnectAttempt == 0) KetTunnelRuntime.update { it.copy(fallbacks = emptyList()) }
+        TransportFallbacks.preferredUnavailable(spec.transports, spec.preferredProtocol)?.let {
+            throw IllegalStateException(it)
+        }
         val candidates = transportHistory.rank(
             spec.transports,
             SystemClock.elapsedRealtime(),
@@ -226,10 +236,11 @@ class KetVpnService : VpnService() {
                 protocol = transport.protocol,
                 transport = transport.id,
             )
-            val candidate = engineFor(spec, transport)
+            val candidate = engineFor(spec, transport, options)
             if (candidate == null) {
                 transportHistory.recordFailure(transport.id, SystemClock.elapsedRealtime())
                 failures += "${transport.displayName}: endpoint did not resolve before VPN routing"
+                noteFallback(transport.displayName, "endpoint did not resolve before VPN routing")
                 AndroidConnectionDiagnostics.record(
                     stage = "transport_resolution",
                     outcome = DiagnosticOutcome.Failed,
@@ -264,6 +275,7 @@ class KetVpnService : VpnService() {
                 if (lifecycle.isStopping()) throw IllegalStateException("Tunnel stop was requested")
                 transportHistory.recordFailure(transport.id, SystemClock.elapsedRealtime())
                 failures += "${transport.displayName}: ${error.message ?: "startup failed"}"
+                noteFallback(transport.displayName, error.message ?: "startup failed")
                 AndroidConnectionDiagnostics.record(
                     stage = if (reconnectAttempt > 0) "transport_recovery" else "transport_start",
                     outcome = DiagnosticOutcome.Failed,
@@ -283,6 +295,7 @@ class KetVpnService : VpnService() {
     private fun engineFor(
         spec: TunnelLaunchSpec,
         transport: AndroidTransport,
+        options: ConnectionOptions,
     ): AndroidTransportEngine? = when (transport) {
         is HysteriaTransport -> AndroidHysteriaEngine(this, transport)
         is ShadowsocksTransport -> transportAddresses[transport.id]?.let {
@@ -292,7 +305,7 @@ class KetVpnService : VpnService() {
             AndroidWireGuardTlsEngine(this, transport, it)
         }
         is AndroidXrayTransport -> transportAddresses[transport.id]?.let {
-            AndroidXrayEngine(this, transport, it)
+            AndroidXrayEngine(this, transport, it, options.splitTlsHello)
         }
         is OpenVpnStunnelTransport -> transportAddresses[transport.id]?.let { resolved ->
             AndroidOpenVpnEngine(this, transport, resolved) { request ->
@@ -430,6 +443,9 @@ class KetVpnService : VpnService() {
         )
         if (failedTransportId != null) {
             transportHistory.recordFailure(failedTransportId, SystemClock.elapsedRealtime())
+            spec.transports.firstOrNull { it.id == failedTransportId }?.let {
+                noteFallback(it.displayName, failureReason)
+            }
         }
         stopTransportAndBridge()
         var lastFailure = failureReason
@@ -478,6 +494,12 @@ class KetVpnService : VpnService() {
             message = lastFailure,
         )
         reconnecting.set(false)
+    }
+
+    private fun noteFallback(transportName: String, reason: String) {
+        KetTunnelRuntime.update {
+            it.copy(fallbacks = TransportFallbacks.appended(it.fallbacks, TransportFallbackNote(transportName, reason)))
+        }
     }
 
     private fun requestRecovery(failureReason: String) {

@@ -69,6 +69,16 @@ export interface ClientUpdate {
   download_url: string;
 }
 
+export interface TransportFallback {
+  transport: TransportSummary;
+  issue: ClientIssue;
+}
+
+/** Connection settings chosen in Settings, applied to every connection. */
+export interface ConnectOptions {
+  splitTlsHello: boolean;
+}
+
 export interface ClientSnapshot {
   phase: ClientPhase;
   node: NodeStatus | null;
@@ -82,6 +92,8 @@ export interface ClientSnapshot {
   connected_at_epoch_seconds: number | null;
   reconnect_attempt: number;
   issue: ClientIssue | null;
+  /** The transports the latest connection attempt left, and why. */
+  fallbacks: TransportFallback[];
   server_version: string | null;
   client_update: ClientUpdate | null;
   updated_at_epoch_seconds: number;
