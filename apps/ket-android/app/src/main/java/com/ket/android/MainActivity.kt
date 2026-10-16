@@ -1,6 +1,7 @@
 package com.ket.android
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
@@ -17,6 +18,9 @@ import com.ket.android.splittunnel.SplitTunnelPolicy
 import com.ket.android.connection.ConnectionOptions
 import com.ket.android.connection.ConnectionOptionsStore
 import com.ket.android.splittunnel.SplitTunnelStore
+import com.ket.android.ui.KetApp
+import com.ket.android.ui.KetStartupScreen
+import com.ket.android.ui.KetTheme
 
 private data class PendingConnectionRequest(
     val serverUrl: String,
@@ -50,6 +54,8 @@ class MainActivity : ComponentActivity() {
     private val splitTunnel = mutableStateOf(SplitTunnelPolicy.AllApps)
     private val connectionOptions = mutableStateOf(ConnectionOptions())
     private val startupMode = mutableStateOf(KetStartupMode.Ready)
+    /** An invite shared to Ket from another app, waiting for the add-server screen. */
+    private val sharedInvite = mutableStateOf<String?>(null)
     private var startupRestoreStarted = false
     private var subscription: AutoCloseable? = null
     private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -98,6 +104,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         val savedCredentials = savedCredentialsResult.getOrNull()
+        val savedProtocols = runCatching {
+            savedCredentials?.launchSpec()?.transports?.map(AndroidTransport::protocol)?.distinct()
+        }.getOrNull().orEmpty()
+        sharedInvite.value = sharedInviteIn(intent)
         savedCredentialsResult.exceptionOrNull()?.let { error ->
             AndroidConnectionDiagnostics.begin(null, source = "profile_restore")
             AndroidConnectionDiagnostics.record(
@@ -145,6 +155,10 @@ class MainActivity : ComponentActivity() {
                         initialPreferredProtocol = savedCredentials?.profile?.preferredProtocol,
                         initialNodeKey = savedCredentials?.profile?.nodeKey,
                         initialAccessExpiresAtEpochSeconds = savedCredentials?.accessExpiresAtEpochSeconds,
+                        offeredProtocols = tunnelState.value.availableProtocols.ifEmpty { savedProtocols },
+                        sharedInvite = sharedInvite.value,
+                        onSharedInviteConsumed = { sharedInvite.value = null },
+                        appVersion = BuildConfig.VERSION_NAME,
                         onAccessExpired = {
                             runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
                         },
@@ -193,6 +207,16 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        sharedInviteIn(intent)?.let { sharedInvite.value = it }
+    }
+
+    private fun sharedInviteIn(intent: Intent?): String? =
+        intent?.takeIf { it.action == Intent.ACTION_SEND }
+            ?.getStringExtra(Intent.EXTRA_TEXT)
+            ?.let(::extractInvite)
 
     override fun onDestroy() {
         subscription?.close()

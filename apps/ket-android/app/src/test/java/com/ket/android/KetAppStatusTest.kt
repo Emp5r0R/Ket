@@ -55,9 +55,9 @@ class KetAppStatusTest {
         val singapore = node(AndroidNodeLocation("SG", "Singapore", "Singapore", 1.29, 103.85))
         val countryOnly = node(AndroidNodeLocation("SG", "Singapore", null, 1.29, 103.85))
 
-        assertEquals("Singapore, Singapore", connectionLocationHeading(singapore))
+        assertEquals("Singapore", connectionLocationHeading(singapore))
         assertEquals("Singapore", connectionLocationHeading(countryOnly))
-        assertEquals("Choose your node", connectionLocationHeading(null))
+        assertEquals("Your server", connectionLocationHeading(null))
     }
 
     private fun node(location: AndroidNodeLocation) = AndroidNodeStatus(

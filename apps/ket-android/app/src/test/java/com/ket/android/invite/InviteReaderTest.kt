@@ -47,7 +47,7 @@ class InviteReaderTest {
             appInviteReader.read(case.getString("text"), case.getLong("access_expires_at_epoch_seconds"))
         }
         assertEquals(InviteFailure.Expired, expired.failure)
-        assertEquals("Invite has expired", inviteFailureMessage(expired))
+        assertEquals("This invite has expired. Ask for a new one.", inviteFailureMessage(expired))
         assertEquals("This invite could not be read.", inviteFailureMessage(IllegalStateException("secret")))
 
         for (invalid in listOf("", "AAAA=", "ket:invite:${"A".repeat(3_000)}")) {

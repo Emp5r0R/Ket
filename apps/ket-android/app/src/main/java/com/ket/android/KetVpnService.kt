@@ -205,8 +205,14 @@ class KetVpnService : VpnService() {
     private fun startLocalRoute(spec: TunnelLaunchSpec, reconnectAttempt: Int): SelectedTransport {
         val failures = mutableListOf<String>()
         val options = runCatching { ConnectionOptionsStore(this).load() }.getOrDefault(ConnectionOptions())
+        val offered = spec.transports.map(AndroidTransport::protocol).distinct()
         // A recovery keeps the reason the previous transport was left.
-        if (reconnectAttempt == 0) KetTunnelRuntime.update { it.copy(fallbacks = emptyList()) }
+        KetTunnelRuntime.update {
+            it.copy(
+                fallbacks = if (reconnectAttempt == 0) emptyList() else it.fallbacks,
+                availableProtocols = offered,
+            )
+        }
         TransportFallbacks.preferredUnavailable(spec.transports, spec.preferredProtocol)?.let {
             throw IllegalStateException(it)
         }

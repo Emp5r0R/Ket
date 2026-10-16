@@ -37,6 +37,8 @@ data class TunnelSnapshot(
     val clientUpdate: AndroidClientUpdate? = null,
     /** The transports the latest connection attempt left, and why, oldest first. */
     val fallbacks: List<TransportFallbackNote> = emptyList(),
+    /** The protocols the current session offers, so the app lists only those. */
+    val availableProtocols: List<KetProtocol> = emptyList(),
 )
 
 internal class TunnelLaunchSpec(

@@ -1,5 +1,6 @@
 package com.ket.android
 
+import com.ket.android.ui.KetAppDestination
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

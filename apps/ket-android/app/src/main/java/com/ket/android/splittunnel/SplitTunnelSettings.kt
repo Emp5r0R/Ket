@@ -44,7 +44,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Settings section that chooses which apps use Ket. Changes are saved at once
+ * Settings content that chooses which apps use Ket. Changes are saved at once
  * and take effect the next time the VPN interface is built.
  */
 @Composable
@@ -55,50 +55,43 @@ fun SplitTunnelSection(
     loadApps: () -> List<InstalledApp>,
 ) {
     var picking by rememberSaveable { mutableStateOf(false) }
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(6.dp),
-        tonalElevation = 1.dp,
-    ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Text("Apps that use Ket", style = MaterialTheme.typography.labelMedium)
-            Column(Modifier.selectableGroup()) {
-                SplitTunnelMode.entries.forEach { mode ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(40.dp)
-                            .selectable(
-                                selected = policy.mode == mode,
-                                onClick = { onChange(policy.copy(mode = mode)) },
-                                role = Role.RadioButton,
-                            ),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = policy.mode == mode, onClick = null)
-                        Text(mode.displayName, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium)
-                    }
+    Column(Modifier.fillMaxWidth()) {
+        Column(Modifier.selectableGroup()) {
+            SplitTunnelMode.entries.forEach { mode ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .selectable(
+                            selected = policy.mode == mode,
+                            onClick = { onChange(policy.copy(mode = mode)) },
+                            role = Role.RadioButton,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = policy.mode == mode, onClick = null)
+                    Text(mode.displayName, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium)
                 }
             }
+        }
+        Text(
+            SplitTunnelChoices.summary(policy),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        if (connected) {
             Text(
-                SplitTunnelChoices.summary(policy),
+                "Changes apply the next time you connect.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
             )
-            if (connected) {
-                Text(
-                    "Changes apply the next time you connect.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            if (policy.mode != SplitTunnelMode.AllApps) {
-                OutlinedButton(
-                    onClick = { picking = true },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(40.dp),
-                ) {
-                    Text("Choose apps (${policy.packages.size})")
-                }
+        }
+        if (policy.mode != SplitTunnelMode.AllApps) {
+            OutlinedButton(
+                onClick = { picking = true },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(40.dp),
+            ) {
+                Text("Choose apps (${policy.packages.size})")
             }
         }
     }

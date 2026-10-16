@@ -22,7 +22,29 @@ Transport configurations are mode `0600` under `noBackupFilesDir` and are delete
 
 The durable record also lives under `noBackupFilesDir` and is written through `AtomicFile`. Its contents are sealed with AES-256-GCM and a non-exportable [Android Keystore](https://developer.android.com/privacy-and-security/keystore) key; credentials cannot migrate through Android backup without that device-local key. The first manual connection must succeed before enabling [always-on VPN](https://developer.android.com/develop/connectivity/vpn#always-on). Android can then start the foreground service after process death, reboot, or app upgrade, while system lockdown blocks traffic before Ket establishes its full route. The packaged manifest advertises always-on support, but the reboot and lockdown lifecycle remains a physical-device release gate.
 
-The Compose surface uses the same node contract as desktop. It exposes Automatic plus every implemented protocol, a short recommendation beside the selector, and a Learn More page covering purpose, operation, connection steps, and limits for each protocol. A valid encrypted profile is shown as a saved server and reused without asking for the code again; only its access expiry or the explicit **Forget** action removes it. The interface follows the system color scheme by default and provides persistent Light and Dark overrides while retaining Ket's red connected accent. It renders the bundled Natural Earth 1:110m topology as a neutral full-world view while disconnected, smoothly focuses on the active server region after end-to-end route verification, and returns to the full view during disconnect cleanup. Terminal connection failures open a copyable bounded diagnostic report covering enrollment, VPN permission, transport resolution/start, full-route verification, recovery, lease renewal, session release, credential cleanup, bridge, engine, and TUN cleanup. Codes, tokens, credentials, configurations, and raw process output never enter that report, and arbitrary messages receive a defensive redaction pass. The layout scrolls under constrained height while the primary connection control remains outside the scrolling content. The Natural Earth-derived asset and its redistribution notice are tracked with the Android source.
+The Compose surface uses the same node contract as desktop. The screens and the status island are described under [Screens](#screens). A valid encrypted profile is shown as a saved server and reused without asking for the code again; only its access expiry or the explicit **Forget** action removes it. The interface follows the system color scheme by default and provides persistent Light and Dark overrides while retaining Ket's red connected accent. It renders the bundled Natural Earth 1:110m topology as a neutral full-world view while disconnected, smoothly focuses on the active server region after end-to-end route verification, and returns to the full view during disconnect cleanup. Terminal connection failures open a copyable bounded diagnostic report covering enrollment, VPN permission, transport resolution/start, full-route verification, recovery, lease renewal, session release, credential cleanup, bridge, engine, and TUN cleanup. Codes, tokens, credentials, configurations, and raw process output never enter that report, and arbitrary messages receive a defensive redaction pass. The connect button sits within the first screenful on common phone sizes, and every screen scrolls under constrained height. The Natural Earth-derived asset and its redistribution notice are tracked with the Android source.
+
+## Screens
+
+The app has four tabs: Connect, Metrics, Protocols, and Settings. Each screen lives in its own package under `com.ket.android.ui`; `KetApp` owns navigation and state, and the screens only draw what they are given.
+
+- **Add your server** (Connect, before a server is saved): **Paste invite** reads the clipboard, **Scan QR** opens the camera, and **From image** reads a QR picture. Advanced still takes a server address and access code. Errors appear under the buttons and say what to do next.
+- **Share to Ket**: sharing text that contains a `ket:invite:` from another app (a chat, an email) opens Ket with the invite filled in. Ket shows the server it names and asks before adding it. If a server is already saved, Ket keeps it and explains how to switch: forget the current server in Settings, then share the invite again.
+- **Connect**: the server's location, the map, the connect button, a route card (protocol, why Ket left another protocol), and a protocol row. The row opens a bottom sheet that lists Automatic and only the protocols the server offers; it is disabled while connecting or connected.
+- **Metrics**: traffic, protocol, setup time, and access left for this connection, then the server's health, load, processor, memory, and uptime.
+- **Protocols**: one card per protocol, the server's own first. A card opens to when to use it, how it works, how to connect, and its limits, with a button to choose it.
+- **Settings**: theme (System, Light, Dark), apps that use Ket, connection options, the saved server with a confirmed **Forget**, help links, and the app version.
+
+### Status island
+
+A dark capsule at the top centre of every screen shows the connection state, like a phone's dynamic island:
+
+- Off: a red dot pulses like a recording light with "You are being watched" or "You are under surveillance".
+- Connecting, reconnecting, or stopping: a spinner and the current step.
+- Connected: a green shield and "Liberated".
+- Failed: a warning sign and the reason.
+
+When the state changes the island opens for 3.5 seconds with a second line, such as "Protected with HTTPS Stealth", then folds back. A tap opens or closes it. On a dark theme it is lifted and outlined so it stays visible. It is a polite live region, so screen readers announce each change.
 
 ## Apps that use Ket
 

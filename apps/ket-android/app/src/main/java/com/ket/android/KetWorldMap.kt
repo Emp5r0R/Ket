@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -33,7 +34,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
+internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val geometry = remember {
         runCatching {
@@ -72,11 +73,13 @@ internal fun KetMap(location: AndroidNodeLocation?, connected: Boolean) {
         else -> Color(0xFFDDE3DF)
     }
     val mapBorder = if (dark) Color(0xFF4B5355) else Color(0xFFFFFFFF)
+    // Clipped: the zoomed, focused map must not draw over what sits below it.
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .aspectRatio(900f / 432f)
-            .background(mapBackground, RoundedCornerShape(4.dp))
+            .clip(RoundedCornerShape(14.dp))
+            .background(mapBackground)
             .semantics {
                 contentDescription = location?.let {
                     "Server location: ${it.displayName}"

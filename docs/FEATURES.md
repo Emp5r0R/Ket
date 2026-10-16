@@ -8,6 +8,7 @@ Everything Ket implements today, and the qualification status of each transport.
 - Apps keep a paused invite and connect again once it resumes, and follow the end date the server reports.
 - "Split the TLS greeting" (Settings, off by default) on desktop and Android sends the ClientHello of VLESS + REALITY and HTTPS Stealth as small TLS records 10-20 ms apart, so a filter that reads the server name from one packet misses it. A test runs the pinned Xray and checks what reaches a server.
 - The apps say why they are not using the protocol they tried first: each protocol Automatic mode left, or a connection lost, is listed with its reason. A chosen protocol the invite no longer offers is named instead of a generic failure.
+- A redesigned Android app: paste, scan, or share an invite to Ket from another app; a connect button within reach; a protocol sheet that lists only what the server offers; clearer Metrics, Protocols, and Settings screens; and a status island at the top that pulses red while you are unprotected and shows a green shield once you are ([ANDROID.md](ANDROID.md#screens)).
 - Android split tunneling: choose all apps, only chosen apps, or all except chosen apps ([ANDROID.md](ANDROID.md#apps-that-use-ket)).
 - `ket doctor` flags a Cloudflare Tunnel that sends the Ket hostname past the edge to the control plane.
 - WireGuard TLS loads sites by name on desktop and Android. Before, it connected but resolved names to addresses the server could not route ([DNS_LEAKS.md](DNS_LEAKS.md#wireguard-name-resolution)).
