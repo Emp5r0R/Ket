@@ -295,6 +295,11 @@ jobs:
           # The action's default also requests the removed legacy `tools` package.
           packages: platform-tools
       - run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
+      # Invites are verified by the Rust library (crates/ket-invite-android).
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
       - run: ../../packaging/prepare-android-engines.sh app
       - name: Generate disposable release-signing identity
         shell: bash

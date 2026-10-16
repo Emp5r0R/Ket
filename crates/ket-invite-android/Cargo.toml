@@ -1,0 +1,18 @@
+[package]
+name = "ket-invite-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Ket Android reads invites and verifies enrollment through this library, so
+# the app runs the same Rust implementation as the server and desktop.
+[lib]
+name = "ket_invite_jni"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jni = { version = "=0.21.1", default-features = false }
+ket-invite = { path = "../ket-invite" }
+zeroize.workspace = true

@@ -2101,6 +2101,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ket-invite-android"
+version = "1.1.0"
+dependencies = [
+ "jni 0.21.1",
+ "ket-invite",
+ "zeroize",
+]
+
+[[package]]
 name = "ket-qr"
 version = "1.1.0"
 dependencies = [

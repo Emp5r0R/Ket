@@ -1,6 +1,5 @@
 package com.ket.android.invite
 
-import com.google.crypto.tink.subtle.Ed25519Sign
 import com.ket.android.KetControlApi
 import com.ket.android.testSessionManifest
 import com.ket.android.testSessionToken
@@ -10,7 +9,12 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.Signature
+import java.util.Base64
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
@@ -18,8 +22,8 @@ private const val ACCESS_CODE = "Abcdefghijklmnopqrstuvwxyz012345"
 
 /** Exercises `KetControlApi.enroll` against a real loopback HTTP exchange. */
 class PinnedEnrollmentTest {
-    private val node = Ed25519Sign.KeyPair.newKeyPair()
-    private val nodeKey = NodePublicKey.fromBytes(node.publicKey)
+    private val node = newNodeKeyPair()
+    private val nodeKey = NodePublicKey.fromBytes(node.public.encoded.takeLast(32).toByteArray())
     private val manifest = testSessionManifest(testSessionToken('P'))
 
     @Test
@@ -34,7 +38,7 @@ class PinnedEnrollmentTest {
 
     @Test
     fun `pinned enrollment rejects missing or foreign signatures`() {
-        for (signer in listOf(null, Ed25519Sign.KeyPair.newKeyPair())) {
+        for (signer in listOf(null, newNodeKeyPair())) {
             serveOnce(signer = signer).use { server ->
                 val error = assertThrows(InviteException::class.java) {
                     KetControlApi.enroll(server.baseUrl, ACCESS_CODE, "Ket Android", nodeKey)
@@ -52,13 +56,13 @@ class PinnedEnrollmentTest {
         }
     }
 
-    private fun serveOnce(signer: Ed25519Sign.KeyPair?) = OneShotEnrollmentServer(manifest, signer)
+    private fun serveOnce(signer: KeyPair?) = OneShotEnrollmentServer(manifest, signer)
 }
 
 /** Answers one `POST /v1/sessions`, signing the body for the request nonce when [signer] is set. */
 private class OneShotEnrollmentServer(
     private val manifest: String,
-    private val signer: Ed25519Sign.KeyPair?,
+    private val signer: KeyPair?,
 ) : AutoCloseable {
     private val socket = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
     private val nonce = CompletableFuture<String?>()
@@ -82,8 +86,12 @@ private class OneShotEnrollmentServer(
             nonce.complete(requestNonce)
             val body = manifest.toByteArray(StandardCharsets.UTF_8)
             val signatureHeader = if (signer != null && requestNonce != null) {
-                val signed = EnrollmentProof.signatureInput(EnrollmentNonce.fromHeaderValue(requestNonce), body)
-                "$NODE_SIGNATURE_HEADER: ${Base64Url.encode(Ed25519Sign(signer.privateKey).sign(signed))}\r\n"
+                val signature = Signature.getInstance("Ed25519").run {
+                    initSign(signer.private)
+                    update(enrollmentSignatureInput(requestNonce, body))
+                    sign()
+                }
+                "$NODE_SIGNATURE_HEADER: ${Base64.getUrlEncoder().withoutPadding().encodeToString(signature)}\r\n"
             } else {
                 ""
             }
@@ -101,3 +109,13 @@ private class OneShotEnrollmentServer(
 
     override fun close() = socket.close()
 }
+
+/** The JDK's Ed25519 (Java 15+) stands in for the server's node key. */
+private fun newNodeKeyPair(): KeyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+
+/** `KET-ENROLLMENT-V1 || nonce || u32be(len(body)) || body`, written out independently of the app. */
+private fun enrollmentSignatureInput(nonceHeader: String, body: ByteArray): ByteArray =
+    "KET-ENROLLMENT-V1".toByteArray(Charsets.US_ASCII) +
+        Base64.getUrlDecoder().decode(nonceHeader) +
+        ByteBuffer.allocate(4).putInt(body.size).array() +
+        body

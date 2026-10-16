@@ -13,6 +13,12 @@ enum class InviteFailure(val code: String, val message: String) {
     UnsafeLocator("unsafe_locator", "Unsafe server address in invite"),
     InvalidNodeKey("invalid_node_key", "Invalid node key"),
     NodeIdentityMismatch("node_identity_mismatch", "Server could not prove it is the node named in the invite"),
+    ;
+
+    companion object {
+        /** The failure for a Rust `InviteError::code`; anything unknown is [Invalid]. */
+        fun fromCode(code: String): InviteFailure = entries.firstOrNull { it.code == code } ?: Invalid
+    }
 }
 
 /** Every invite and node-identity rejection. Messages never contain invite or credential text. */

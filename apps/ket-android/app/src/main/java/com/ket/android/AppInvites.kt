@@ -3,10 +3,10 @@ package com.ket.android
 import com.ket.android.invite.InviteException
 import com.ket.android.invite.InviteFailure
 import com.ket.android.invite.InviteReader
-import com.ket.android.invite.KotlinInviteReader
+import com.ket.android.invite.RustInviteReader
 
 /** The app's invite verifier, restricted to locators the control client may reach. */
-internal val appInviteReader: InviteReader = KotlinInviteReader { baseUrl ->
+internal val appInviteReader: InviteReader = RustInviteReader { baseUrl ->
     runCatching { KetControlApi.normalizeBaseUrl(baseUrl) }.isSuccess
 }
 

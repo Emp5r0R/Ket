@@ -150,11 +150,11 @@ valid replacement. Possession of an invite grants the access code it contains.
   loopback locators, and node-authenticated enrollment). Server issuance is in
   `crates/ket-server/src/invite.rs`, desktop enrollment in
   `crates/ket-client-core/src/invite.rs`.
-- Android: `apps/ket-android/app/src/main/java/com/ket/android/invite/`, a direct port
-  that runs the same checks in the same order. Android 8 (API 26) has no platform
-  Ed25519, so verification uses Google Tink's `Ed25519Verify`. Known difference: a
-  node key that is 32 nonzero bytes but not a valid curve point is reported as
-  `invalid_node_key` by Rust and `invalid_invite_signature` by Android; both reject it.
+- Android: the same Rust code over JNI. `crates/ket-invite-android` builds
+  `libket_invite_jni.so` for every ABI; the app reads invites, validates stored node
+  keys, and checks enrollment signatures only through it
+  (`apps/ket-android/app/src/main/java/com/ket/android/invite/NativeInvites.kt`), so
+  Android reports exactly the Rust error codes. There is no Kotlin port and no Tink.
 
 ## Client experience
 
@@ -175,5 +175,5 @@ valid replacement. Possession of an invite grants the access code it contains.
 
 Fixed, non-production vectors live in
 `crates/ket-invite/tests/vectors/invite-v1.json`. The Rust crate regenerates
-them in its tests and fails on drift; the Android JVM tests parse the same
-file.
+them in its tests and fails on drift; the Android JVM tests replay the same
+file through the JNI library built for the build machine.

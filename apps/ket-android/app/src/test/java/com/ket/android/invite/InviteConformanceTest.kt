@@ -8,8 +8,12 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Base64
 
-/** Runs the shared Rust-generated vectors (`crates/ket-invite/tests/vectors/invite-v1.json`). */
+/**
+ * Runs the shared Rust-generated vectors (`crates/ket-invite/tests/vectors/invite-v1.json`) through
+ * the app's JNI bridge to the Rust implementation.
+ */
 class InviteConformanceTest {
     private val vectors: JSONObject = javaClass.classLoader!!
         .getResourceAsStream("invite-v1.json")!!
@@ -22,38 +26,18 @@ class InviteConformanceTest {
         for (case in cases) {
             val name = case.getString("name")
             val now = case.getLong("decode_at_epoch_seconds")
-            val fromText = InviteCapsule.decodeText(case.getString("text"), now)
-            val fromBinary = InviteCapsule.decodeBinary(hex(case.getString("binary_hex")), now)
-            for (capsule in listOf(fromText, fromBinary)) {
-                assertEquals(name, case.getString("node_public_key_hex"), hex(capsule.nodePublicKey.encoded))
-                assertEquals(name, case.getString("node_fingerprint"), capsule.nodePublicKey.fingerprint)
-                assertEquals(name, case.getString("access_code"), capsule.accessCode)
-                assertEquals(name, case.getInt("control_api_min"), capsule.controlApiMin)
-                assertEquals(name, case.getInt("control_api_max"), capsule.controlApiMax)
-                assertTrue(name, capsule.supportsControlApi(CONTROL_API_VERSION))
-                val expiry = case.opt("access_expires_at_epoch_seconds").takeUnless { it == JSONObject.NULL }
-                assertEquals(name, (expiry as Number?)?.toLong(), capsule.accessExpiresAtEpochSeconds)
-                val expectedLocators = case.getJSONArray("locators").objects()
-                assertEquals(name, expectedLocators.size, capsule.locators.size)
-                expectedLocators.zip(capsule.locators).forEach { (expected, actual) ->
-                    assertEquals(name, expected.getString("base_url"), actual.baseUrl)
-                    assertEquals(name, expected.getInt("port"), actual.port)
-                    when (actual) {
-                        is ControlLocator.Https -> {
-                            assertEquals(name, "https", expected.getString("type"))
-                            assertEquals(name, expected.getString("host"), actual.host)
-                        }
-                        is ControlLocator.LoopbackDevelopment -> {
-                            assertEquals(name, "loopback_development", expected.getString("type"))
-                            assertEquals(name, expected.getString("host"), actual.host.address)
-                        }
-                    }
-                }
-                assertFalse(name, capsule.toString().contains(capsule.accessCode))
-            }
-            assertEquals(name, fromText.toString(), fromBinary.toString())
             val bare = case.getString("text").removePrefix(INVITE_TEXT_PREFIX)
-            assertEquals(name, fromText.toString(), InviteCapsule.decodeText(bare, now).toString())
+            for (text in listOf(case.getString("text"), bare)) {
+                val invite = NativeInvite.read(text, now)
+                assertEquals(name, base64Url(hex(case.getString("node_public_key_hex"))), invite.nodeKey.base64Url)
+                assertEquals(name, case.getString("node_fingerprint"), invite.nodeKey.fingerprint)
+                assertEquals(name, case.getString("access_code"), invite.accessCode)
+                val expiry = case.opt("access_expires_at_epoch_seconds").takeUnless { it == JSONObject.NULL }
+                assertEquals(name, (expiry as Number?)?.toLong(), invite.accessExpiresAtEpochSeconds)
+                val expectedOrigins = case.getJSONArray("locators").objects().map { it.getString("base_url").trimEnd('/') }
+                assertEquals(name, expectedOrigins, invite.origins)
+                assertFalse(name, invite.toString().contains(invite.accessCode))
+            }
         }
     }
 
@@ -64,7 +48,8 @@ class InviteConformanceTest {
         for (case in cases) {
             val now = case.opt("now_epoch_seconds").takeUnless { it == JSONObject.NULL } as Number?
             val error = assertThrows(case.getString("name"), InviteException::class.java) {
-                InviteCapsule.decodeText(case.getString("text"), now?.toLong())
+                // Rust requires a clock; the vectors without one are rejected for other reasons.
+                NativeInvite.read(case.getString("text"), now?.toLong() ?: 0)
             }
             assertEquals(case.getString("name"), case.getString("error"), error.failure.code)
             assertFalse(case.getString("name"), error.message.orEmpty().contains(case.getString("text")))
@@ -110,39 +95,28 @@ class InviteConformanceTest {
     }
 
     @Test
-    fun `canonical CBOR rejects non-shortest and unsupported encodings`() {
-        val rejected = listOf(
-            byteArrayOf(0x18, 0x17),
-            byteArrayOf(0x19, 0x00, 0xff.toByte()),
-            byteArrayOf(0x1a, 0x00, 0x00, 0xff.toByte(), 0xff.toByte()),
-            byteArrayOf(0x1c),
-            byteArrayOf(0x1f),
-            byteArrayOf(0x20),
-            byteArrayOf(0x19, 0x01),
-        )
-        for (input in rejected) {
-            assertThrows(hex(input), InviteException::class.java) { CborDecoder(input).uint() }
+    fun `stored node keys are validated by the reference implementation`() {
+        val enrollment = vectors.getJSONObject("enrollment")
+        val key = NodePublicKey.fromBytes(hex(enrollment.getString("node_public_key_hex")))
+        assertEquals(key, NodePublicKey.fromBase64Url(key.base64Url))
+        assertEquals("NodePublicKey(${key.fingerprint})", key.toString())
+        for (invalid in listOf("${key.base64Url}=", key.base64Url.drop(1), base64Url(ByteArray(32)), "bad key", "")) {
+            val error = assertThrows(invalid, InviteException::class.java) { NodePublicKey.fromBase64Url(invalid) }
+            assertEquals(invalid, InviteFailure.InvalidNodeKey, error.failure)
         }
-        val maximum = CborEncoder().apply { uint(ULong.MAX_VALUE) }.toByteArray()
-        assertEquals(ULong.MAX_VALUE, CborDecoder(maximum).uint())
-        assertThrows(InviteException::class.java) { CborDecoder(byteArrayOf(0x62, 0xc3.toByte(), 0x28)).text(8) }
     }
 
     @Test
-    fun `public DNS names follow the reference locator rules`() {
-        val accepted = listOf("ket.example.com", "ket-1-2-3-4.sslip.io", "a.b.co")
-        val rejected = listOf(
-            "Ket.example.com", "ket.example.com.", "-ket.example.com", "ket..example.com", "10.0.0.1",
-            "single", "printer.local", "router.home.arpa", "node.test", "svc.internal", "x.onion",
-            "${"a".repeat(64)}.com",
-        )
-        accepted.forEach { assertTrue(it, ControlLocator.isPublicDnsName(it)) }
-        rejected.forEach { assertFalse(it, ControlLocator.isPublicDnsName(it)) }
+    fun `every reference error code maps to its own failure`() {
+        for (failure in InviteFailure.entries) {
+            assertEquals(failure, InviteFailure.fromCode(failure.code))
+        }
+        assertEquals(InviteFailure.Invalid, InviteFailure.fromCode("invalid_invite_checksum"))
     }
 
     private fun JSONArray.objects(): List<JSONObject> = List(length()) { getJSONObject(it) }
 
     private fun hex(value: String): ByteArray = value.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
-    private fun hex(value: ByteArray): String = value.joinToString("") { "%02x".format(it) }
+    private fun base64Url(value: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(value)
 }

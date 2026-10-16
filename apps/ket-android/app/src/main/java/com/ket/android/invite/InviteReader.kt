@@ -13,8 +13,8 @@ class InviteTarget(
 }
 
 /**
- * The app's only entry point for reading invites. It isolates the verifier so the planned
- * shared Rust implementation (JNI) can replace [KotlinInviteReader] without UI changes.
+ * The app's only entry point for reading invites. Implementations must verify the invite before
+ * returning anything from it.
  */
 fun interface InviteReader {
     /** Verifies [text] at [nowEpochSeconds]; throws [InviteException] on any rejection. */
@@ -22,17 +22,13 @@ fun interface InviteReader {
 }
 
 /**
- * Kotlin verifier backed by [InviteCapsule]. [acceptsBaseUrl] decides which locators this client
- * may use (the control client's URL policy); the first acceptable one wins.
+ * Reads invites with the shared Rust implementation. [acceptsBaseUrl] decides which locators this
+ * client may use (the control client's URL policy); the first acceptable one wins.
  */
-class KotlinInviteReader(private val acceptsBaseUrl: (String) -> Boolean) : InviteReader {
+class RustInviteReader(private val acceptsBaseUrl: (String) -> Boolean) : InviteReader {
     override fun read(text: String, nowEpochSeconds: Long): InviteTarget {
-        val capsule = InviteCapsule.decodeText(text.trim(), nowEpochSeconds)
-        ensure(capsule.supportsControlApi(CONTROL_API_VERSION), InviteFailure.UnsupportedVersion)
-        val baseUrl = capsule.locators
-            .map { it.baseUrl.trimEnd('/') }
-            .firstOrNull(acceptsBaseUrl)
-            ?: fail(InviteFailure.UnsupportedLocator)
-        return InviteTarget(baseUrl, capsule.accessCode, capsule.nodePublicKey, capsule.accessExpiresAtEpochSeconds)
+        val invite = NativeInvite.read(text.trim(), nowEpochSeconds)
+        val baseUrl = invite.origins.firstOrNull(acceptsBaseUrl) ?: fail(InviteFailure.UnsupportedLocator)
+        return InviteTarget(baseUrl, invite.accessCode, invite.nodeKey, invite.accessExpiresAtEpochSeconds)
     }
 }

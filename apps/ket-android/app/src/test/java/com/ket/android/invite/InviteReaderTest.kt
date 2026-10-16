@@ -39,7 +39,7 @@ class InviteReaderTest {
     fun `readers reject unreachable, expired, and malformed invites with safe messages`() {
         val case = valid("single_https")
         val unreachable = assertThrows(InviteException::class.java) {
-            KotlinInviteReader { false }.read(case.getString("text"), 1)
+            RustInviteReader { false }.read(case.getString("text"), 1)
         }
         assertEquals(InviteFailure.UnsupportedLocator, unreachable.failure)
 

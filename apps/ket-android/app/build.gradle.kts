@@ -72,7 +72,10 @@ android { namespace = "com.ket.android"; compileSdk = 36
     }
     externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
     sourceSets {
-        named("main") { jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-engines/jniLibs")) }
+        named("main") {
+            jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-engines/jniLibs"))
+            jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-invite/jniLibs"))
+        }
         named("test") {
             resources.srcDir("src/main/res/raw")
             // Invite conformance vectors are owned by the Rust reference implementation.
@@ -106,12 +109,53 @@ val prepareAndroidEngines by tasks.registering(Exec::class) {
     )
     outputs.dir(layout.buildDirectory.dir("generated/ket-engines"))
 }
+// Invites are read by the shared Rust implementation (crates/ket-invite-android), built here
+// for every ABI and, for the JVM unit tests, for the build machine.
+val repositoryRoot = rootProject.layout.projectDirectory.dir("../..")
+val inviteLibrarySources = listOf(
+    repositoryRoot.file("Cargo.lock"),
+    repositoryRoot.file("Cargo.toml"),
+    repositoryRoot.file("packaging/build-android-invite.sh"),
+    repositoryRoot.dir("crates/invite-capsule"),
+    repositoryRoot.dir("crates/ket-invite"),
+    repositoryRoot.dir("crates/ket-invite-android"),
+)
+val buildInviteLibraries by tasks.registering(Exec::class) {
+    val output = layout.buildDirectory.dir("generated/ket-invite")
+    inputs.files(inviteLibrarySources)
+    outputs.dir(output)
+    doFirst {
+        commandLine(
+            repositoryRoot.file("packaging/build-android-invite.sh").asFile.absolutePath,
+            "android",
+            android.ndkDirectory.absolutePath,
+            output.get().asFile.absolutePath,
+        )
+    }
+}
+val buildHostInviteLibrary by tasks.registering(Exec::class) {
+    val output = layout.buildDirectory.dir("generated/ket-invite-host")
+    inputs.files(inviteLibrarySources)
+    outputs.dir(output)
+    commandLine(
+        repositoryRoot.file("packaging/build-android-invite.sh").asFile.absolutePath,
+        "host",
+        output.get().asFile.absolutePath,
+    )
+}
+tasks.withType<Test>().configureEach {
+    dependsOn(buildHostInviteLibrary)
+    systemProperty("java.library.path", layout.buildDirectory.dir("generated/ket-invite-host").get().asFile.absolutePath)
+}
 tasks.configureEach {
     if (
         name.startsWith("configureNdkBuild") ||
         name.startsWith("merge") && (name.endsWith("NativeLibs") || name.endsWith("JniLibFolders"))
     ) {
         dependsOn(prepareAndroidEngines)
+    }
+    if (name.startsWith("merge") && (name.endsWith("NativeLibs") || name.endsWith("JniLibFolders"))) {
+        dependsOn(buildInviteLibraries)
     }
 }
 tasks.withType<KotlinCompile>().configureEach { kotlinOptions.jvmTarget = "17" }
@@ -136,7 +180,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("com.google.crypto.tink:tink-android:1.23.0")
     // Invite QR scanning; same libraries and versions as Abyssal.
     implementation("com.google.zxing:core:3.5.4")
     implementation("androidx.camera:camera-camera2:1.4.2")

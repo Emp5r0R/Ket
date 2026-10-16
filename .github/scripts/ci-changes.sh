@@ -47,7 +47,7 @@ classify() {
     crates/ket-client-core/* | crates/ket-tunnel-service/*)
       enable rust desktop_native linux_package desktop_windows windows_package
       ;;
-    crates/ket-invite/* | crates/invite-capsule/*)
+    crates/ket-invite/* | crates/invite-capsule/* | crates/ket-invite-android/*)
       # Android verifies invites with these crates and replays their vectors.
       enable rust desktop_native linux_package desktop_windows windows_package container android
       ;;
@@ -69,7 +69,7 @@ classify() {
     apps/ket-android/*)
       enable android
       ;;
-    packaging/build-android.sh | packaging/prepare-android-engines.sh)
+    packaging/build-android.sh | packaging/prepare-android-engines.sh | packaging/build-android-invite.sh)
       enable android
       ;;
     packaging/validate-android-apk.sh | packaging/test-validate-android-apk.sh)
