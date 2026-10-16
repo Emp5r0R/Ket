@@ -36,7 +36,9 @@ classify() {
       enable_all
       ;;
     Cargo.toml | Cargo.lock | rust-toolchain* | .cargo/*)
-      enable rust desktop_native linux_package desktop_windows windows_package container
+      # The workspace version is also the Android version, and Android links
+      # the invite crates through Cargo.
+      enable rust desktop_native linux_package desktop_windows windows_package container android
       ;;
     crates/ket-server/*)
       enable rust container

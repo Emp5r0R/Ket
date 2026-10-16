@@ -25,6 +25,8 @@ assert_selection() {
 }
 
 assert_selection 'server source' crates/ket-server/src/api.rs rust container
+assert_selection 'workspace manifest and version' Cargo.toml \
+  rust desktop_native linux_package desktop_windows windows_package container android
 assert_selection 'shared contract' crates/ket-core/src/contract.rs \
   rust desktop_native linux_package desktop_windows windows_package container
 assert_selection 'client core' crates/ket-client-core/src/client.rs \
