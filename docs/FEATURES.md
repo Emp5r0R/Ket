@@ -2,6 +2,11 @@
 
 Everything Ket implements today, and the qualification status of each transport. Setup instructions are in [SERVER_INSTALL.md](SERVER_INSTALL.md).
 
+## Since v1.1.0 (on `main`, not yet released)
+
+- Android split tunneling: choose all apps, only chosen apps, or all except chosen apps ([ANDROID.md](ANDROID.md#apps-that-use-ket)).
+- `ket doctor` flags a Cloudflare Tunnel that sends the Ket hostname past the edge to the control plane.
+
 ## v1.1.0
 
 - A probe-resistant HTTPS edge: only client session routes and exact secret transport paths are reachable, and scanners see one neutral page ([CONTROL_API.md](CONTROL_API.md#public-exposure)).

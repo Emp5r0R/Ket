@@ -7,6 +7,13 @@
     <!-- Optional: only used while the user scans an invite QR code. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Split tunneling lists apps that have a launcher entry; no broad package visibility. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
     <application
         android:theme="@style/Theme.Ket"
         android:label="Ket"

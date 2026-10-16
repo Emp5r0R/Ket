@@ -32,6 +32,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import com.ket.android.splittunnel.InstalledApps
+import com.ket.android.splittunnel.SplitTunnelRules
+import com.ket.android.splittunnel.SplitTunnelStore
+import com.ket.android.splittunnel.VpnAppRules
 
 /** Owns the Android TUN, maintained transport processes, and session lease lifecycle. */
 class KetVpnService : VpnService() {
@@ -323,6 +327,7 @@ class KetVpnService : VpnService() {
         // Do not call allowBypass(): apps must not bind around the active VPN.
         builder.addDnsServer(AndroidVpnDnsPolicy.server())
         addVpnRoutes(builder, bypassAddresses)
+        applySplitTunnel(builder)
         val established = builder.establish()
             ?: throw IllegalStateException("Android could not establish the VPN interface")
         vpnRoute.replace(established)
@@ -360,6 +365,7 @@ class KetVpnService : VpnService() {
             }
         request.dnsServers.forEach(builder::addDnsServer)
         addVpnRoutes(builder, bypassAddresses)
+        applySplitTunnel(builder)
         val established = builder.establish()
             ?: throw IllegalStateException("Android could not establish the OpenVPN interface")
         vpnRoute.replace(established)
@@ -845,6 +851,33 @@ class KetVpnService : VpnService() {
             it.writeText(document)
             Os.chmod(it.absolutePath, 0x180) // 0600
         }
+    }
+
+    /** Restricts the interface to the apps the user chose (Settings, "Apps that use Ket"). */
+    private fun applySplitTunnel(builder: Builder) {
+        val applied = SplitTunnelRules.apply(
+            policy = SplitTunnelStore(this).load(),
+            ownPackage = packageName,
+            isInstalled = { InstalledApps.isInstalled(this, it) },
+            rules = object : VpnAppRules {
+                // An app removed after the installed check is left out: it can
+                // no longer send traffic either way.
+                override fun allow(packageName: String) {
+                    runCatching { builder.addAllowedApplication(packageName) }
+                }
+
+                override fun disallow(packageName: String) {
+                    runCatching { builder.addDisallowedApplication(packageName) }
+                }
+            },
+        )
+        AndroidConnectionDiagnostics.record(
+            stage = "split_tunnel",
+            outcome = DiagnosticOutcome.Observed,
+            phase = TunnelPhase.Connecting,
+            code = applied.mode.wireName,
+            message = applied.fallbackReason ?: "${applied.appCount} app(s)",
+        )
     }
 
     private fun addVpnRoutes(builder: Builder, bypassAddresses: Collection<InetAddress>) {

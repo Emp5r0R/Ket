@@ -99,6 +99,9 @@ import androidx.compose.ui.unit.dp
 import com.ket.android.invite.InviteReader
 import com.ket.android.invite.NodePublicKey
 import kotlinx.coroutines.delay
+import com.ket.android.splittunnel.InstalledApp
+import com.ket.android.splittunnel.SplitTunnelPolicy
+import com.ket.android.splittunnel.SplitTunnelSection
 
 private val KetDarkInk = Color(0xFF101311)
 private val KetDarkLiberatedInk = Color(0xFF170F11)
@@ -293,6 +296,9 @@ internal fun KetApp(
     onAccessExpired: () -> Unit = {},
     themeMode: KetThemeMode = KetThemeMode.System,
     onThemeModeChange: (KetThemeMode) -> Unit = {},
+    splitTunnel: SplitTunnelPolicy = SplitTunnelPolicy.AllApps,
+    onSplitTunnelChange: (SplitTunnelPolicy) -> Unit = {},
+    loadInstalledApps: () -> List<InstalledApp> = { emptyList() },
     onForgetProfile: () -> Unit = {},
     diagnosticReport: String = "Ket Android connection diagnostics\nevents:\nnone\n",
     inviteReader: InviteReader = appInviteReader,
@@ -531,8 +537,14 @@ internal fun KetApp(
                             )
                         }
                         KetAppDestination.Settings -> {
-                            ViewHeading("Settings", "Appearance, saved access, and troubleshooting")
+                            ViewHeading("Settings", "Appearance, apps, saved access, and troubleshooting")
                             ThemeModeSelector(themeMode, onThemeModeChange)
+                            SplitTunnelSection(
+                                policy = splitTunnel,
+                                connected = snapshot.phase == TunnelPhase.Connected,
+                                onChange = onSplitTunnelChange,
+                                loadApps = loadInstalledApps,
+                            )
                             if (profileSaved) {
                                 SavedProfile(serverUrl, accessRemainingSeconds, forgetProfile)
                             }

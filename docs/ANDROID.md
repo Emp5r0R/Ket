@@ -24,6 +24,19 @@ The durable record also lives under `noBackupFilesDir` and is written through `A
 
 The Compose surface uses the same node contract as desktop. It exposes Automatic plus every implemented protocol, a short recommendation beside the selector, and a Learn More page covering purpose, operation, connection steps, and limits for each protocol. A valid encrypted profile is shown as a saved server and reused without asking for the code again; only its access expiry or the explicit **Forget** action removes it. The interface follows the system color scheme by default and provides persistent Light and Dark overrides while retaining Ket's red connected accent. It renders the bundled Natural Earth 1:110m topology as a neutral full-world view while disconnected, smoothly focuses on the active server region after end-to-end route verification, and returns to the full view during disconnect cleanup. Terminal connection failures open a copyable bounded diagnostic report covering enrollment, VPN permission, transport resolution/start, full-route verification, recovery, lease renewal, session release, credential cleanup, bridge, engine, and TUN cleanup. Codes, tokens, credentials, configurations, and raw process output never enter that report, and arbitrary messages receive a defensive redaction pass. The layout scrolls under constrained height while the primary connection control remains outside the scrolling content. The Natural Earth-derived asset and its redistribution notice are tracked with the Android source.
 
+## Apps that use Ket
+
+Settings, "Apps that use Ket", chooses between all apps (the default), only chosen apps, and all apps except chosen ones. The list shows apps with a launcher entry, through a manifest `<queries>` entry rather than broad package visibility. The choice is stored in ordinary app preferences and applied every time the VPN interface is built, including always-on starts after a reboot; changing it while connected takes effect on the next connection.
+
+`SplitTunnelRules` turns the choice into `VpnService.Builder` rules:
+
+- Android allows either an allow list or a deny list on one interface. Ket uses one or the other, never both.
+- Ket itself is always inside the VPN. In "only chosen apps" it is added to the allow list, and it is never put on the deny list, because its routed-Internet check and lease renewals must travel through the tunnel they verify.
+- Apps that are no longer installed are skipped. If none of the chosen apps is left, every app uses Ket, the protective default, and diagnostics record why.
+- `allowBypass()` stays off, so apps inside the VPN cannot bind around it.
+
+Apps outside the VPN reach the network directly, with no Ket protection and their own DNS. Under Android's "Block connections without VPN" (lockdown), apps outside the VPN have no network at all.
+
 ## Native supply chain
 
 `packaging/prepare-android-engines.sh` downloads checksum-pinned Hysteria 2.10 and OpenVPN for Android 0.7.64 executables/libraries for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`, Xray-core 26.3.27 and shadowsocks-rust 1.24.0 for `arm64-v8a` and `x86_64`, and wstunnel 10.6.2 for `arm64-v8a`. It also verifies and expands the complete hev-socks5-tunnel 2.14.0 source release. NDK r27d compiles hev and Ket's small API-26-compatible FD receiver for every ABI. The official Shadowsocks and wstunnel binaries target Android API 28; wstunnel is currently arm64-only. Unsupported devices retain ranked fallback rather than weakening a profile.
