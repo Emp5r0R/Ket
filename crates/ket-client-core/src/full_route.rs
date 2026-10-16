@@ -983,6 +983,14 @@ mod tests {
         let binary = PathBuf::from(
             std::env::var_os("KET_TEST_TUN2PROXY_BINARY").expect("KET_TEST_TUN2PROXY_BINARY"),
         );
+        // Relative paths are from the workspace root, as CI passes them.
+        let binary = if binary.is_absolute() {
+            binary
+        } else {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(binary)
+        };
         // Nothing listens on the proxy port: lookups are answered by the
         // bridge's virtual DNS, and nothing else needs to work.
         let proxy_port = reserve_proxy_port("leak-test").await.unwrap();
