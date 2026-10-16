@@ -46,6 +46,17 @@ For a production server, source `.env`, run `./packaging/validate-env.sh`, and v
 
 Container upgrades retain the v1 state volume. The loader accepts older v1 session records that predate scoped data-plane hashes, but those missing credentials remain fail closed until the client creates a current session. Unknown schema versions and structurally inconsistent or oversized state files stop startup instead of discarding grants or guessing a migration. Back up the `ket-state` volume before upgrading; never replace a rejected state file with an empty document as an automated recovery action.
 
+## Release candidate
+
+A release is tagged only after the exact commit has run on a real server. Stubs in the test suite cannot see real DNS, real ports, or a CDN or tunnel in front of the server; v1.1.0 needed three fixes right after its tag because it met a real server only then.
+
+1. Commit the release: version bump, `releases.json` entry, and docs. Push it and wait for Ket CI to pass.
+2. Run `scripts/release-preflight.sh local`. It checks that every version file agrees and the tag is free, that CI passed for this commit, the full test suite, the real installer (automatic address, an unresolvable domain), and the real bootstrap downloading this commit from GitHub.
+3. Deploy the candidate to the canary server by commit, with no tag yet: `sudo ket update --to <commit>`. A commit has no published image, so the canary builds it locally, which also exercises that fallback.
+4. Run `scripts/release-preflight.sh all <ssh-target> [--ssh-key FILE]`. On top of the local checks, it confirms the canary runs this commit, `ket doctor` passes, every operational endpoint answers 404 through the public name (so a CDN or tunnel cannot bypass the edge), and a fresh invite enrolls with the shipped client code, reports this version, and is revoked.
+5. Only when it prints `READY`, tag that same commit and build the signed assets from it. Any failure means a fix, a new candidate commit, and the steps again; never a fix after the tag.
+6. After publishing, run `sudo ket update` on the canary (it moves from the commit to the tag and pulls the published image) and rerun step 4.
+
 ## Update ratings
 
 Before tagging, add the release to `crates/ket-update/releases.json` with its app and server ratings ([UPDATES.md](UPDATES.md)). Servers refuse apps based on these ratings, and servers with automatic updates apply `security` and `critical` releases on their own, so a wrong rating reaches users within a day.
