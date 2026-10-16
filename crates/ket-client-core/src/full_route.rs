@@ -19,8 +19,19 @@ use tokio::{
 
 use crate::{
     ActiveTunnel, ClientError, TunnelStatus,
+    leak_guard::LeakGuard,
     system_dns::{SystemDnsLease, SystemDnsManager},
 };
+
+/// The name Ket gives the bridge's tunnel interface, so the leak guard and
+/// the system resolver can find it.
+#[cfg(windows)]
+pub(crate) const TUNNEL_INTERFACE: &str = "Ket";
+#[cfg(not(windows))]
+pub(crate) const TUNNEL_INTERFACE: &str = "ket0";
+
+/// How long the bridge may take to create its tunnel interface.
+const TUNNEL_INTERFACE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub(crate) struct FullRouteBridge {
@@ -76,6 +87,19 @@ impl FullRouteBridge {
                 false,
             )
         })?;
+        let servers = server_addresses
+            .iter()
+            .map(SocketAddr::ip)
+            .collect::<BTreeSet<IpAddr>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let leak_guard = LeakGuard::engage(&servers).map_err(|_| {
+            ClientError::transport(
+                transport_id,
+                "failed to block DNS outside the protected tunnel",
+                false,
+            )
+        })?;
         let mut child = Command::new(&self.binary_path)
             .args(arguments(socks_port, server_addresses))
             .stdin(Stdio::null())
@@ -102,6 +126,7 @@ impl FullRouteBridge {
             child,
             diagnostic: Some(tokio::spawn(collect_bridge_diagnostic(stderr))),
             dns_lease,
+            leak_guard: Some(leak_guard),
         })
     }
 }
@@ -110,6 +135,52 @@ pub(crate) struct FullRouteProcess {
     child: Child,
     diagnostic: Option<JoinHandle<Option<BridgeDiagnostic>>>,
     dns_lease: SystemDnsLease,
+    /// Released only after the bridge has stopped routing into the tunnel.
+    leak_guard: Option<LeakGuard>,
+}
+
+impl FullRouteProcess {
+    /// Once the bridge has created its tunnel interface, admits it to the
+    /// leak guard and routes the system resolver into it. `Ok(false)` while
+    /// it does not exist yet.
+    fn admit_tunnel(&mut self, transport_id: &str) -> Result<bool, ClientError> {
+        let guarded = match self.leak_guard.as_mut() {
+            Some(guard) => guard.admit_tunnel(TUNNEL_INTERFACE),
+            None => Ok(()),
+        };
+        match guarded.and_then(|()| self.dns_lease.route_tunnel(TUNNEL_INTERFACE)) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(_) => Err(ClientError::transport(
+                transport_id,
+                "failed to keep DNS inside the protected tunnel",
+                false,
+            )),
+        }
+    }
+}
+
+/// One settle-loop step for the bridge: fails if it exited or its tunnel
+/// interface cannot be protected; `Ok(true)` once the guard admits it.
+async fn bridge_settle_step(
+    bridge: &mut FullRouteProcess,
+    started: tokio::time::Instant,
+    transport_id: &str,
+) -> Result<bool, ClientError> {
+    if let Some(message) = bridge_exit_if_stopped(bridge, transport_id).await? {
+        return Err(ClientError::transport(transport_id, message, false));
+    }
+    if bridge.admit_tunnel(transport_id)? {
+        return Ok(true);
+    }
+    if started.elapsed() >= TUNNEL_INTERFACE_TIMEOUT {
+        return Err(ClientError::transport(
+            transport_id,
+            "the full-route bridge did not create its tunnel interface",
+            false,
+        ));
+    }
+    Ok(false)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -258,6 +329,8 @@ fn arguments(socks_port: u16, server_addresses: &[SocketAddr]) -> Vec<String> {
         "error".to_owned(),
         "--exit-on-fatal-error".to_owned(),
         "--ipv6-enabled".to_owned(),
+        "--tun".to_owned(),
+        TUNNEL_INTERFACE.to_owned(),
     ];
     let addresses = server_addresses
         .iter()
@@ -287,7 +360,8 @@ pub(crate) async fn wait_until_stable(
     settle_time: Duration,
     transport_id: &str,
 ) -> Result<(), ClientError> {
-    let deadline = tokio::time::Instant::now() + settle_time;
+    let started = tokio::time::Instant::now();
+    let deadline = started + settle_time;
     loop {
         if engine
             .try_wait()
@@ -306,10 +380,8 @@ pub(crate) async fn wait_until_stable(
                 true,
             ));
         }
-        if let Some(message) = bridge_exit_if_stopped(bridge, transport_id).await? {
-            return Err(ClientError::transport(transport_id, message, false));
-        }
-        if tokio::time::Instant::now() >= deadline {
+        let protected = bridge_settle_step(bridge, started, transport_id).await?;
+        if protected && tokio::time::Instant::now() >= deadline {
             return Ok(());
         }
         sleep(Duration::from_millis(100)).await;
@@ -325,7 +397,8 @@ pub(crate) async fn wait_until_three_stable(
     settle_time: Duration,
     transport_id: &str,
 ) -> Result<(), ClientError> {
-    let deadline = tokio::time::Instant::now() + settle_time;
+    let started = tokio::time::Instant::now();
+    let deadline = started + settle_time;
     loop {
         for (child, name) in [(&mut *engine, engine_name), (&mut *carrier, carrier_name)] {
             if child
@@ -346,10 +419,8 @@ pub(crate) async fn wait_until_three_stable(
                 ));
             }
         }
-        if let Some(message) = bridge_exit_if_stopped(bridge, transport_id).await? {
-            return Err(ClientError::transport(transport_id, message, false));
-        }
-        if tokio::time::Instant::now() >= deadline {
+        let protected = bridge_settle_step(bridge, started, transport_id).await?;
+        if protected && tokio::time::Instant::now() >= deadline {
             return Ok(());
         }
         sleep(Duration::from_millis(100)).await;
@@ -413,6 +484,7 @@ pub(crate) async fn stop_bridge(bridge: &mut FullRouteProcess) -> std::io::Resul
     // cancellation path unmount it before Ket restores the underlying file.
     stop_bridge_child(&mut bridge.child).await;
     let _ = take_bridge_diagnostic(bridge).await;
+    bridge.leak_guard = None;
     bridge.dns_lease.restore()
 }
 
@@ -769,6 +841,8 @@ mod tests {
                 "error",
                 "--exit-on-fatal-error",
                 "--ipv6-enabled",
+                "--tun",
+                TUNNEL_INTERFACE,
                 "--bypass",
                 "203.0.113.9",
                 "--bypass",
@@ -871,5 +945,77 @@ mod tests {
 
         assert_eq!(error.issue().code, "transport_failed");
         assert!(error.issue().message.contains("DNS restoration failed"));
+    }
+
+    /// Runs scripts/dns-leak-check.ps1; its exit status, or `None` while the
+    /// tunnel adapter is not up yet (status 2).
+    #[cfg(windows)]
+    fn windows_leak_check() -> Option<i32> {
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/dns-leak-check.ps1");
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(script)
+            .output()
+            .expect("run the Windows leak check");
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+        match output.status.code() {
+            Some(2) => None,
+            code => code,
+        }
+    }
+
+    #[cfg(windows)]
+    async fn windows_leak_check_once_up() -> i32 {
+        for _ in 0..60 {
+            if let Some(code) = windows_leak_check() {
+                return code;
+            }
+            sleep(Duration::from_millis(500)).await;
+        }
+        panic!("the tunnel adapter never came up");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore = "routes this computer into a tunnel; run by Windows CI with KET_TEST_TUN2PROXY_BINARY"]
+    async fn windows_bridge_keeps_lookups_inside_the_tunnel() {
+        let binary = PathBuf::from(
+            std::env::var_os("KET_TEST_TUN2PROXY_BINARY").expect("KET_TEST_TUN2PROXY_BINARY"),
+        );
+        // Nothing listens on the proxy port: lookups are answered by the
+        // bridge's virtual DNS, and nothing else needs to work.
+        let proxy_port = reserve_proxy_port("leak-test").await.unwrap();
+
+        // The bare bridge leaves every adapter's resolver reachable, which is
+        // what Windows' parallel lookups use.
+        let mut bare = Command::new(&binary)
+            .args(arguments(proxy_port, &[]))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let bare_result = windows_leak_check_once_up().await;
+        stop_child(&mut bare).await;
+        sleep(Duration::from_secs(2)).await;
+        assert_eq!(bare_result, 1, "the bare bridge was expected to leak");
+
+        // Ket's bridge engages the leak guard around the same tunnel.
+        let state = std::env::temp_dir().join(format!("ket-leak-test-{}", std::process::id()));
+        let mut bridge = FullRouteBridge::new(&binary, &state)
+            .start(proxy_port, &[], "leak-test")
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        while !bridge_settle_step(&mut bridge, started, "leak-test")
+            .await
+            .unwrap()
+        {
+            sleep(Duration::from_millis(100)).await;
+        }
+        let guarded_result = windows_leak_check_once_up().await;
+        stop_bridge(&mut bridge).await.unwrap();
+        assert_eq!(guarded_result, 0, "Ket's bridge leaked");
     }
 }

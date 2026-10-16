@@ -1,3 +1,14 @@
+//! Points the system resolver at a tunnel's DNS for the tunnel's lifetime.
+//!
+//! On Linux, where systemd-resolved owns `/etc/resolv.conf`, the tunnel link
+//! becomes resolved's resolver for every domain ([`resolved`]); otherwise
+//! `/etc/resolv.conf` is rewritten and restored, with the original saved so
+//! a crash is repaired on the next start. When resolved runs beside a plain
+//! `/etc/resolv.conf`, both are done, so the resolved API cannot leak either.
+
+#[cfg(target_os = "linux")]
+mod resolved;
+
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
@@ -9,14 +20,17 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const SYSTEM_RESOLVER_PATH: &str = "/etc/resolv.conf";
 const VIRTUAL_DNS_CONFIGURATION: &[u8] = b"nameserver 198.18.0.1\n";
+const VIRTUAL_DNS_RESOLVERS: &[&str] = &["198.18.0.1"];
 const OPENVPN_DNS_CONFIGURATION: &[u8] =
     b"nameserver 1.1.1.1\nnameserver 1.0.0.1\noptions timeout:2 attempts:2\n";
+const OPENVPN_DNS_RESOLVERS: &[&str] = &["1.1.1.1", "1.0.0.1"];
 const MAX_RESOLVER_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug)]
 pub(crate) struct SystemDnsManager {
     state_path: PathBuf,
     configuration: &'static [u8],
+    resolvers: &'static [&'static str],
 }
 
 impl SystemDnsManager {
@@ -24,6 +38,7 @@ impl SystemDnsManager {
         Self {
             state_path: state_path.into(),
             configuration: VIRTUAL_DNS_CONFIGURATION,
+            resolvers: VIRTUAL_DNS_RESOLVERS,
         }
     }
 
@@ -31,18 +46,31 @@ impl SystemDnsManager {
         Self {
             state_path: state_path.into(),
             configuration: OPENVPN_DNS_CONFIGURATION,
+            resolvers: OPENVPN_DNS_RESOLVERS,
         }
     }
 
+    /// Takes over the system resolver. Where systemd-resolved is in charge,
+    /// the takeover completes in [`SystemDnsLease::route_tunnel`] once the
+    /// tunnel interface exists.
     pub(crate) fn acquire(&self) -> io::Result<SystemDnsLease> {
         #[cfg(target_os = "linux")]
         {
             if unsafe { libc::geteuid() } == 0 {
-                return SystemDnsLease::acquire_at(
-                    Path::new(SYSTEM_RESOLVER_PATH),
-                    &self.state_path,
-                    self.configuration,
-                );
+                let resolver = Path::new(SYSTEM_RESOLVER_PATH);
+                let resolved = resolved::resolved_running();
+                let mut lease = if resolved && resolved::resolved_owns(resolver) {
+                    SystemDnsLease::inactive()
+                } else {
+                    SystemDnsLease::acquire_at(resolver, &self.state_path, self.configuration)?
+                };
+                if resolved {
+                    lease.resolved = Some(ResolvedRoute {
+                        resolvers: self.resolvers,
+                        link: None,
+                    });
+                }
+                return Ok(lease);
             }
         }
         Ok(SystemDnsLease::inactive())
@@ -54,6 +82,16 @@ pub(crate) struct SystemDnsLease {
     resolver_path: PathBuf,
     state_path: PathBuf,
     active: bool,
+    /// Set where systemd-resolved runs: the tunnel link still to configure.
+    #[cfg(target_os = "linux")]
+    resolved: Option<ResolvedRoute>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct ResolvedRoute {
+    resolvers: &'static [&'static str],
+    link: Option<resolved::ResolvedLink>,
 }
 
 impl SystemDnsLease {
@@ -62,7 +100,27 @@ impl SystemDnsLease {
             resolver_path: PathBuf::new(),
             state_path: PathBuf::new(),
             active: false,
+            #[cfg(target_os = "linux")]
+            resolved: None,
         }
+    }
+
+    /// Sends every lookup into the tunnel through `interface`, where
+    /// systemd-resolved runs; nothing to do elsewhere. Fails with `NotFound`
+    /// while the interface does not exist yet.
+    pub(crate) fn route_tunnel(&mut self, interface: &str) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        if let Some(route) = self.resolved.as_mut()
+            && route.link.is_none()
+        {
+            route.link = Some(resolved::ResolvedLink::route_all_lookups(
+                interface,
+                route.resolvers,
+            )?);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = interface;
+        Ok(())
     }
 
     fn acquire_at(
@@ -82,10 +140,16 @@ impl SystemDnsLease {
             resolver_path: resolver_path.to_owned(),
             state_path: state_path.to_owned(),
             active: true,
+            #[cfg(target_os = "linux")]
+            resolved: None,
         })
     }
 
     pub(crate) fn restore(&mut self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        if let Some(route) = self.resolved.as_mut() {
+            drop(route.link.take());
+        }
         if !self.active {
             return Ok(());
         }

@@ -22,6 +22,10 @@ class WireGuardTlsTransportTest {
         assertEquals("127.0.0.1:51821", peer.getString("endpoint"))
         assertEquals("0.0.0.0/0", peer.getJSONArray("allowedIPs").getString(0))
         assertEquals(25, peer.getInt("keepAlive"))
+        assertEquals("ForceIPv4", settings.getString("domainStrategy"))
+        val dns = config.getJSONObject("dns")
+        assertEquals(listOf("1.1.1.1", "1.0.0.1"), List(dns.getJSONArray("servers").length()) { dns.getJSONArray("servers").getString(it) })
+        assertEquals("UseIPv4", dns.getString("queryStrategy"))
         assertFalse(transport.toString().contains("AQEBAQ"))
     }
 

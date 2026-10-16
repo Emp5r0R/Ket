@@ -247,6 +247,12 @@ jobs:
         run: KET_TEST_XRAY_BINARY=apps/ket-desktop/src-tauri/binaries/xray.exe cargo test --locked -p ket-client-core wireguard::tests::pinned_xray_binary_accepts_wireguard_config_when_supplied
       - shell: bash
         run: KET_TEST_SHADOWSOCKS_LOCAL_BINARY=apps/ket-desktop/src-tauri/binaries/sslocal.exe cargo test --locked -p ket-client-core shadowsocks::tests::pinned_sslocal_accepts_rendered_config_when_supplied
+      - name: DNS and IPv6 leak guard on real Windows Filtering Platform
+        shell: bash
+        run: cargo test --locked -p ket-client-core leak_guard -- --include-ignored
+      - name: Real bridge leaks without the guard and not with it (scripts/dns-leak-check.ps1)
+        shell: bash
+        run: KET_TEST_TUN2PROXY_BINARY=apps/ket-desktop/src-tauri/binaries/tun2proxy.exe cargo test --locked -p ket-client-core full_route::tests::windows_bridge_keeps_lookups_inside_the_tunnel -- --include-ignored --nocapture
       - shell: bash
         run: ./packaging/validate-desktop-assets.sh windows
       - run: npm exec tauri build -- --bundles nsis --config src-tauri/tauri.nsis.conf.json

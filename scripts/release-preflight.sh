@@ -19,6 +19,8 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 readonly ROOT
 readonly REPOSITORY=Emp5r0R/Ket
+# shellcheck source=scripts/lib/canary.sh
+. "$ROOT/scripts/lib/canary.sh"
 # Paths the public name must never serve; each must answer 404 like any
 # unknown path.
 readonly PRIVATE_PATHS=(/metrics /readyz /healthz /v1/node/status /v1/admin/access-grants /internal/v1/openvpn/auth)
@@ -131,10 +133,6 @@ check_installer() {
 
 # --- the canary server --------------------------------------------------------------
 
-canary() {
-  ssh -o BatchMode=yes -o ConnectTimeout=20 -o LogLevel=ERROR "${ssh_options[@]}" "$canary_target" "$@"
-}
-
 # masked_status CODE: true when an HTTP status is what any unknown path gets.
 masked_status() { [[ $1 == 404 ]]; }
 
@@ -155,7 +153,7 @@ check_canary_release() {
 check_canary_exposure() {
   step 'Public exposure (through the public name, as scanners see it)'
   local public_url path code
-  public_url=$(canary "sudo -n sed -n 's/^KET_PUBLIC_URL=//p' /opt/ket/.env | tail -n 1" | tr -d '"\r')
+  public_url=$(canary_public_url)
   [[ $public_url =~ ^https:// ]] || { problem "could not read the canary's KET_PUBLIC_URL"; return; }
   for path in "${PRIVATE_PATHS[@]}"; do
     code=$(curl -s -o /dev/null -m 20 -w '%{http_code}' "${public_url%/}$path" || true)
@@ -170,7 +168,7 @@ check_canary_enrollment() {
   step 'Invite and enrollment with the shipped client code'
   local label output id version result
   label="release preflight $(git -C "$ROOT" rev-parse --short HEAD)"
-  if ! output=$(canary sudo -n ket invite --label "$(printf '%q' "$label")" --devices 1 --minutes 30 --no-qr 2>&1); then
+  if ! output=$(canary_invite "$label" 1); then
     problem "ket invite failed on the canary: $output"
     return
   fi
@@ -186,8 +184,7 @@ check_canary_enrollment() {
   else
     problem "enrollment failed: $result"
   fi
-  id=$(canary sudo -n ket invites 2>/dev/null | awk -v label="$label" 'index($0, label) { print $1; exit }')
-  if [[ -n $id ]] && canary sudo -n ket revoke "$id" --yes >/dev/null 2>&1; then pass "the preflight invite $id is revoked"; else
+  if id=$(canary_revoke "$label"); then pass "the preflight invite $id is revoked"; else
     problem "could not revoke the preflight invite \"$label\"; revoke it with: sudo ket invites"
   fi
 }
@@ -201,7 +198,7 @@ main() {
   [[ -n $mode ]] || { usage >&2; exit 2; }
   shift
   canary_target=''
-  ssh_options=()
+  canary_ssh_options=()
   case $mode in
     local) ;;
     canary | all)
@@ -214,7 +211,7 @@ main() {
   esac
   while (($#)); do
     case $1 in
-      --ssh-key) [[ $# -ge 2 ]] || die '--ssh-key needs a file'; ssh_options+=(-i "$2" -o IdentitiesOnly=yes); shift 2 ;;
+      --ssh-key) [[ $# -ge 2 ]] || die '--ssh-key needs a file'; canary_ssh_options+=(-i "$2" -o IdentitiesOnly=yes); shift 2 ;;
       *) die "unknown option: $1" ;;
     esac
   done

@@ -364,6 +364,9 @@ fn validate_transport(transport: &SessionTransport) -> Result<(), ClientError> {
     )
 }
 
+/// Public resolvers Xray asks through the tunnel, as OpenVPN's tunnel DNS does.
+const WIREGUARD_RESOLVERS: [&str; 2] = ["1.1.1.1", "1.0.0.1"];
+
 fn render_xray_config(
     transport: &SessionTransport,
     wireguard_port: u16,
@@ -373,6 +376,13 @@ fn render_xray_config(
     let credential = transport.credential.as_ref().expect("validated credential");
     let document = json!({
         "log": { "loglevel": "warning" },
+        // The bridge hands Xray hostnames. Xray resolves them through these
+        // resolvers over the WireGuard tunnel itself; the system resolver would
+        // answer with the bridge's virtual addresses, which no server routes.
+        "dns": {
+            "servers": WIREGUARD_RESOLVERS,
+            "queryStrategy": "UseIPv4"
+        },
         "inbounds": [{
             "tag": "ket-socks",
             "listen": "127.0.0.1",
@@ -393,7 +403,7 @@ fn render_xray_config(
                 "address": [format!("{}/32", option(transport, "client_address")?)],
                 "noKernelTun": true,
                 "mtu": 1280,
-                "domainStrategy": "ForceIP",
+                "domainStrategy": "ForceIPv4",
                 "peers": [{
                     "publicKey": required_secret(transport, "server_public_key")?,
                     "preSharedKey": required_secret(transport, "preshared_key")?,
@@ -584,6 +594,11 @@ mod tests {
         assert_eq!(settings["peers"][0]["endpoint"], "127.0.0.1:51821");
         assert_eq!(settings["peers"][0]["allowedIPs"][0], "0.0.0.0/0");
         assert_eq!(settings["noKernelTun"], true);
+        // Hostnames resolve through the tunnel, never the system resolver,
+        // and only to IPv4, the only family the peer carries.
+        assert_eq!(settings["domainStrategy"], "ForceIPv4");
+        assert_eq!(document["dns"]["servers"], json!(["1.1.1.1", "1.0.0.1"]));
+        assert_eq!(document["dns"]["queryStrategy"], "UseIPv4");
 
         let args = wstunnel_arguments(&transport, "203.0.113.9".parse().unwrap(), 51821).unwrap();
         assert!(

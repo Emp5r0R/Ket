@@ -23,5 +23,15 @@ zeroize.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_NetworkManagement_WindowsFilteringPlatform",
+  "Win32_Security",
+  "Win32_System_Rpc",
+] }
+
 [dev-dependencies]
 axum.workspace = true

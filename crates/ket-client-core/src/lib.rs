@@ -7,6 +7,7 @@ mod error;
 mod full_route;
 mod hysteria;
 mod invite;
+mod leak_guard;
 mod openvpn;
 mod route_health;
 mod runtime;

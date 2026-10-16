@@ -3,11 +3,23 @@ package com.ket.android
 import org.json.JSONObject
 
 internal object EngineConfig {
+    /** Public resolvers Xray asks through the WireGuard tunnel. */
+    private val WIREGUARD_RESOLVERS = listOf("1.1.1.1", "1.0.0.1")
+
     fun wireGuard(transport: WireGuardTlsTransport, wireGuardPort: Int, socksPort: Int): String {
         require(wireGuardPort in 1..65535) { "WireGuard port is invalid" }
         require(socksPort in 1..65535) { "SOCKS port is invalid" }
         return JSONObject()
             .put("log", JSONObject().put("loglevel", "warning"))
+            // hev hands Xray hostnames. Xray resolves them through these resolvers
+            // over the WireGuard tunnel itself; the system resolver would answer
+            // with hev's mapped addresses, which no server routes.
+            .put(
+                "dns",
+                JSONObject()
+                    .put("servers", org.json.JSONArray(WIREGUARD_RESOLVERS))
+                    .put("queryStrategy", "UseIPv4"),
+            )
             .put(
                 "inbounds",
                 org.json.JSONArray().put(
@@ -39,7 +51,7 @@ internal object EngineConfig {
                                 .put("address", org.json.JSONArray(listOf("${transport.clientAddress}/32")))
                                 .put("noKernelTun", true)
                                 .put("mtu", 1280)
-                                .put("domainStrategy", "ForceIP")
+                                .put("domainStrategy", "ForceIPv4")
                                 .put(
                                     "peers",
                                     org.json.JSONArray().put(

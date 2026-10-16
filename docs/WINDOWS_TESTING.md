@@ -106,6 +106,10 @@ $TokenHash = (Get-FileHash -Algorithm SHA256 "$DataDir\tunnel.token").Hash
 5. Open multiple HTTPS sites, resolve a new hostname, and download a file large
    enough to observe bidirectional counters.
 6. Confirm the public IP changed from `$BeforeIp` to the Ket server egress IP.
+   While still connected, run
+   `powershell -ExecutionPolicy Bypass -File scripts\dns-leak-check.ps1` from a
+   checkout of this repository; it must print **No leak**
+   ([DNS_LEAKS.md](DNS_LEAKS.md)).
 7. Disconnect. The original public IP, DNS resolution, and normal routes must
    return without restarting Windows, and the map must return to its world view.
 8. Force one connection failure, open **Troubleshoot**, copy the report, and

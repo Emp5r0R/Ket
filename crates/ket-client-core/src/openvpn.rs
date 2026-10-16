@@ -217,7 +217,9 @@ impl TransportAdapter for OpenVpnStunnelAdapter {
             EphemeralConfig::create(&self.runtime_dir, "openvpn-client", openvpn_document)
                 .await
                 .map_err(|message| ClientError::transport(&transport.profile.id, message, false))?;
-        let dns_lease = match self.dns.acquire() {
+        // Windows relies on OpenVPN's block-outside-dns instead of routing.
+        #[cfg_attr(windows, allow(unused_mut))]
+        let mut dns_lease = match self.dns.acquire() {
             Ok(lease) => lease,
             Err(_) => {
                 stop_child(&mut carrier).await;
@@ -262,6 +264,16 @@ impl TransportAdapter for OpenVpnStunnelAdapter {
             stop_child(&mut engine).await;
             stop_child(&mut carrier).await;
             return Err(error);
+        }
+        #[cfg(not(windows))]
+        if dns_lease.route_tunnel(OPENVPN_INTERFACE).is_err() {
+            stop_child(&mut engine).await;
+            stop_child(&mut carrier).await;
+            return Err(ClientError::transport(
+                &transport.profile.id,
+                "failed to keep DNS inside the protected tunnel",
+                false,
+            ));
         }
         if let Err(error) = wait_until_pair_stable(
             &mut engine,
@@ -459,6 +471,15 @@ fn render_stunnel_config(
     .into_bytes())
 }
 
+/// OpenVPN's tunnel device. Linux names it, so the system resolver can be
+/// routed into it; Windows keeps OpenVPN's Wintun default.
+#[cfg(not(windows))]
+const OPENVPN_INTERFACE: &str = "ketvpn0";
+#[cfg(not(windows))]
+const OPENVPN_DEVICE: &str = "dev ketvpn0\ndev-type tun\n";
+#[cfg(windows)]
+const OPENVPN_DEVICE: &str = "dev tun\n";
+
 fn render_openvpn_config(
     transport: &SessionTransport,
     carrier_port: u16,
@@ -489,7 +510,7 @@ fn render_openvpn_config(
     let management_password_path =
         quote_openvpn_path(management_password_path, &transport.profile.id)?;
     let mut document = format!(
-        "client\ndev tun\nproto tcp-client\nremote 127.0.0.1 {carrier_port}\nnobind\nconnect-retry 2 5\nconnect-retry-max 3\nconnect-timeout 10\nresolv-retry 0\nremote-cert-tls server\nverify-x509-name {sni} name\ntls-version-min 1.2\ntls-cert-profile preferred\ndata-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\ndata-ciphers-fallback AES-256-GCM\nauth SHA256\nallow-compression no\nauth-retry none\nauth-nocache\npull-filter ignore \"redirect-gateway\"\nredirect-gateway local def1 bypass-dhcp\nblock-ipv6\npersist-key\npersist-tun\nmanagement 127.0.0.1 {management_port} {management_password_path}\nmanagement-log-cache 50\nverb 3\nmute 10\n"
+        "client\n{OPENVPN_DEVICE}proto tcp-client\nremote 127.0.0.1 {carrier_port}\nnobind\nconnect-retry 2 5\nconnect-retry-max 3\nconnect-timeout 10\nresolv-retry 0\nremote-cert-tls server\nverify-x509-name {sni} name\ntls-version-min 1.2\ntls-cert-profile preferred\ndata-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\ndata-ciphers-fallback AES-256-GCM\nauth SHA256\nallow-compression no\nauth-retry none\nauth-nocache\npull-filter ignore \"redirect-gateway\"\nredirect-gateway local def1 bypass-dhcp\nblock-ipv6\npersist-key\npersist-tun\nmanagement 127.0.0.1 {management_port} {management_password_path}\nmanagement-log-cache 50\nverb 3\nmute 10\n"
     );
     #[cfg(windows)]
     document.push_str("windows-driver wintun\nblock-outside-dns\n");
@@ -878,6 +899,11 @@ mod tests {
         ] {
             assert!(openvpn.contains(expected), "missing {expected}");
         }
+        // Linux names the device so the system resolver can be routed into it.
+        #[cfg(not(windows))]
+        assert!(openvpn.starts_with("client\ndev ketvpn0\ndev-type tun\n"));
+        #[cfg(windows)]
+        assert!(openvpn.starts_with("client\ndev tun\n"));
         assert!(!format!("{transport:?}").contains("AbCdEf123456ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"));
     }
 

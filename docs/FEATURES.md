@@ -6,6 +6,9 @@ Everything Ket implements today, and the qualification status of each transport.
 
 - Android split tunneling: choose all apps, only chosen apps, or all except chosen apps ([ANDROID.md](ANDROID.md#apps-that-use-ket)).
 - `ket doctor` flags a Cloudflare Tunnel that sends the Ket hostname past the edge to the control plane.
+- WireGuard TLS loads sites by name on desktop and Android. Before, it connected but resolved names to addresses the server could not route ([DNS_LEAKS.md](DNS_LEAKS.md#wireguard-name-resolution)).
+- Linux desktops with systemd-resolved (Ubuntu, Fedora) connect. Before, the sandboxed tunnel service could not write resolved's `/etc/resolv.conf`, so every protocol failed there ([DNS_LEAKS.md](DNS_LEAKS.md#what-ket-does)).
+- Desktop DNS leak guard: on Windows, filters block lookups on every other adapter (parallel multi-adapter lookups, link-local IPv6 resolvers) and IPv6 outside the tunnel. On Linux with systemd-resolved, the tunnel becomes the resolver for every domain. Leak checks for Linux, Windows, and the Android emulator, plus a Docker lab ([DNS_LEAKS.md](DNS_LEAKS.md)).
 
 ## v1.1.0
 

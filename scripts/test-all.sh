@@ -152,6 +152,7 @@ server_contracts() {
   run_step 'Release checksum and OpenPGP signing tests' "$ROOT/packaging/test-sign-release.sh"
   run_step 'Android APK split validator tests' "$ROOT/packaging/test-validate-android-apk.sh"
   run_step 'Release preflight decision tests' "$ROOT/scripts/test-release-preflight.sh"
+  run_step 'DNS leak check verdict tests' "$ROOT/scripts/test-dns-leak-check.sh"
   run_step 'CI change-classifier tests' "$ROOT/.github/scripts/test-ci-changes.sh"
   run_step 'CI Ubuntu dependency installer tests' \
     "$ROOT/.github/scripts/test-install-ubuntu-dependencies.sh"
