@@ -1,7 +1,7 @@
 //! Turns invite text into a pinned enrollment target.
 
 use ket_core::SecretString;
-use ket_invite::{CONTROL_API_VERSION, InviteError, decode_invite_text};
+use ket_invite::{CONTROL_API_VERSION, InviteError, decode_invite_text, node_fingerprint};
 
 use crate::{ClientError, ControlEndpoint};
 
@@ -21,20 +21,20 @@ impl InviteEnrollment {
         let invite = decode_invite_text(text.trim(), Some(now_epoch_seconds))
             .map_err(ClientError::Invite)?;
         let capsule = invite.capsule();
-        if !capsule.supports_control_api(CONTROL_API_VERSION) {
+        if !capsule.supports_protocol(CONTROL_API_VERSION) {
             return Err(ClientError::Invite(InviteError::UnsupportedVersion));
         }
         let endpoint = capsule
-            .locators
+            .locators()
             .iter()
             .find_map(|locator| ControlEndpoint::parse(&locator.base_url()).ok())
             .ok_or(ClientError::Invite(InviteError::UnsupportedLocator))?
-            .with_node_key(capsule.node_public_key);
+            .with_node_key(*capsule.node_public_key());
         Ok(Self {
             endpoint,
-            access_code: SecretString::new(capsule.access_code()),
-            access_expires_at_epoch_seconds: capsule.access_expires_at_epoch_seconds,
-            node_fingerprint: capsule.node_public_key.fingerprint(),
+            access_code: SecretString::new(capsule.capability().expose()),
+            access_expires_at_epoch_seconds: capsule.expires_at_epoch_seconds(),
+            node_fingerprint: node_fingerprint(capsule.node_public_key()),
         })
     }
 }
@@ -57,7 +57,7 @@ impl std::fmt::Debug for InviteEnrollment {
 #[cfg(test)]
 mod tests {
     use ket_invite::{
-        ControlLocator, InviteCapsuleV1, LoopbackHost, NodeSigningKey, SignedInviteCapsule,
+        ControlLocator, KetInvite, LoopbackHost, NodeSigningKey, SignedInviteCapsule,
         encode_invite_text,
     };
 
@@ -67,7 +67,7 @@ mod tests {
 
     fn invite_text(locators: Vec<ControlLocator>, expiry: Option<u64>) -> String {
         let key = NodeSigningKey::from_seed(&[0x66; 32]);
-        let capsule = InviteCapsuleV1::new(key.public_key(), locators, CODE, expiry).unwrap();
+        let capsule = KetInvite::capsule(key.public_key(), locators, CODE, expiry).unwrap();
         encode_invite_text(&SignedInviteCapsule::sign(capsule, &key).unwrap())
             .unwrap()
             .to_string()
@@ -92,7 +92,7 @@ mod tests {
         );
         let key = NodeSigningKey::from_seed(&[0x66; 32]).public_key();
         assert_eq!(enrollment.endpoint.node_key(), Some(&key));
-        assert_eq!(enrollment.node_fingerprint, key.fingerprint());
+        assert_eq!(enrollment.node_fingerprint, node_fingerprint(&key));
         assert!(!format!("{enrollment:?}").contains(CODE));
     }
 

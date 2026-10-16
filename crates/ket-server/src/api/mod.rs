@@ -1179,15 +1179,15 @@ mod tests {
         let invite =
             ket_invite::decode_invite_text(text.expose_secret(), None).expect("valid invite");
         assert_eq!(
-            invite.capsule().access_code(),
+            invite.capsule().capability().expose(),
             grant.access_code.expose_secret()
         );
         assert_eq!(
-            invite.capsule().access_expires_at_epoch_seconds,
+            invite.capsule().expires_at_epoch_seconds(),
             Some(grant.expires_at_epoch_seconds)
         );
         assert_eq!(
-            invite.capsule().locators[0].base_url(),
+            invite.capsule().locators()[0].base_url(),
             "https://ket.example.com/"
         );
         assert!(!format!("{grant:?}").contains(text.expose_secret()));
@@ -1210,7 +1210,7 @@ mod tests {
             )
             .expect("valid batch invite");
             assert_eq!(
-                invite.capsule().access_code(),
+                invite.capsule().capability().expose(),
                 grant.access_code.expose_secret()
             );
         }

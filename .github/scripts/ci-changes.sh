@@ -47,8 +47,8 @@ classify() {
     crates/ket-client-core/* | crates/ket-tunnel-service/*)
       enable rust desktop_native linux_package desktop_windows windows_package
       ;;
-    crates/ket-invite/*)
-      # The Android JVM tests replay this crate's conformance vectors.
+    crates/ket-invite/* | crates/invite-capsule/*)
+      # Android verifies invites with these crates and replays their vectors.
       enable rust desktop_native linux_package desktop_windows windows_package container android
       ;;
     crates/*)

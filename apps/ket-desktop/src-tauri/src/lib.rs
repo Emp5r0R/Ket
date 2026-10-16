@@ -462,11 +462,10 @@ mod command_contract_tests {
     #[test]
     fn invites_are_verified_locally_into_enrollment_details() {
         use ket_invite::{
-            ControlLocator, InviteCapsuleV1, NodeSigningKey, SignedInviteCapsule,
-            encode_invite_text,
+            ControlLocator, KetInvite, NodeSigningKey, SignedInviteCapsule, encode_invite_text,
         };
         let key = NodeSigningKey::from_seed(&[0x31; 32]);
-        let capsule = InviteCapsuleV1::new(
+        let capsule = KetInvite::capsule(
             key.public_key(),
             vec![ControlLocator::https("ket.example.com", 443).unwrap()],
             "Abcdefghijklmnopqrstuvwxyz012345",
@@ -480,7 +479,10 @@ mod command_contract_tests {
         assert_eq!(details.access_code, "Abcdefghijklmnopqrstuvwxyz012345");
         assert_eq!(details.access_expires_at_epoch_seconds, Some(2_000_000_000));
         assert_eq!(details.node_key, key.public_key().to_base64url());
-        assert_eq!(details.node_fingerprint, key.public_key().fingerprint());
+        assert_eq!(
+            details.node_fingerprint,
+            ket_invite::node_fingerprint(&key.public_key())
+        );
         let pinned =
             ControlEndpoint::parse_pinned(&details.server_url, Some(&details.node_key)).unwrap();
         assert_eq!(pinned.node_key(), Some(&key.public_key()));
@@ -502,13 +504,12 @@ mod command_contract_tests {
     fn invite_qr_images_are_decoded_and_verified_natively() {
         use image::{ColorType, ImageEncoder};
         use ket_invite::{
-            ControlLocator, InviteCapsuleV1, NodeSigningKey, SignedInviteCapsule,
-            encode_invite_text,
+            ControlLocator, KetInvite, NodeSigningKey, SignedInviteCapsule, encode_invite_text,
         };
         use qrcode::{Color, EcLevel, QrCode};
 
         let key = NodeSigningKey::from_seed(&[0x32; 32]);
-        let capsule = InviteCapsuleV1::new(
+        let capsule = KetInvite::capsule(
             key.public_key(),
             vec![ControlLocator::https("ket.example.com", 443).unwrap()],
             "Abcdefghijklmnopqrstuvwxyz012345",

@@ -1,7 +1,7 @@
 //! Minimal deterministic CBOR: unsigned integers, byte and text strings,
 //! arrays, and `null`, each in its shortest definite-length form.
 
-use crate::InviteError;
+use crate::CapsuleError;
 
 const MAJOR_UINT: u8 = 0;
 const MAJOR_BYTES: u8 = 2;
@@ -9,41 +9,45 @@ const MAJOR_TEXT: u8 = 3;
 const MAJOR_ARRAY: u8 = 4;
 const NULL: u8 = 0xf6;
 
-pub(crate) struct Decoder<'a> {
+/// Reads one canonical item at a time and rejects anything non-canonical.
+pub struct Decoder<'a> {
     input: &'a [u8],
     offset: usize,
 }
 
 impl<'a> Decoder<'a> {
-    pub(crate) fn new(input: &'a [u8]) -> Self {
+    pub fn new(input: &'a [u8]) -> Self {
         Self { input, offset: 0 }
     }
 
-    pub(crate) fn finish(self) -> Result<(), InviteError> {
+    /// Succeeds only when every input byte was consumed.
+    pub fn finish(self) -> Result<(), CapsuleError> {
         (self.offset == self.input.len())
             .then_some(())
-            .ok_or(InviteError::Invalid)
+            .ok_or(CapsuleError::Invalid)
     }
 
-    pub(crate) fn array(&mut self, expected: usize) -> Result<(), InviteError> {
+    /// Reads an array header of exactly `expected` items.
+    pub fn array(&mut self, expected: usize) -> Result<(), CapsuleError> {
         (self.array_len()? == expected)
             .then_some(())
-            .ok_or(InviteError::Invalid)
+            .ok_or(CapsuleError::Invalid)
     }
 
-    pub(crate) fn array_len(&mut self) -> Result<usize, InviteError> {
+    pub fn array_len(&mut self) -> Result<usize, CapsuleError> {
         self.length(MAJOR_ARRAY)
     }
 
-    pub(crate) fn uint(&mut self) -> Result<u64, InviteError> {
+    pub fn uint(&mut self) -> Result<u64, CapsuleError> {
         let byte = self.byte()?;
         if byte >> 5 != MAJOR_UINT {
-            return Err(InviteError::Invalid);
+            return Err(CapsuleError::Invalid);
         }
         self.argument(byte & 0x1f)
     }
 
-    pub(crate) fn optional_uint(&mut self) -> Result<Option<u64>, InviteError> {
+    /// Reads an unsigned integer or `null`.
+    pub fn optional_uint(&mut self) -> Result<Option<u64>, CapsuleError> {
         if self.input.get(self.offset) == Some(&NULL) {
             self.offset += 1;
             return Ok(None);
@@ -51,60 +55,63 @@ impl<'a> Decoder<'a> {
         self.uint().map(Some)
     }
 
-    pub(crate) fn bytes(&mut self, max: usize) -> Result<&'a [u8], InviteError> {
+    /// Reads a byte string of at most `max` bytes ([`CapsuleError::TooLarge`]
+    /// above that, [`CapsuleError::Invalid`] if truncated).
+    pub fn bytes(&mut self, max: usize) -> Result<&'a [u8], CapsuleError> {
         let length = self.length(MAJOR_BYTES)?;
         self.take(length, max)
     }
 
-    pub(crate) fn text(&mut self, max: usize) -> Result<&'a str, InviteError> {
+    /// Reads a UTF-8 text string of at most `max` bytes.
+    pub fn text(&mut self, max: usize) -> Result<&'a str, CapsuleError> {
         let length = self.length(MAJOR_TEXT)?;
-        std::str::from_utf8(self.take(length, max)?).map_err(|_| InviteError::Invalid)
+        std::str::from_utf8(self.take(length, max)?).map_err(|_| CapsuleError::Invalid)
     }
 
-    fn take(&mut self, length: usize, max: usize) -> Result<&'a [u8], InviteError> {
+    fn take(&mut self, length: usize, max: usize) -> Result<&'a [u8], CapsuleError> {
         if length > max {
-            return Err(InviteError::TooLarge);
+            return Err(CapsuleError::TooLarge);
         }
         let end = self
             .offset
             .checked_add(length)
             .filter(|end| *end <= self.input.len())
-            .ok_or(InviteError::Invalid)?;
+            .ok_or(CapsuleError::Invalid)?;
         let value = &self.input[self.offset..end];
         self.offset = end;
         Ok(value)
     }
 
-    fn length(&mut self, major: u8) -> Result<usize, InviteError> {
+    fn length(&mut self, major: u8) -> Result<usize, CapsuleError> {
         let byte = self.byte()?;
         if byte >> 5 != major {
-            return Err(InviteError::Invalid);
+            return Err(CapsuleError::Invalid);
         }
-        usize::try_from(self.argument(byte & 0x1f)?).map_err(|_| InviteError::TooLarge)
+        usize::try_from(self.argument(byte & 0x1f)?).map_err(|_| CapsuleError::TooLarge)
     }
 
     /// Decodes an argument and rejects any form longer than the shortest one.
-    fn argument(&mut self, additional: u8) -> Result<u64, InviteError> {
+    fn argument(&mut self, additional: u8) -> Result<u64, CapsuleError> {
         let (value, minimum) = match additional {
             value @ 0..=23 => return Ok(value.into()),
             24 => (u64::from(self.byte()?), 24),
             25 => (u64::from(u16::from_be_bytes(self.fixed()?)), 0x100),
             26 => (u64::from(u32::from_be_bytes(self.fixed()?)), 0x1_0000),
             27 => (u64::from_be_bytes(self.fixed()?), 0x1_0000_0000),
-            _ => return Err(InviteError::Invalid),
+            _ => return Err(CapsuleError::Invalid),
         };
         (value >= minimum)
             .then_some(value)
-            .ok_or(InviteError::Invalid)
+            .ok_or(CapsuleError::Invalid)
     }
 
-    fn byte(&mut self) -> Result<u8, InviteError> {
-        let value = *self.input.get(self.offset).ok_or(InviteError::Invalid)?;
+    fn byte(&mut self) -> Result<u8, CapsuleError> {
+        let value = *self.input.get(self.offset).ok_or(CapsuleError::Invalid)?;
         self.offset += 1;
         Ok(value)
     }
 
-    fn fixed<const N: usize>(&mut self) -> Result<[u8; N], InviteError> {
+    fn fixed<const N: usize>(&mut self) -> Result<[u8; N], CapsuleError> {
         let slice = self.take(N, N)?;
         let mut value = [0_u8; N];
         value.copy_from_slice(slice);
@@ -112,27 +119,27 @@ impl<'a> Decoder<'a> {
     }
 }
 
-pub(crate) fn encode_array(output: &mut Vec<u8>, length: usize) {
+pub fn encode_array(output: &mut Vec<u8>, length: usize) {
     encode_head(output, MAJOR_ARRAY, length as u64);
 }
 
-pub(crate) fn encode_uint(output: &mut Vec<u8>, value: u64) {
+pub fn encode_uint(output: &mut Vec<u8>, value: u64) {
     encode_head(output, MAJOR_UINT, value);
 }
 
-pub(crate) fn encode_optional_uint(output: &mut Vec<u8>, value: Option<u64>) {
+pub fn encode_optional_uint(output: &mut Vec<u8>, value: Option<u64>) {
     match value {
         Some(value) => encode_uint(output, value),
         None => output.push(NULL),
     }
 }
 
-pub(crate) fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
+pub fn encode_bytes(output: &mut Vec<u8>, value: &[u8]) {
     encode_head(output, MAJOR_BYTES, value.len() as u64);
     output.extend_from_slice(value);
 }
 
-pub(crate) fn encode_text(output: &mut Vec<u8>, value: &str) {
+pub fn encode_text(output: &mut Vec<u8>, value: &str) {
     encode_head(output, MAJOR_TEXT, value.len() as u64);
     output.extend_from_slice(value.as_bytes());
 }
@@ -214,18 +221,18 @@ mod tests {
         assert_eq!(decoder.bytes(3).unwrap(), &[1, 2, 3]);
         decoder.finish().unwrap();
 
-        assert_eq!(Decoder::new(&output).text(2), Err(InviteError::TooLarge));
-        assert_eq!(Decoder::new(&output).bytes(8), Err(InviteError::Invalid));
+        assert_eq!(Decoder::new(&output).text(2), Err(CapsuleError::TooLarge));
+        assert_eq!(Decoder::new(&output).bytes(8), Err(CapsuleError::Invalid));
         assert_eq!(
             Decoder::new(&[0x63, b'k']).text(8),
-            Err(InviteError::Invalid)
+            Err(CapsuleError::Invalid)
         );
         assert_eq!(
             Decoder::new(&[0x62, 0xc3, 0x28]).text(8),
-            Err(InviteError::Invalid)
+            Err(CapsuleError::Invalid)
         );
         let mut trailing = Decoder::new(&[0x01, 0x02]);
         trailing.uint().unwrap();
-        assert_eq!(trailing.finish(), Err(InviteError::Invalid));
+        assert_eq!(trailing.finish(), Err(CapsuleError::Invalid));
     }
 }

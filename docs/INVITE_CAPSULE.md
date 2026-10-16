@@ -140,9 +140,16 @@ valid replacement. Possession of an invite grants the access code it contains.
 
 ## Implementations
 
-- Rust reference: `crates/ket-invite` (server issuance in `crates/ket-server/src/invite.rs`,
-  desktop enrollment in `crates/ket-client-core/src/invite.rs`). Signatures use
-  `ed25519-dalek` with strict verification.
+- Shared format: `crates/invite-capsule` (MIT OR Apache-2.0), one implementation
+  used by Ket and Abyssal. It owns the canonical CBOR, payload, signature,
+  locators, and text forms; each application supplies a profile (application
+  ID, signature domain, capability, accepted locators, text prefix), so an
+  invite for one application is `wrong_application` in the other. Signatures
+  use `ed25519-dalek` with strict verification.
+- Ket profile: `crates/ket-invite` (the access-code capability, HTTPS and
+  loopback locators, and node-authenticated enrollment). Server issuance is in
+  `crates/ket-server/src/invite.rs`, desktop enrollment in
+  `crates/ket-client-core/src/invite.rs`.
 - Android: `apps/ket-android/app/src/main/java/com/ket/android/invite/`, a direct port
   that runs the same checks in the same order. Android 8 (API 26) has no platform
   Ed25519, so verification uses Google Tink's `Ed25519Verify`. Known difference: a

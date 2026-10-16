@@ -7,11 +7,8 @@ rust-version.workspace = true
 
 [dependencies]
 base64.workspace = true
-ed25519-dalek.workspace = true
+invite-capsule = { path = "../invite-capsule" }
 rand.workspace = true
-sha2.workspace = true
-thiserror.workspace = true
-url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

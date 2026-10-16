@@ -8,11 +8,13 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 
+use invite_capsule::cbor as codec;
+
 use crate::{
-    ControlLocator, EnrollmentNonce, EnrollmentProof, INVITE_TEXT_PREFIX, InviteCapsuleV1,
-    InviteError, LoopbackHost, NodeSigningKey, SignedInviteCapsule,
-    capsule::tests::{CODE, RawPayload, sign_raw_payload},
-    codec, decode_invite_text, encode_invite_text,
+    ControlLocator, EnrollmentNonce, EnrollmentProof, INVITE_TEXT_PREFIX, InviteError, KetInvite,
+    LoopbackHost, NodeSigningKey, SignedInviteCapsule, decode_invite_text, encode_invite_text,
+    node_fingerprint,
+    test_support::{CODE, RawPayload, sign_raw_payload},
 };
 
 const VECTOR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/invite-v1.json");
@@ -39,6 +41,7 @@ fn locator_json(locator: &ControlLocator) -> Value {
             "port": port,
             "base_url": locator.base_url(),
         }),
+        _ => unreachable!("Ket invites carry only HTTPS and loopback locators"),
     }
 }
 
@@ -48,8 +51,7 @@ fn valid_case(
     locators: Vec<ControlLocator>,
     expires_at: Option<u64>,
 ) -> Value {
-    let capsule =
-        InviteCapsuleV1::new(key.public_key(), locators.clone(), CODE, expires_at).unwrap();
+    let capsule = KetInvite::capsule(key.public_key(), locators.clone(), CODE, expires_at).unwrap();
     let invite = SignedInviteCapsule::sign(capsule, key).unwrap();
     let binary = invite.canonical_binary().unwrap();
     let text = encode_invite_text(&invite).unwrap();
@@ -60,7 +62,7 @@ fn valid_case(
         "binary_hex": hex(&binary),
         "decode_at_epoch_seconds": DECODE_AT,
         "node_public_key_hex": hex(key.public_key().as_bytes()),
-        "node_fingerprint": key.public_key().fingerprint(),
+        "node_fingerprint": node_fingerprint(&key.public_key()),
         "locators": locators.iter().map(locator_json).collect::<Vec<_>>(),
         "access_code": CODE,
         "control_api_min": 1,
@@ -299,7 +301,7 @@ fn generate() -> Value {
         ),
     ];
     let primary_binary =
-        InviteCapsuleV1::new(key.public_key(), vec![primary], CODE, Some(EXPIRES_AT))
+        KetInvite::capsule(key.public_key(), vec![primary], CODE, Some(EXPIRES_AT))
             .and_then(|capsule| SignedInviteCapsule::sign(capsule, &key))
             .and_then(|invite| invite.canonical_binary())
             .unwrap();

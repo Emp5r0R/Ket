@@ -45,7 +45,7 @@ valid_public_url() {
   fi
 }
 # Invites need a locator: an https:// public DNS name without a path, or loopback HTTP.
-# Mirrors ket-invite ControlLocator::from_public_url; the server re-checks at startup.
+# Mirrors KetInvite::locator_from_public_url; the server re-checks at startup.
 valid_invite_public_url() {
   local value=${KET_PUBLIC_URL:-http://127.0.0.1:8787} authority host port label
   local -a labels

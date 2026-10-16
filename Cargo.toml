@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/ket-desktop/src-tauri",
+    "crates/invite-capsule",
     "crates/ket-client-core",
     "crates/ket-core",
     "crates/ket-invite",

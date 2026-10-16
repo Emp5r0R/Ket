@@ -9,8 +9,8 @@ use std::env;
 use anyhow::{Context, Result, bail};
 use ket_core::SecretString;
 use ket_invite::{
-    ControlLocator, EnrollmentNonce, EnrollmentProof, InviteCapsuleV1, NodeSigningKey,
-    SignedInviteCapsule, encode_invite_text,
+    ControlLocator, EnrollmentNonce, EnrollmentProof, KetInvite, NodeSigningKey,
+    SignedInviteCapsule, encode_invite_text, node_fingerprint,
 };
 
 pub const NODE_SIGNING_KEY_ENV: &str = "KET_NODE_SIGNING_KEY";
@@ -38,7 +38,7 @@ impl InviteIssuer {
     }
 
     pub fn new(signing_key: NodeSigningKey, public_url: &str) -> Result<Self> {
-        let locator = match ControlLocator::from_public_url(public_url) {
+        let locator = match KetInvite::locator_from_public_url(public_url) {
             Ok(locator) => locator,
             Err(_) => bail!(
                 "{NODE_SIGNING_KEY_ENV} requires KET_PUBLIC_URL to be an https:// public DNS name \
@@ -52,7 +52,7 @@ impl InviteIssuer {
     }
 
     pub fn fingerprint(&self) -> String {
-        self.signing_key.public_key().fingerprint()
+        node_fingerprint(&self.signing_key.public_key())
     }
 
     /// Returns `ket:invite:...` for a newly created access grant.
@@ -61,7 +61,7 @@ impl InviteIssuer {
         access_code: &SecretString,
         expires_at_epoch_seconds: u64,
     ) -> Result<SecretString> {
-        let capsule = InviteCapsuleV1::new(
+        let capsule = KetInvite::capsule(
             self.signing_key.public_key(),
             vec![self.locator.clone()],
             access_code.expose_secret(),
@@ -114,10 +114,13 @@ mod tests {
             .unwrap();
         let invite = decode_invite_text(text.expose_secret(), Some(1_900_000_000)).unwrap();
         let capsule = invite.capsule();
-        assert_eq!(capsule.access_code(), CODE);
-        assert_eq!(capsule.access_expires_at_epoch_seconds, Some(2_000_000_000));
-        assert_eq!(capsule.locators[0].base_url(), "https://ket.example.com/");
-        assert_eq!(capsule.node_public_key.fingerprint(), issuer.fingerprint());
+        assert_eq!(capsule.capability().expose(), CODE);
+        assert_eq!(capsule.expires_at_epoch_seconds(), Some(2_000_000_000));
+        assert_eq!(capsule.locators()[0].base_url(), "https://ket.example.com/");
+        assert_eq!(
+            node_fingerprint(capsule.node_public_key()),
+            issuer.fingerprint()
+        );
     }
 
     #[test]
