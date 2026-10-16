@@ -177,7 +177,7 @@ if confirm 'Go?'; then fail_test 'only yes confirms'; fi
 has_terminal || fail_test 'the test terminal should be usable'
 if KET_TTY="$work/no-terminal" has_terminal; then fail_test 'a missing terminal was usable'; fi
 
-# --- invite wizard ---------------------------------------------------------------------
+# --- invites -------------------------------------------------------------------------
 install_dir="$work/invite-install"
 make_install "$install_dir" v1.1.0
 (
@@ -189,15 +189,99 @@ make_install "$install_dir" v1.1.0
     printf '%s' "$((index + 1))" > "$work/answer-index"
     sed -n "$((index + 1))p" "$work/answers"
   }
-  answers 'Family phones' 3 7
+  # The admin API, answering from fixtures and logging each call.
+  now=$(date +%s)
+  ends=$((now + 5 * 86400 + 3600))
+  offered_fixture='[{"protocol":"vless_xtls_reality","name":"reality","display_name":"VLESS + REALITY"},
+            {"protocol":"stealth","name":"stealth","display_name":"HTTPS Stealth"}]'
+  grant=$(jq -cn --argjson ends "$ends" --argjson created "$((now - 86400))" '{id: "Grant00001",
+    label: "Family", max_connections: 3, active_connections: 1, expires_at_epoch_seconds: $ends,
+    created_at_epoch_seconds: $created, paused: false, protocols: "all"}')
+  details=$(jq -c --argjson since "$((now - 600))" '. + {devices: [{session_id: "Session00001",
+    client_name: "Ket Android", connected_at_epoch_seconds: $since, session_expires_at_epoch_seconds: 0,
+    traffic: {available: true, bytes_sent: 1048576, bytes_received: 524288, online_connections: 1,
+    observed_at_epoch_seconds: 0}}]}' <<<"$grant")
+  admin_log="$work/admin.log"
+  : > "$admin_log"
+  admin_request() {
+    printf '%s %s %s\n' "$1" "$2" "${3:-}" >> "$admin_log"
+    case "$1 $2" in
+      'GET /v1/admin/protocols') printf '%s\n200' "$offered_fixture" ;;
+      'GET /v1/admin/access-grants') printf '[%s]\n200' "$grant" ;;
+      'GET /v1/admin/access-grants/Grant00001') printf '%s\n200' "$details" ;;
+      'PATCH /v1/admin/access-grants/Grant00001')
+        printf '{"grant":%s,"disconnected_devices":2}\n200' "$(jq -c --argjson change "$3" '. + $change' <<<"$grant")" ;;
+      *) printf '{"code":"not_found","message":"missing"}\n404' ;;
+    esac
+  }
+  last_change() { tail -n1 "$admin_log" | sed -n 's/^PATCH [^ ]* //p'; }
+  patches() { grep -c '^PATCH' "$admin_log" || true; }
+
+  answers 'Family phones' 3 7 all
   output=$(cmd_invite)
-  contains 'wizard runs create-invite with the answers' "$output" 'create-invite --label Family phones --devices 3 --days 7'
+  contains 'wizard runs create-invite with the answers' "$output" 'create-invite --label Family phones --devices 3 --days 7 --protocols all'
+  answers 'Phones' 1 30 'teleport' 'Stealth'
+  output=$(cmd_invite)
+  contains 'wizard re-asks for unknown protocols' "$output" '--protocols Stealth'
   answers 0 abc 9999
   if (ask_number 'Devices' 1 512 >/dev/null 2>&1); then fail_test 'invalid device counts were accepted'; fi
   answers 0 4
   equals 'number re-asked until valid' "$(ask_number 'Devices' 1 512)" 4
   output=$(cmd_invite --devices 2 --days 30)
   contains 'options skip the wizard' "$output" 'create-invite --devices 2 --days 30'
+
+  equals 'all protocols' "$(protocol_access_json ' ALL ' "$offered_fixture")" '"all"'
+  equals 'names, display names, and API names' \
+    "$(protocol_access_json 'reality, https-stealth vless_xtls_reality' "$offered_fixture")" '{"only":["stealth","vless_xtls_reality"]}'
+  if (protocol_access_json 'wireguard' "$offered_fixture" 2>/dev/null); then fail_test 'an unoffered protocol was accepted'; fi
+  equals 'limit printed by name' "$(protocol_names '{"only":["stealth","wire_guard"]}' "$offered_fixture")" 'stealth, wire_guard (not offered)'
+
+  output=$(cmd_invites)
+  contains 'list header' "$output" 'STATUS'
+  contains 'list row' "$output" 'Grant00001'
+  contains 'list status' "$output" 'active'
+  contains 'list use' "$output" '1/3'
+
+  output=$(cmd_invites show Grant00001)
+  contains 'show devices' "$output" 'Devices:    1 of 3 connected'
+  contains 'show end' "$output" '(in 5 days)'
+  contains 'show protocols' "$output" 'Protocols:  all'
+  contains 'show connected device' "$output" 'Ket Android'
+  contains 'show traffic' "$output" '1.5 MB'
+  if output=$(cmd_invites show Missing001 2>&1); then fail_test 'an unknown invite was shown'; fi
+  contains 'unknown invite explained' "$output" 'no invite with that ID'
+  if (cmd_invites show 'bad id!' 2>/dev/null); then fail_test 'an unsafe grant ID was accepted'; fi
+
+  output=$(cmd_invites pause Grant00001)
+  equals 'pause request' "$(last_change)" '{"paused":true}'
+  contains 'pause explained' "$output" 'sudo ket invites resume Grant00001'
+  contains 'disconnections reported' "$output" '2 connected device(s) were disconnected.'
+  cmd_invites resume Grant00001 >/dev/null
+  equals 'resume request' "$(last_change)" '{"paused":false}'
+
+  cmd_invites edit Grant00001 --extend 7d >/dev/null
+  equals 'extend from the current end' "$(last_change)" "{\"expires_at_epoch_seconds\":$((ends + 7 * 86400))}"
+  cmd_invites edit Grant00001 --shorten 36h >/dev/null
+  equals 'shorten from the current end' "$(last_change)" "{\"expires_at_epoch_seconds\":$((ends - 36 * 3600))}"
+  cmd_invites edit Grant00001 --protocols stealth --label 'Cousins' >/dev/null
+  equals 'protocols and label' "$(last_change)" '{"label":"Cousins","protocols":{"only":["stealth"]}}'
+  before=$(patches)
+  output=$(cmd_invites edit Grant00001 --label Family --devices 3 --protocols all)
+  contains 'unchanged values send nothing' "$output" 'Nothing changed.'
+  equals 'no request for no change' "$(patches)" "$before"
+  for invalid in '--shorten 6d' '--extend 7x' '--ends-in 0d' '--protocols wireguard' '--devices 0' '--bogus'; do
+    # shellcheck disable=SC2086 # deliberate word splitting of the option pair
+    if (cmd_invites edit Grant00001 $invalid >/dev/null 2>&1); then fail_test "edit accepted: $invalid"; fi
+  done
+  equals 'refused edits reach no server' "$(patches)" "$before"
+
+  answers 'Cousins' 2 '+3d' 'reality,stealth'
+  cmd_invites edit Grant00001 >/dev/null
+  equals 'interactive edit' "$(last_change)" \
+    "{\"label\":\"Cousins\",\"max_connections\":2,\"expires_at_epoch_seconds\":$((ends + 3 * 86400)),\"protocols\":{\"only\":[\"stealth\",\"vless_xtls_reality\"]}}"
+  answers Family 3 keep all
+  output=$(cmd_invites edit Grant00001)
+  contains 'interactive edit keeping everything' "$output" 'Nothing changed.'
 )
 if (cmd_revoke 'bad id!' 2>/dev/null); then fail_test 'an unsafe grant ID was accepted'; fi
 

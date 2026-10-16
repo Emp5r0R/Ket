@@ -10,6 +10,17 @@ afterEach(() => {
 });
 
 describe("Ket desktop shell", () => {
+  it("follows the access end the server reports for the saved invite", async () => {
+    const { changedAccessExpiry } = await import("./App");
+    const code = "A".repeat(32);
+
+    expect(changedAccessExpiry(3_000, code, 2_000)).toBe(3_000);
+    expect(changedAccessExpiry(1_500, code, 2_000)).toBe(1_500);
+    expect(changedAccessExpiry(2_000, code, 2_000)).toBeNull();
+    expect(changedAccessExpiry(null, code, 2_000)).toBeNull();
+    expect(changedAccessExpiry(3_000, "", null)).toBeNull();
+  });
+
   it("retries only temporary saved-profile failures", async () => {
     const {
       savedEnrollmentIsTerminal,
@@ -23,6 +34,13 @@ describe("Ket desktop shell", () => {
       message: "capacity reached",
       retryable: false,
     })).toBe(true);
+    const paused = {
+      code: "grant_paused",
+      message: "the server owner has paused this invite",
+      retryable: false,
+    };
+    expect(shouldRetrySavedEnrollment(paused)).toBe(true);
+    expect(savedEnrollmentIsTerminal(paused)).toBe(false);
     expect(shouldRetrySavedEnrollment({
       code: "network_unavailable",
       message: "offline",

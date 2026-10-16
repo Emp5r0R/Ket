@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use ket_core::is_supported_secret_hash;
+use ket_core::{ProtocolAccess, is_supported_secret_hash};
 use serde::{Deserialize, Serialize};
 
 const ACCESS_GRANT_ID_LENGTH: usize = 10;
@@ -51,6 +51,9 @@ impl PersistedState {
             }
             if grant.max_connections == 0 {
                 return Err("access grant connection limit is invalid");
+            }
+            if !grant.protocols.is_valid() {
+                return Err("access grant allows no protocol");
             }
             if grant
                 .expires_at_epoch_seconds
@@ -128,6 +131,16 @@ pub(crate) struct AccessGrantRecord {
     pub max_connections: u32,
     pub expires_at_epoch_seconds: Option<u64>,
     pub created_at_epoch_seconds: u64,
+    /// Both fields are left out while they hold their defaults, so grants
+    /// that use neither keep the state file format older servers read.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub paused: bool,
+    #[serde(default, skip_serializing_if = "ProtocolAccess::is_all")]
+    pub protocols: ProtocolAccess,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -171,6 +184,10 @@ mod tests {
         let mut state = valid_state();
         state.grants[0].expires_at_epoch_seconds = Some(100);
         assert_eq!(state.validate(), Err("access grant expiry is invalid"));
+
+        let mut state = valid_state();
+        state.grants[0].protocols = ProtocolAccess::Only(Default::default());
+        assert_eq!(state.validate(), Err("access grant allows no protocol"));
 
         let mut state = valid_state();
         state.sessions[0].id = "short".to_owned();
@@ -241,6 +258,8 @@ mod tests {
                 max_connections: 1,
                 expires_at_epoch_seconds: Some(300),
                 created_at_epoch_seconds: 100,
+                paused: false,
+                protocols: ProtocolAccess::All,
             }],
             sessions: vec![SessionRecord {
                 id: "Session00001".to_owned(),

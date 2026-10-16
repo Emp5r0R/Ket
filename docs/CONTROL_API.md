@@ -106,7 +106,10 @@ Admin endpoints are operational and reachable only on the host-loopback control 
 | `POST` | `/v1/admin/access-grants` | Create a grant and return its code once |
 | `GET` | `/v1/admin/access-grants` | List grants and active lease counts |
 | `POST` | `/v1/admin/access-grants/batch` | Create 1-100 grants in one authenticated request |
+| `GET` | `/v1/admin/access-grants/{id}` | One grant and the devices connected through it |
+| `PATCH` | `/v1/admin/access-grants/{id}` | Pause, resume, rename, change devices, change the end, or limit protocols |
 | `DELETE` | `/v1/admin/access-grants/{id}` | Revoke a grant and all of its sessions |
+| `GET` | `/v1/admin/protocols` | The protocols this server offers, with their short names |
 
 Create a grant:
 
@@ -119,6 +122,31 @@ Create a grant:
 ```
 
 `max_connections` must be at least `1` and cannot exceed the server's `KET_MAX_SESSIONS`; it limits concurrent sessions, not the number of clients that may save the code. `valid_for_minutes` is required and accepts `1` through `525600` minutes. The server derives one absolute expiry and returns it as `expires_at_epoch_seconds`; session manifests and status responses carry the same access expiry so clients can retain the profile and display its remaining time. The plaintext `access_code` is available only in the creation response. Store it in a password manager. When the node has `KET_NODE_SIGNING_KEY`, the response also contains `invite`: a signed `ket:invite:...` string carrying the same access code, its expiry, the control address, and the node key (see [INVITE_CAPSULE.md](INVITE_CAPSULE.md)). It is equally secret and also returned only once. Revocation removes its leases before the server asks each configured data plane to kick the corresponding client IDs.
+
+A grant may be limited to some of the server's protocols with `"protocols": {"only": ["stealth", "vless_xtls_reality"]}`; the default `"all"` also covers protocols the server enables later. Only protocols listed by `GET /v1/admin/protocols` are accepted, and the set may not be empty. Session manifests then carry only the allowed transports, and Hysteria 2 and OpenVPN authentication refuse the grant's scoped token on any other protocol. If the server later stops offering every protocol a grant allows, enrollment answers `409 grant_protocols_unavailable`.
+
+Grant summaries carry `paused` and `protocols`. Change a grant with `PATCH` and only the fields that change:
+
+```json
+{
+  "label": "Cousins",
+  "max_connections": 2,
+  "expires_at_epoch_seconds": 1795000000,
+  "paused": false,
+  "protocols": "all"
+}
+```
+
+The new end must be in the future and at most 365 days away; an empty or unknown field is `422`. The response is `{"grant": <summary>, "disconnected_devices": N}`. A change ends the sessions it no longer admits, and the server kicks them from the data planes:
+
+- pausing ends every session of the grant, and enrollment answers `423 grant_paused` until it is resumed;
+- changing the protocols ends every session, because each holds credentials for the old set;
+- a lower device limit ends the newest sessions above it;
+- a shorter lifetime ends none, but cuts each session to the new end.
+
+Apps treat `423` as temporary: they keep the saved invite and connect again once the grant is resumed. Apps follow the end in session responses, so devices that reach the server see a longer or shorter lifetime. The invite text keeps the end it was created with, so a new device cannot add an invite after that date even when the grant was extended.
+
+`GET /v1/admin/access-grants/{id}` returns the summary fields plus `devices`: each connected session's `session_id`, `client_name`, `connected_at_epoch_seconds`, `session_expires_at_epoch_seconds`, and `traffic`.
 
 ## Data-plane endpoint
 
@@ -143,4 +171,4 @@ Errors use a stable machine code and a user-safe message:
 }
 ```
 
-Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_capacity_reached`, `node_capacity_reached`, `server_busy`, `data_plane_unavailable`, `client_update_required` (`426`, with an `update` object), `not_found`, and `internal_error`. Secret verification uses a bounded worker pool and bounded admission queue. When that queue is full, the server returns `429 server_busy` with `Retry-After: 1` instead of accumulating unbounded Argon2 work; clients may retry after that delay.
+Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_paused` (`423`), `grant_capacity_reached`, `grant_protocols_unavailable` (`409`), `node_capacity_reached`, `server_busy`, `data_plane_unavailable`, `client_update_required` (`426`, with an `update` object), `not_found`, and `internal_error`. Secret verification uses a bounded worker pool and bounded admission queue. When that queue is full, the server returns `429 server_busy` with `Retry-After: 1` instead of accumulating unbounded Argon2 work; clients may retry after that delay.

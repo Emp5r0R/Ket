@@ -11,7 +11,7 @@ set -euo pipefail
 self=$(readlink -f -- "${BASH_SOURCE[0]}")
 source_dir=$(cd -- "$(dirname -- "$self")/../.." && pwd)
 install_dir=${KET_INSTALL_DIR:-$source_dir}
-for library in paths common releases image units backup update invites keys status doctor uninstall; do
+for library in paths common releases image units backup update protocols invites keys status doctor uninstall; do
   # shellcheck source=/dev/null
   . "$source_dir/packaging/server/cli/$library.sh"
 done
@@ -25,6 +25,10 @@ Usage: sudo ket COMMAND [options]
 Everyday:
   invite              Create an invite (asks who it is for, devices, days)
   invites             List invites and how many devices use each
+  invites show ID     See an invite and the devices connected through it
+  invites pause ID    Pause an invite (resume ID turns it back on)
+  invites edit ID     Rename, change devices, extend or shorten, or limit
+                      which protocols it may use
   revoke ID           Revoke an invite and disconnect its devices
   status              Version, services, connected devices, certificate
 

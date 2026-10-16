@@ -94,7 +94,7 @@ for status in 400 401 404 405 413 415 422; do
     exit 1
   }
 done
-for status in 403 409 429 500 502 503 504; do
+for status in 403 409 423 429 500 502 503 504; do
   if grep -Eq "(^| )$status( |$)" <<<"$masked"; then
     printf 'FAIL: client-visible status %s is masked\n' "$status" >&2
     exit 1

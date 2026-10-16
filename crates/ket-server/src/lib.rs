@@ -1,6 +1,7 @@
 pub mod api;
 pub mod config;
 mod data_plane;
+mod grant_admin;
 pub mod hysteria;
 pub mod invite;
 mod model;

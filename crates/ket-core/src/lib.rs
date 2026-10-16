@@ -1,11 +1,16 @@
 //! Shared, platform-neutral Ket contracts and security primitives.
 
 mod contract;
+mod grant;
 mod secret;
 mod secret_value;
 mod update;
 
 pub use contract::*;
+pub use grant::{
+    AccessGrantDetails, ConnectedDevice, OfferedProtocol, ProtocolAccess, UpdateAccessGrantRequest,
+    UpdateAccessGrantResponse,
+};
 pub use secret::{
     ACCESS_CODE_LENGTH, AccessCodeParts, SESSION_TOKEN_LENGTH, SecretError, SessionTokenParts,
     generate_access_code, generate_scoped_token, generate_session_token, hash_secret,

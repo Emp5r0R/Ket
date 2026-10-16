@@ -9,14 +9,16 @@ use std::{
 
 use ket_core::{
     AccessGrantSummary, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
-    CreateAccessGrantResponse, MAX_ACCESS_GRANT_VALIDITY_MINUTES, SecretString,
-    generate_access_code, generate_scoped_token, generate_session_token, hash_secret,
-    hash_token_secret, split_access_code, split_session_token, verify_secret, verify_token_secret,
+    CreateAccessGrantResponse, MAX_ACCESS_GRANT_VALIDITY_MINUTES, ProtocolAccess, SecretString,
+    UpdateAccessGrantRequest, generate_access_code, generate_scoped_token, generate_session_token,
+    hash_secret, hash_token_secret, split_access_code, split_session_token, verify_secret,
+    verify_token_secret,
 };
 use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
+    grant_admin,
     model::{AccessGrantRecord, PersistedState, SessionRecord},
     repository::{FileStateRepository, RepositoryError, StateRepository},
 };
@@ -36,6 +38,7 @@ pub struct CreatedSession {
     pub client_name: String,
     pub expires_at_epoch_seconds: u64,
     pub access_expires_at_epoch_seconds: Option<u64>,
+    pub protocols: ProtocolAccess,
 }
 
 impl std::fmt::Debug for CreatedSession {
@@ -53,6 +56,7 @@ impl std::fmt::Debug for CreatedSession {
                 "access_expires_at_epoch_seconds",
                 &self.access_expires_at_epoch_seconds,
             )
+            .field("protocols", &self.protocols)
             .finish()
     }
 }
@@ -64,6 +68,17 @@ pub struct SessionView {
     pub client_name: String,
     pub expires_at_epoch_seconds: u64,
     pub access_expires_at_epoch_seconds: Option<u64>,
+    /// The protocols the session's access grant allows.
+    pub protocols: ProtocolAccess,
+}
+
+/// A device connected through an access grant.
+#[derive(Clone, Debug)]
+pub struct GrantDevice {
+    pub allocation: SessionAllocation,
+    pub client_name: String,
+    pub connected_at_epoch_seconds: u64,
+    pub session_expires_at_epoch_seconds: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,6 +97,8 @@ pub enum ServiceError {
     GrantExpired,
     #[error("the access grant connection limit has been reached")]
     GrantCapacity,
+    #[error("the server owner has paused this invite")]
+    GrantPaused,
     #[error("the node session capacity has been reached")]
     NodeCapacity,
     #[error("secure secret processing is temporarily busy")]
@@ -161,6 +178,7 @@ impl AccessService {
                 "valid_for_minutes must be between 1 and {MAX_ACCESS_GRANT_VALIDITY_MINUTES}"
             )));
         }
+        validate_protocols(&request.protocols)?;
         let now = unix_time();
         let expires_at_epoch_seconds =
             now.saturating_add(u64::from(request.valid_for_minutes) * 60);
@@ -175,6 +193,8 @@ impl AccessService {
             max_connections: request.max_connections,
             expires_at_epoch_seconds: Some(expires_at_epoch_seconds),
             created_at_epoch_seconds: now,
+            paused: false,
+            protocols: request.protocols.clone(),
         };
 
         let mut state = self.state.lock().await;
@@ -194,6 +214,7 @@ impl AccessService {
             valid_for_minutes: request.valid_for_minutes,
             expires_at_epoch_seconds,
             created_at_epoch_seconds: now,
+            protocols: request.protocols,
             invite: None,
         })
     }
@@ -215,6 +236,7 @@ impl AccessService {
                     label: format!("{label_prefix}-{index}"),
                     max_connections: request.max_connections,
                     valid_for_minutes: request.valid_for_minutes,
+                    protocols: request.protocols.clone(),
                 })
                 .await?,
             );
@@ -228,21 +250,89 @@ impl AccessService {
         state
             .grants
             .iter()
-            .map(|grant| AccessGrantSummary {
-                id: grant.id.clone(),
-                label: grant.label.clone(),
-                max_connections: grant.max_connections,
-                active_connections: state
-                    .sessions
-                    .iter()
-                    .filter(|session| {
-                        session.grant_id == grant.id && session.expires_at_epoch_seconds > now
-                    })
-                    .count() as u32,
-                expires_at_epoch_seconds: grant.expires_at_epoch_seconds,
-                created_at_epoch_seconds: grant.created_at_epoch_seconds,
-            })
+            .map(|grant| grant_summary(&state, grant, now))
             .collect()
+    }
+
+    /// One grant and the devices connected through it, oldest first.
+    pub async fn grant_details(
+        &self,
+        id: &str,
+    ) -> Result<(AccessGrantSummary, Vec<GrantDevice>), ServiceError> {
+        let now = unix_time();
+        let state = self.state.lock().await;
+        let grant = state
+            .grants
+            .iter()
+            .find(|grant| grant.id == id)
+            .ok_or(ServiceError::NotFound)?;
+        let mut devices = state
+            .sessions
+            .iter()
+            .filter(|session| session.grant_id == id && session.expires_at_epoch_seconds > now)
+            .map(|session| {
+                Ok(GrantDevice {
+                    allocation: session_allocation(session)?,
+                    client_name: session.client_name.clone(),
+                    connected_at_epoch_seconds: session.issued_at_epoch_seconds,
+                    session_expires_at_epoch_seconds: session.expires_at_epoch_seconds,
+                })
+            })
+            .collect::<Result<Vec<_>, ServiceError>>()?;
+        devices.sort_by_key(|device| device.connected_at_epoch_seconds);
+        Ok((grant_summary(&state, grant, now), devices))
+    }
+
+    /// Changes a grant and returns it with the sessions the change ended,
+    /// which the caller must disconnect from the data plane.
+    pub async fn update_grant(
+        &self,
+        id: &str,
+        mut changes: UpdateAccessGrantRequest,
+    ) -> Result<(AccessGrantSummary, Vec<SessionAllocation>), ServiceError> {
+        if changes.is_empty() {
+            return Err(ServiceError::InvalidInput(
+                "the request changes nothing".to_owned(),
+            ));
+        }
+        if let Some(label) = changes.label.take() {
+            changes.label = Some(validate_text(label, "label", MAX_LABEL_LENGTH)?);
+        }
+        if changes
+            .max_connections
+            .is_some_and(|devices| devices == 0 || devices > self.max_sessions)
+        {
+            return Err(ServiceError::InvalidInput(format!(
+                "max_connections must be between 1 and {}",
+                self.max_sessions
+            )));
+        }
+        let now = unix_time();
+        let latest_end = now.saturating_add(u64::from(MAX_ACCESS_GRANT_VALIDITY_MINUTES) * 60);
+        if changes
+            .expires_at_epoch_seconds
+            .is_some_and(|expires_at| expires_at <= now || expires_at > latest_end)
+        {
+            return Err(ServiceError::InvalidInput(
+                "expires_at_epoch_seconds must be in the future and at most 365 days away"
+                    .to_owned(),
+            ));
+        }
+        if let Some(protocols) = &changes.protocols {
+            validate_protocols(protocols)?;
+        }
+
+        let mut state = self.state.lock().await;
+        let mut next = state.clone();
+        let ended = grant_admin::apply(&mut next, id, &changes, now)?;
+        self.repository.store(&next).await?;
+        *state = next;
+        let grant = state
+            .grants
+            .iter()
+            .find(|grant| grant.id == id)
+            .ok_or(ServiceError::NotFound)?;
+        Ok((grant_summary(&state, grant, now), ended))
     }
 
     pub async fn revoke_grant(&self, id: &str) -> Result<Vec<SessionAllocation>, ServiceError> {
@@ -283,6 +373,9 @@ impl AccessService {
         if !self.verify(code.secret, grant.secret_hash).await? {
             return Err(ServiceError::Unauthorized);
         }
+        if grant.paused {
+            return Err(ServiceError::GrantPaused);
+        }
 
         let now = unix_time();
         let token = generate_session_token();
@@ -315,6 +408,9 @@ impl AccessService {
         {
             return Err(ServiceError::GrantExpired);
         }
+        if grant.paused {
+            return Err(ServiceError::GrantPaused);
+        }
         let active_for_grant = next
             .sessions
             .iter()
@@ -337,6 +433,7 @@ impl AccessService {
             next_resource_slot(&next, self.max_sessions).ok_or(ServiceError::NodeCapacity)?;
 
         let access_expires_at_epoch_seconds = grant.expires_at_epoch_seconds;
+        let protocols = grant.protocols.clone();
         let mut expires_at = now.saturating_add(self.session_ttl.as_secs());
         if let Some(grant_expiry) = access_expires_at_epoch_seconds {
             expires_at = expires_at.min(grant_expiry);
@@ -368,6 +465,7 @@ impl AccessService {
             client_name,
             expires_at_epoch_seconds: expires_at,
             access_expires_at_epoch_seconds,
+            protocols,
         })
     }
 
@@ -380,6 +478,7 @@ impl AccessService {
             client_name: record.client_name,
             expires_at_epoch_seconds: record.expires_at_epoch_seconds,
             access_expires_at_epoch_seconds: grant.expires_at_epoch_seconds,
+            protocols: grant.protocols,
         })
     }
 
@@ -410,6 +509,7 @@ impl AccessService {
         }
         let now = unix_time();
         if session.expires_at_epoch_seconds <= now
+            || grant.paused
             || grant
                 .expires_at_epoch_seconds
                 .is_some_and(|expiry| expiry <= now)
@@ -423,6 +523,7 @@ impl AccessService {
             client_name: session.client_name,
             expires_at_epoch_seconds: session.expires_at_epoch_seconds,
             access_expires_at_epoch_seconds: grant.expires_at_epoch_seconds,
+            protocols: grant.protocols,
         })
     }
 
@@ -451,6 +552,7 @@ impl AccessService {
             client_name: record.client_name,
             expires_at_epoch_seconds: expires_at,
             access_expires_at_epoch_seconds: grant.expires_at_epoch_seconds,
+            protocols: grant.protocols,
         })
     }
 
@@ -556,6 +658,7 @@ impl AccessService {
         }
         let now = unix_time();
         if session.expires_at_epoch_seconds <= now
+            || grant.paused
             || grant
                 .expires_at_epoch_seconds
                 .is_some_and(|expiry| expiry <= now)
@@ -656,11 +759,46 @@ fn required_resource_slot(session: &SessionRecord) -> Result<u32, ServiceError> 
     ))
 }
 
-fn session_allocation(session: &SessionRecord) -> Result<SessionAllocation, ServiceError> {
+pub(crate) fn session_allocation(
+    session: &SessionRecord,
+) -> Result<SessionAllocation, ServiceError> {
     Ok(SessionAllocation {
         id: session.id.clone(),
         resource_slot: required_resource_slot(session)?,
     })
+}
+
+fn grant_summary(
+    state: &PersistedState,
+    grant: &AccessGrantRecord,
+    now: u64,
+) -> AccessGrantSummary {
+    AccessGrantSummary {
+        id: grant.id.clone(),
+        label: grant.label.clone(),
+        max_connections: grant.max_connections,
+        active_connections: state
+            .sessions
+            .iter()
+            .filter(|session| {
+                session.grant_id == grant.id && session.expires_at_epoch_seconds > now
+            })
+            .count() as u32,
+        expires_at_epoch_seconds: grant.expires_at_epoch_seconds,
+        created_at_epoch_seconds: grant.created_at_epoch_seconds,
+        paused: grant.paused,
+        protocols: grant.protocols.clone(),
+    }
+}
+
+fn validate_protocols(protocols: &ProtocolAccess) -> Result<(), ServiceError> {
+    if protocols.is_valid() {
+        Ok(())
+    } else {
+        Err(ServiceError::InvalidInput(
+            "protocols must name at least one protocol".to_owned(),
+        ))
+    }
 }
 
 fn validate_text(value: String, field: &str, maximum: usize) -> Result<String, ServiceError> {
@@ -720,6 +858,7 @@ mod tests {
                 label: "Fast session authentication".to_owned(),
                 max_connections: 1,
                 valid_for_minutes: 60,
+                protocols: Default::default(),
             })
             .await
             .expect("grant should be created");
@@ -779,6 +918,8 @@ mod tests {
                 max_connections: 1,
                 expires_at_epoch_seconds: Some(now + 600),
                 created_at_epoch_seconds: now.saturating_sub(60),
+                paused: false,
+                protocols: Default::default(),
             }],
             sessions: vec![SessionRecord {
                 id: session_id.to_owned(),
@@ -828,6 +969,7 @@ mod tests {
                     label: "Invalid duration".to_owned(),
                     max_connections: 1,
                     valid_for_minutes,
+                    protocols: Default::default(),
                 })
                 .await;
             assert!(matches!(result, Err(ServiceError::InvalidInput(_))));
@@ -838,6 +980,7 @@ mod tests {
                 label: "One day".to_owned(),
                 max_connections: 1,
                 valid_for_minutes: 1_440,
+                protocols: Default::default(),
             })
             .await
             .expect("bounded grant should be created");
@@ -869,6 +1012,7 @@ mod tests {
                 label: "Overload test".to_owned(),
                 max_connections: 1,
                 valid_for_minutes: 60,
+                protocols: Default::default(),
             })
             .await;
 

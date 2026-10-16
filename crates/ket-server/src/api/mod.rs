@@ -9,17 +9,16 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ket_core::{
-    AccessGrantSummary, CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate, CreateAccessGrantBatchRequest,
-    CreateAccessGrantRequest, CreateAccessGrantResponse, CreateSessionRequest, ErrorResponse,
-    HealthState, NodeStatus, SecretString, SessionManifest, SessionStatus, SessionTraffic,
-    SessionTransport, TransportCredential, UpdateAdvice,
+    CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate, CreateSessionRequest, ErrorResponse, HealthState,
+    NodeStatus, SecretString, SessionManifest, SessionStatus, SessionTraffic, SessionTransport,
+    TransportCredential, TransportProtocol, UpdateAdvice,
 };
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -29,6 +28,8 @@ use tower_http::{
 };
 
 use ket_invite::{ENROLLMENT_NONCE_HEADER, EnrollmentNonce, NODE_SIGNATURE_HEADER};
+
+mod grants;
 
 use crate::{
     config::{HysteriaObfuscation, ServerConfig},
@@ -122,12 +123,21 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/node/status", get(node_status))
         .route("/internal/v1/hysteria2/auth", post(authenticate_hysteria))
         .route("/internal/v1/openvpn/auth", post(authenticate_openvpn))
+        .route("/v1/admin/protocols", get(grants::offered_protocols))
         .route(
             "/v1/admin/access-grants",
-            post(create_grant).get(list_grants),
+            post(grants::create_grant).get(grants::list_grants),
         )
-        .route("/v1/admin/access-grants/batch", post(create_grant_batch))
-        .route("/v1/admin/access-grants/:id", delete(revoke_grant))
+        .route(
+            "/v1/admin/access-grants/batch",
+            post(grants::create_grant_batch),
+        )
+        .route(
+            "/v1/admin/access-grants/:id",
+            get(grants::grant_details)
+                .patch(grants::update_grant)
+                .delete(grants::revoke_grant),
+        )
         .route("/v1/sessions", post(create_session))
         .route(
             "/v1/sessions/current",
@@ -159,62 +169,6 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn node_status(State(state): State<AppState>) -> Json<NodeStatus> {
     Json(build_node_status(&state).await)
-}
-
-async fn create_grant(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(request): Json<CreateAccessGrantRequest>,
-) -> Result<(StatusCode, Json<CreateAccessGrantResponse>), ApiError> {
-    authorize_admin(&state, &headers)?;
-    let mut response = state.access.create_grant(request).await?;
-    attach_invite(&state, &mut response);
-    Ok((StatusCode::CREATED, Json(response)))
-}
-
-async fn create_grant_batch(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(request): Json<CreateAccessGrantBatchRequest>,
-) -> Result<(StatusCode, Json<Vec<CreateAccessGrantResponse>>), ApiError> {
-    authorize_admin(&state, &headers)?;
-    let mut response = state.access.create_grant_batch(request).await?;
-    for grant in &mut response {
-        attach_invite(&state, grant);
-    }
-    Ok((StatusCode::CREATED, Json(response)))
-}
-
-/// Wraps a new grant's access code in a signed invite when the node has a
-/// signing key. The grant already exists, so a failure is logged and the
-/// access code is still returned rather than lost.
-fn attach_invite(state: &AppState, grant: &mut CreateAccessGrantResponse) {
-    let Some(issuer) = &state.config.invite_issuer else {
-        return;
-    };
-    match issuer.issue(&grant.access_code, grant.expires_at_epoch_seconds) {
-        Ok(invite) => grant.invite = Some(invite),
-        Err(error) => tracing::error!(%error, grant_id = %grant.id, "failed to issue an invite"),
-    }
-}
-
-async fn list_grants(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Vec<AccessGrantSummary>>, ApiError> {
-    authorize_admin(&state, &headers)?;
-    Ok(Json(state.access.list_grants().await))
-}
-
-async fn revoke_grant(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Result<StatusCode, ApiError> {
-    authorize_admin(&state, &headers)?;
-    let revoked_sessions = state.access.revoke_grant(&id).await?;
-    state.kick_sessions(&revoked_sessions).await;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn create_session(
@@ -269,6 +223,18 @@ async fn create_session(
         .accepted_sessions
         .fetch_add(1, Ordering::Relaxed);
     let transports = session_transports(&state, &created);
+    if transports.is_empty() && !created.protocols.is_all() {
+        state
+            .metrics
+            .rejected_sessions
+            .fetch_add(1, Ordering::Relaxed);
+        roll_back_session(&state, &created).await;
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "grant_protocols_unavailable",
+            "the server no longer offers any protocol this invite allows",
+        ));
+    }
     let response = SessionManifest {
         session_token: created.token,
         session_expires_at_epoch_seconds: created.expires_at_epoch_seconds,
@@ -394,14 +360,19 @@ async fn authenticate_hysteria(
     State(state): State<AppState>,
     Json(request): Json<HysteriaAuthRequest>,
 ) -> Json<HysteriaAuthResponse> {
-    let session = if state.config.hysteria.is_some() {
-        state
+    let protocol = state
+        .config
+        .hysteria
+        .as_ref()
+        .and_then(|hysteria| transport_protocol(&state, &hysteria.transport_id));
+    let session = match protocol {
+        Some(protocol) => state
             .access
             .authenticate_data_plane(request.auth.expose_secret())
             .await
             .ok()
-    } else {
-        None
+            .filter(|session| session.protocols.allows(&protocol)),
+        None => None,
     };
     match session {
         Some(session) => {
@@ -453,6 +424,10 @@ async fn authenticate_openvpn(
             .await
             .ok()
             .filter(|session| session.id == request.username)
+            .filter(|session| {
+                transport_protocol(&state, &config.transport_id)
+                    .is_some_and(|protocol| session.protocols.allows(&protocol))
+            })
     } else {
         None
     };
@@ -515,11 +490,13 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], body)
 }
 
+/// The transports the session's access grant allows, with its credentials.
 fn session_transports(state: &AppState, created: &CreatedSession) -> Vec<SessionTransport> {
     state
         .config
         .transports
         .iter()
+        .filter(|profile| created.protocols.allows(&profile.protocol))
         .cloned()
         .map(|mut profile| {
             let credential = if state
@@ -619,13 +596,7 @@ async fn build_session_status(
         Ok(traffic) => traffic,
         Err(error) => {
             tracing::warn!(%error, session_id = %session.id, "data-plane traffic is unavailable");
-            SessionTraffic {
-                available: false,
-                bytes_sent: 0,
-                bytes_received: 0,
-                online_connections: 0,
-                observed_at_epoch_seconds: unix_time(),
-            }
+            unavailable_traffic()
         }
     };
     SessionStatus {
@@ -637,6 +608,26 @@ async fn build_session_status(
         traffic,
         updates: Some(updates),
     }
+}
+
+fn unavailable_traffic() -> SessionTraffic {
+    SessionTraffic {
+        available: false,
+        bytes_sent: 0,
+        bytes_received: 0,
+        online_connections: 0,
+        observed_at_epoch_seconds: unix_time(),
+    }
+}
+
+/// The protocol of the configured transport `transport_id`.
+fn transport_protocol(state: &AppState, transport_id: &str) -> Option<TransportProtocol> {
+    state
+        .config
+        .transports
+        .iter()
+        .find(|profile| profile.id == transport_id)
+        .map(|profile| profile.protocol.clone())
 }
 
 async fn build_node_status(state: &AppState) -> NodeStatus {
@@ -779,6 +770,11 @@ impl From<ServiceError> for ApiError {
             ServiceError::GrantExpired => {
                 Self::new(StatusCode::FORBIDDEN, "grant_expired", error.to_string())
             }
+            // 423 is not masked by the public edge, and clients do not
+            // treat it as lost access: a paused invite comes back.
+            ServiceError::GrantPaused => {
+                Self::new(StatusCode::LOCKED, "grant_paused", error.to_string())
+            }
             ServiceError::GrantCapacity => Self::new(
                 StatusCode::CONFLICT,
                 "grant_capacity_reached",
@@ -858,7 +854,7 @@ mod tests {
         repository::{RepositoryError, StateRepository},
     };
 
-    const ADMIN_TOKEN: &str = "test-admin-token-with-at-least-32-characters";
+    pub(super) const ADMIN_TOKEN: &str = "test-admin-token-with-at-least-32-characters";
 
     #[tokio::test]
     async fn crypto_overload_returns_a_retryable_http_contract() {
@@ -878,7 +874,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryRepository {
+    pub(super) struct MemoryRepository {
         state: Mutex<PersistedState>,
     }
 
@@ -902,10 +898,10 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct RecordingDataPlane {
+    pub(super) struct RecordingDataPlane {
         fail_provision: bool,
         provision_attempts: Mutex<Vec<String>>,
-        kicked_sessions: Mutex<Vec<String>>,
+        pub(super) kicked_sessions: Mutex<Vec<String>>,
     }
 
     #[async_trait]
@@ -2046,7 +2042,7 @@ mod tests {
         assert_eq!(state.metrics.rejected_sessions.load(Ordering::Relaxed), 1);
     }
 
-    fn test_config() -> ServerConfig {
+    pub(super) fn test_config() -> ServerConfig {
         ServerConfig {
             bind_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8787),
             state_path: PathBuf::from("unused-in-tests.json"),
@@ -2074,7 +2070,7 @@ mod tests {
         }
     }
 
-    fn hysteria_test_config() -> ServerConfig {
+    pub(super) fn hysteria_test_config() -> ServerConfig {
         let hysteria = HysteriaConfig {
             transport_id: "hy2-primary".to_owned(),
             runtime_config_path: PathBuf::from("unused-hysteria-test.json"),
@@ -2407,7 +2403,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
-    fn json_request(
+    pub(super) fn json_request(
         method: &str,
         uri: &str,
         token: Option<&str>,
@@ -2425,7 +2421,7 @@ mod tests {
             .expect("valid request")
     }
 
-    fn empty_request(method: &str, uri: &str, token: Option<&str>) -> Request<Body> {
+    pub(super) fn empty_request(method: &str, uri: &str, token: Option<&str>) -> Request<Body> {
         let mut request = Request::builder().method(method).uri(uri);
         if let Some(token) = token {
             request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
@@ -2433,7 +2429,7 @@ mod tests {
         request.body(Body::empty()).expect("valid request")
     }
 
-    async fn response_json<T: serde::de::DeserializeOwned>(response: Response) -> T {
+    pub(super) async fn response_json<T: serde::de::DeserializeOwned>(response: Response) -> T {
         let body = to_bytes(response.into_body(), 1024 * 1024)
             .await
             .expect("response body");

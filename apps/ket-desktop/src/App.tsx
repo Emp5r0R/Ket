@@ -96,8 +96,24 @@ function loadSavedEnrollment(): SavedEnrollment {
   return { serverUrl, accessCode, accessExpiresAt: validExpiry, nodeKey };
 }
 
+/** A full or paused invite comes back without any change on this device. */
 export function shouldRetrySavedEnrollment(issue: ClientIssue): boolean {
-  return issue.retryable || issue.code === "grant_capacity_reached";
+  return issue.retryable ||
+    issue.code === "grant_capacity_reached" ||
+    issue.code === "grant_paused";
+}
+
+/**
+ * The access end the server reports for the saved invite when it differs from
+ * the saved one: the server owner can extend or shorten an invite at any time.
+ */
+export function changedAccessExpiry(
+  reported: number | null,
+  accessCode: string,
+  saved: number | null,
+): number | null {
+  if (reported === null || accessCode.length !== 32 || reported === saved) return null;
+  return reported;
 }
 
 export function nextRestoreRetryDelay(delayMilliseconds: number): number {
@@ -222,6 +238,16 @@ export default function App() {
     }
     if (snapshot.phase === "connected") connectionRequestedRef.current = true;
     previousPhaseRef.current = snapshot.phase;
+    const newExpiry = changedAccessExpiry(
+      snapshot.access_expires_at_epoch_seconds,
+      savedAccessCodeRef.current,
+      accessExpiresAtRef.current,
+    );
+    if (newExpiry !== null) {
+      localStorage.setItem(ACCESS_EXPIRY_KEY, newExpiry.toString());
+      accessExpiresAtRef.current = newExpiry;
+      setAccessExpiresAt(newExpiry);
+    }
     setState((current) => ({ ...current, snapshot, configured: snapshot.node !== null || current.configured }));
     if (
       snapshot.issue !== null ||

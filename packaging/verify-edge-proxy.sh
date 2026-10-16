@@ -52,6 +52,7 @@ http {
       if ($http_x_test_outcome = created) { return 201 '{"session_token":"stub"}'; }
       if ($http_x_test_outcome = expired) { return 403 '{"code":"grant_expired"}'; }
       if ($http_x_test_outcome = capacity) { return 409 '{"code":"grant_capacity_reached"}'; }
+      if ($http_x_test_outcome = paused) { return 423 '{"code":"grant_paused"}'; }
       if ($http_x_test_outcome = busy) { return 429 '{"code":"server_busy"}'; }
       if ($http_x_test_outcome = unavailable) { return 503 '{"code":"data_plane_unavailable"}'; }
       # An app the server refuses must still see the update details, and the
@@ -169,6 +170,7 @@ signature=$(curl --silent --show-error --insecure --max-time 10 \
 [[ "$signature" == "$nonce" ]] || fail "edge did not forward the enrollment nonce and node signature headers (got '$signature')"
 expect 'grant expired' 403 'grant_expired' POST /v1/sessions -H 'X-Test-Outcome: expired' --data '{}'
 expect 'grant capacity' 409 'grant_capacity_reached' POST /v1/sessions -H 'X-Test-Outcome: capacity' --data '{}'
+expect 'grant paused' 423 'grant_paused' POST /v1/sessions -H 'X-Test-Outcome: paused' --data '{}'
 expect 'server busy' 429 'server_busy' POST /v1/sessions -H 'X-Test-Outcome: busy' --data '{}'
 expect 'node unavailable' 503 'data_plane_unavailable' POST /v1/sessions -H 'X-Test-Outcome: unavailable' --data '{}'
 expect 'app update required' 426 'client_update_required' POST /v1/sessions -H 'Ket-Client: android/0.9.0' --data '{}'

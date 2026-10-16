@@ -113,9 +113,13 @@ The installer adds the `ket` command:
 
 | Command | What it does |
 | --- | --- |
-| `sudo ket invite` | Create an invite. With no options it asks who it is for, how many devices may connect at once, and for how many days. Options: `--label`, `--devices`, `--days` or `--minutes`, `--no-qr` |
-| `sudo ket invites` | List invites with how many devices use each and when they expire |
-| `sudo ket revoke ID` | Revoke an invite and disconnect its devices |
+| `sudo ket invite` | Create an invite. With no options it asks who it is for, how many devices may connect at once, for how many days, and which protocols it may use. Options: `--label`, `--devices`, `--days` or `--minutes`, `--protocols`, `--no-qr` |
+| `sudo ket invites` | List invites: status, devices in use, when they end, and their protocols |
+| `sudo ket invites show ID` | One invite and the devices connected through it right now |
+| `sudo ket invites pause ID` | Stop an invite for now and disconnect its devices; `resume ID` turns it back on |
+| `sudo ket invites edit ID` | Change an invite. With no options it asks; options: `--label`, `--devices`, `--extend 7d`, `--shorten 3d`, `--ends-in 30d`, `--protocols` |
+| `sudo ket invites protocols` | The protocol names this server offers, for `--protocols` |
+| `sudo ket revoke ID` | Revoke an invite for good and disconnect its devices |
 | `sudo ket status` | Version, services, connected devices, certificate expiry, last update check |
 | `sudo ket doctor` | Check Docker, the configuration, every service, DNS, listening ports, the certificate, and the timers, and say how to fix each problem |
 | `sudo ket logs [SERVICE] [--follow]` | Recent logs, for example `sudo ket logs control-plane` |
@@ -125,6 +129,10 @@ The installer adds the `ket` command:
 | `sudo ket backup` | Save `.env`, `secrets/`, and the grants and sessions to `/var/backups/ket` |
 | `sudo ket keys` | Show the node fingerprint that apps check invites against; `rotate-admin-token`, or `rotate-node-key` after a leak (that invalidates every invite) |
 | `sudo ket uninstall` | Remove Ket (see below) |
+
+Invite changes take effect at once. Apps a change disconnects connect again by themselves with the new settings; while an invite is paused, the apps keep it and wait. Devices see a new end date the next time they reach the server. The invite text itself keeps its original date, so after that date new people need a new invite.
+
+`--protocols` takes `all` or names from `sudo ket invites protocols`, for example `--protocols "stealth reality"`. Ket v1.1.0 and older ignore pauses and protocol limits, so after `sudo ket rollback` to such a release they are off until you update again.
 
 From outside, `https://<your address>/` shows a neutral placeholder page; Ket's API is deliberately invisible. Certificates are checked twice a day by `ket-certificates.timer`.
 

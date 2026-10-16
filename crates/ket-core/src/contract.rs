@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ClientUpdate, SecretString, UpdateAdvice};
+use crate::{ClientUpdate, ProtocolAccess, SecretString, UpdateAdvice};
 
 pub const MAX_ACCESS_GRANT_VALIDITY_MINUTES: u32 = 365 * 24 * 60;
 
@@ -99,6 +99,8 @@ pub struct CreateAccessGrantRequest {
     pub label: String,
     pub max_connections: u32,
     pub valid_for_minutes: u32,
+    #[serde(default, skip_serializing_if = "ProtocolAccess::is_all")]
+    pub protocols: ProtocolAccess,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -107,6 +109,8 @@ pub struct CreateAccessGrantBatchRequest {
     pub count: u16,
     pub max_connections: u32,
     pub valid_for_minutes: u32,
+    #[serde(default, skip_serializing_if = "ProtocolAccess::is_all")]
+    pub protocols: ProtocolAccess,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -119,6 +123,8 @@ pub struct CreateAccessGrantResponse {
     pub valid_for_minutes: u32,
     pub expires_at_epoch_seconds: u64,
     pub created_at_epoch_seconds: u64,
+    #[serde(default)]
+    pub protocols: ProtocolAccess,
     /// `ket:invite:...` wrapping `access_code`, present when the node has a
     /// signing key. Returned exactly once, like the access code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -136,6 +142,7 @@ impl std::fmt::Debug for CreateAccessGrantResponse {
             .field("valid_for_minutes", &self.valid_for_minutes)
             .field("expires_at_epoch_seconds", &self.expires_at_epoch_seconds)
             .field("created_at_epoch_seconds", &self.created_at_epoch_seconds)
+            .field("protocols", &self.protocols)
             .field("invite", &self.invite)
             .finish()
     }
@@ -149,6 +156,11 @@ pub struct AccessGrantSummary {
     pub active_connections: u32,
     pub expires_at_epoch_seconds: Option<u64>,
     pub created_at_epoch_seconds: u64,
+    /// A paused grant admits no device until it is resumed.
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub protocols: ProtocolAccess,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -353,13 +365,27 @@ mod tests {
             label: "Personal devices".to_owned(),
             max_connections: 5,
             valid_for_minutes: MAX_ACCESS_GRANT_VALIDITY_MINUTES,
+            protocols: ProtocolAccess::All,
         };
+        // Grants for every protocol keep the wire form older servers read.
         assert_wire_round_trip(
-            request,
+            request.clone(),
             json!({
                 "label": "Personal devices",
                 "max_connections": 5,
                 "valid_for_minutes": 525600
+            }),
+        );
+        assert_wire_round_trip(
+            CreateAccessGrantRequest {
+                protocols: ProtocolAccess::Only([TransportProtocol::Stealth].into()),
+                ..request
+            },
+            json!({
+                "label": "Personal devices",
+                "max_connections": 5,
+                "valid_for_minutes": 525600,
+                "protocols": {"only": ["stealth"]}
             }),
         );
 

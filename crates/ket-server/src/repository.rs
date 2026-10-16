@@ -213,6 +213,26 @@ mod tests {
     }
 
     #[test]
+    fn pauses_and_protocol_limits_persist_and_default_grants_keep_their_old_shape() {
+        let path = TemporaryStatePath::new("grant-controls");
+        let mut state = valid_state();
+        store_file(path.path(), &state).expect("default grant should be stored");
+        let stored: serde_json::Value =
+            serde_json::from_slice(&fs::read(path.path()).expect("state should be readable"))
+                .expect("state should be JSON");
+        assert!(stored["grants"][0].get("paused").is_none());
+        assert!(stored["grants"][0].get("protocols").is_none());
+
+        state.grants[0].paused = true;
+        state.grants[0].protocols =
+            ket_core::ProtocolAccess::Only([ket_core::TransportProtocol::Stealth].into());
+        store_file(path.path(), &state).expect("controlled grant should be stored");
+        let loaded = load_file(path.path()).expect("controlled grant should load");
+        assert!(loaded.grants[0].paused);
+        assert_eq!(loaded.grants[0].protocols, state.grants[0].protocols);
+    }
+
+    #[test]
     fn duplicate_and_orphan_records_are_rejected_before_storage() {
         let path = TemporaryStatePath::new("relationships");
         let mut duplicate = valid_state();
@@ -282,6 +302,8 @@ mod tests {
                 max_connections: 1,
                 expires_at_epoch_seconds: Some(300),
                 created_at_epoch_seconds: 100,
+                paused: false,
+                protocols: Default::default(),
             }],
             sessions: vec![SessionRecord {
                 id: "Session00001".to_owned(),

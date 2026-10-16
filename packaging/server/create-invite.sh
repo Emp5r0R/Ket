@@ -8,19 +8,26 @@
 # people who should connect. The server never stores their plaintext.
 set -euo pipefail
 
+# shellcheck source=packaging/server/cli/protocols.sh
+. "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/cli/protocols.sh"
+
 label="Ket devices"
 devices=1
 minutes=$((30 * 24 * 60))
+protocols=all
 show_qr=true
 
 usage() {
   cat <<'EOF'
-Usage: create-invite.sh [--label TEXT] [--devices N] [--days N | --minutes N] [--no-qr]
+Usage: create-invite.sh [--label TEXT] [--devices N] [--days N | --minutes N]
+                        [--protocols LIST] [--no-qr]
 
   --label TEXT   Name for this grant in the admin list (default: "Ket devices").
   --devices N    How many devices may be connected at the same time (default: 1).
   --days N       Access lifetime in days (default: 30).
   --minutes N    Access lifetime in minutes (1-525600), instead of --days.
+  --protocols L  "all" (default), or the protocols it may use, such as
+                 "stealth reality" (sudo ket invites protocols lists them).
   --no-qr        Do not print a terminal QR code.
 EOF
 }
@@ -42,6 +49,7 @@ while (($#)); do
       if [[ $# -lt 2 ]] || ! positive_integer "$2"; then fail '--days must be a positive whole number'; fi
       minutes=$(($2 * 24 * 60)); shift 2 ;;
     --minutes) [[ $# -ge 2 ]] || fail '--minutes needs a value'; minutes=$2; shift 2 ;;
+    --protocols) [[ $# -ge 2 ]] || fail '--protocols needs a value'; protocols=$2; shift 2 ;;
     --no-qr) show_qr=false; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; fail "unknown option: $1" ;;
@@ -70,9 +78,23 @@ for dependency in curl jq; do
   command -v "$dependency" >/dev/null || fail "$dependency is required"
 done
 
+# admin_get PATH: the body of a loopback admin GET, or nothing on failure.
+admin_get() {
+  curl --silent --show-error --max-time 30 --fail \
+    --header "Authorization: Bearer $KET_ADMIN_TOKEN" "$control_url$1"
+}
+
+access='"all"'
+if [[ ${protocols,,} != all ]]; then
+  offered=$(admin_get /v1/admin/protocols) || fail 'could not ask Ket which protocols it offers'
+  access=$(protocol_access_json "$protocols" "$offered") || exit 1
+fi
+
 reply=$(
   jq -n --arg label "$label" --argjson max_connections "$devices" --argjson valid_for_minutes "$minutes" \
-    '{label:$label,max_connections:$max_connections,valid_for_minutes:$valid_for_minutes}' \
+    --argjson protocols "$access" \
+    '{label:$label,max_connections:$max_connections,valid_for_minutes:$valid_for_minutes}
+     + (if $protocols == "all" then {} else {protocols:$protocols} end)' \
     | curl --silent --show-error --max-time 30 \
         --request POST \
         --header "Authorization: Bearer $KET_ADMIN_TOKEN" \
@@ -106,3 +128,6 @@ else
   printf 'Server: %s\nAccess code: %s\n' "${server_url:-<this server>}" "$access_code"
 fi
 printf 'Up to %s device(s) at once; access ends %s.\n' "$devices" "$expiry_text"
+if [[ $access != '"all"' ]]; then
+  printf 'It may use only: %s\n' "$(protocol_names "$access" "$offered")"
+fi

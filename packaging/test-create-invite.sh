@@ -27,11 +27,24 @@ code=Abcdefghijklmnopqrstuvwxyz012345
 cat > "$work/stub.py" <<EOF
 import http.server, json, sys
 class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/v1/admin/protocols" or self.headers["Authorization"] != "Bearer $admin_token":
+            self.send_response(404); self.end_headers(); return
+        data = json.dumps([
+            {"protocol": "vless_xtls_reality", "name": "reality", "display_name": "VLESS + REALITY"},
+            {"protocol": "stealth", "name": "stealth", "display_name": "HTTPS Stealth"},
+        ]).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        keys = set(body) - {"protocols"}
         ok = (self.path == "/v1/admin/access-grants"
               and self.headers["Authorization"] == "Bearer $admin_token"
-              and set(body) == {"label", "max_connections", "valid_for_minutes"})
+              and keys == {"label", "max_connections", "valid_for_minutes"})
         if not ok:
             self.send_response(400); self.end_headers(); return
         with open("$work/requests.jsonl", "a") as log:
@@ -100,6 +113,18 @@ grep -Fq 'no node signing key' <<<"$output" || fail 'missing node-key notice for
 grep -Fq "Access code: $code" <<<"$output" || fail 'code-only server did not print the access code'
 grep -q 'QR\[' <<<"$output" && fail 'a code-only grant must not render a QR code'
 
+# Protocol names are resolved through the server's list, case-insensitively,
+# and an invite for every protocol sends no limit at all.
+output=$(run_helper --devices 2 --protocols 'Stealth, REALITY' --no-qr)
+grep -Fq 'It may use only: stealth, reality' <<<"$output" || fail "protocol limit not reported: $output"
+last_request=$(tail -n1 "$work/requests.jsonl")
+[[ $last_request == *'"protocols": {"only": ["stealth", "vless_xtls_reality"]}'* ]] \
+  || fail "unexpected protocol limit: $last_request"
+output=$(run_helper --devices 2 --protocols all --no-qr)
+grep -Fq 'It may use only' <<<"$output" && fail 'an all-protocol invite reported a limit'
+if output=$(run_helper --devices 2 --protocols wireguard 2>&1); then fail 'an unoffered protocol was accepted'; fi
+grep -Fq 'This server offers: reality, stealth' <<<"$output" || fail "unknown protocol not explained: $output"
+
 if output=$(run_helper --devices 9 2>&1); then fail 'refused grant reported success'; fi
 grep -Fq 'refused the grant (HTTP 422: max_connections exceeds[31m capacity)' <<<"$output" \
   || fail "refusal reason was not shown safely: $output"
@@ -112,6 +137,6 @@ if (cd "$work" && env -i "PATH=$PATH" "$helper" >/dev/null 2>&1); then
   fail 'ran outside an install directory without an admin token'
 fi
 requests=$(wc -l < "$work/requests.jsonl")
-((requests == 5)) || fail "invalid invocations reached the server ($requests requests)"
+((requests == 7)) || fail "invalid invocations reached the server ($requests requests)"
 
 printf 'create-invite contract tests passed.\n'
