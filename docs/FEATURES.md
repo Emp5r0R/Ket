@@ -2,7 +2,7 @@
 
 Everything Ket implements today, and the qualification status of each transport. Setup instructions are in [SERVER_INSTALL.md](SERVER_INSTALL.md).
 
-## Since v1.1.0 (on `main`, not yet released)
+## v1.2.0
 
 - Invite control in the `ket` command: see an invite and the devices connected through it, pause and resume it, change its devices, end date, and name, and limit which protocols it may use; the server enforces the limit for every protocol ([SERVER_INSTALL.md](SERVER_INSTALL.md#managing-the-server), [CONTROL_API.md](CONTROL_API.md#admin-endpoints)).
 - Apps keep a paused invite and connect again once it resumes, and follow the end date the server reports.

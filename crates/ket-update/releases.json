@@ -15,6 +15,17 @@
       "client": "recommended",
       "server": "security",
       "summary": "Closes the control API that v1.0.1 servers exposed on port 443. Adds invites with QR codes, one-command server setup, the ket server command, rated updates, and a smaller Android download."
+    },
+    {
+      "version": "1.2.0",
+      "published": "2026-10-16",
+      "client": "security",
+      "server": "recommended",
+      "platforms": [
+        "linux",
+        "windows"
+      ],
+      "summary": "Fixes DNS leaks on Windows and on Linux desktops with systemd-resolved. Adds invite control in the ket command, app split tunneling and a new design on Android, and an optional split TLS greeting."
     }
   ]
 }

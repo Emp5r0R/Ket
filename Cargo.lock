@@ -2037,7 +2037,7 @@ dependencies = [
 
 [[package]]
 name = "ket-client-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2059,7 +2059,7 @@ dependencies = [
 
 [[package]]
 name = "ket-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "argon2",
  "blake2",
@@ -2073,7 +2073,7 @@ dependencies = [
 
 [[package]]
 name = "ket-desktop"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "glib",
  "image",
@@ -2091,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "ket-invite"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "base64 0.22.1",
  "invite-capsule",
@@ -2102,7 +2102,7 @@ dependencies = [
 
 [[package]]
 name = "ket-invite-android"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "jni 0.21.1",
  "ket-invite",
@@ -2111,7 +2111,7 @@ dependencies = [
 
 [[package]]
 name = "ket-qr"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "image",
  "qrcode",
@@ -2122,7 +2122,7 @@ dependencies = [
 
 [[package]]
 name = "ket-server"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2152,7 +2152,7 @@ dependencies = [
 
 [[package]]
 name = "ket-tunnel-protocol"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "hmac",
  "ket-core",
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "ket-tunnel-service"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2185,7 +2185,7 @@ dependencies = [
 
 [[package]]
 name = "ket-update"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "ket-core",
  "serde",
