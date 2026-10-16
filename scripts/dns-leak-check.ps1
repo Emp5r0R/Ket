@@ -41,24 +41,33 @@ if (-not (Get-NetAdapter -Name $TunnelInterface -ErrorAction SilentlyContinue)) 
 $Nonce = "ket-leak-" + ([guid]::NewGuid().ToString("N").Substring(0, 12))
 Write-Output "Tunnel adapter: $TunnelInterface. Probe: $Nonce"
 
-# 1. The system resolver answers through the tunnel.
+# 1. The system resolver answers through the tunnel. Ket's virtual DNS
+#    answers every name with an address in 198.18.0.0/15; any other answer,
+#    including "does not exist" or a record without an address, came from a
+#    resolver outside the tunnel.
 Clear-DnsClientCache
+$records = $null
+$lookupError = $null
 try {
-    $answers = @(Resolve-DnsName -Name "$Nonce.example.com" -Type A -DnsOnly -ErrorAction Stop |
-        Where-Object { $_.PSObject.Properties.Name -contains "IPAddress" })
-    $outside = @($answers | Where-Object { -not (Test-VirtualAnswer $_.IPAddress) })
-    if ($answers.Count -eq 0 -or $outside.Count -gt 0) {
-        $Leaks.Add("the system resolver answered from outside the tunnel: $($answers.IPAddress -join ', ')")
-    } else {
-        Write-Output "  ok    the system resolver answers through the tunnel ($($answers[0].IPAddress))"
-    }
+    $records = @(Resolve-DnsName -Name "$Nonce.example.com" -Type A -DnsOnly -ErrorAction Stop)
 } catch {
-    # A real resolver says the name does not exist; Ket's virtual DNS never does.
-    if ($_.Exception.Message -match "does not exist") {
-        $Leaks.Add("a resolver outside the tunnel answered the probe: $($_.Exception.Message)")
+    $lookupError = $_.Exception.Message
+}
+if ($null -ne $records) {
+    $addresses = @($records | Where-Object { $_.PSObject.Properties.Name -contains "IPAddress" } |
+        ForEach-Object { $_.IPAddress })
+    $outside = @($addresses | Where-Object { -not (Test-VirtualAnswer $_) })
+    if ($addresses.Count -eq 0) {
+        $Leaks.Add("a resolver outside the tunnel answered the probe without an address")
+    } elseif ($outside.Count -gt 0) {
+        $Leaks.Add("the system resolver answered from outside the tunnel: $($addresses -join ', ')")
     } else {
-        Write-Output "  ok    no resolver outside the tunnel answered ($($_.Exception.Message))"
+        Write-Output "  ok    the system resolver answers through the tunnel ($($addresses[0]))"
     }
+} elseif ($lookupError -match "does not exist") {
+    $Leaks.Add("a resolver outside the tunnel answered the probe: $lookupError")
+} else {
+    Write-Output "  ok    no resolver outside the tunnel answered ($lookupError)"
 }
 
 # 2. No other adapter's resolver is reachable from that adapter's own address,

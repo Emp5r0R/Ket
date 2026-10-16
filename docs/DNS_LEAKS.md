@@ -89,7 +89,11 @@ All of these were run on 2026-10-16 against the canary.
   - The baseline caught both probe lookups and the IPv6 ping.
   - While connected over VLESS + REALITY, no lookup, DNS, or IPv6 traffic left the device.
 
-The Windows checks run in Windows CI; they have not been run on a physical Windows computer yet.
+- **Windows CI** (GitHub's Windows Server runner, real Filtering Platform, real bridge):
+  - Under the guard, direct DNS over UDP and TCP and Windows' own name resolution were all blocked, ordinary IPv4 still worked, and all of it came back when the guard was released.
+  - With the bridge alone, the Ethernet adapter's resolver (168.63.129.16) still answered from outside the tunnel: the parallel-lookup leak.
+  - With Ket's guard, that resolver was unreachable, the system resolver answered through the tunnel, and nothing leaked.
+  - These checks have not been run on a physical Windows computer yet.
 
 ## WireGuard name resolution
 
