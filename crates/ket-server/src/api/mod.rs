@@ -1500,7 +1500,8 @@ mod tests {
         let error: ErrorResponse = sealed_body(&replay);
         assert_eq!(error.code, ket_core::SEALED_REPLAY_CODE);
 
-        for sent_at in [now - 301, now + 301] {
+        // Well outside the window, so a slow test run cannot drift back inside it.
+        for sent_at in [now - 400, now + 400] {
             let skewed = send_sealed(
                 &app,
                 &sealed_request(Get, "/v1/sessions/current", Some("forged"), None, sent_at),
