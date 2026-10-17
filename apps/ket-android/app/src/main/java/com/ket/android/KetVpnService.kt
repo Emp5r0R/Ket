@@ -51,6 +51,9 @@ class KetVpnService : VpnService() {
     private val transportHistory = AndroidTransportHistory()
     private val recoveryPolicy = AndroidRecoveryPolicy()
     private val underlyingNetworks = UnderlyingNetworkTracker<Network>()
+    private val networkChangeVerifier = NetworkChangeVerifier(
+        routeWorks = { runCatching { AndroidRoutedInternetProbe.verify(lifecycle::isStopping) }.isSuccess },
+    )
     private val bridge = TProxyService()
     private lateinit var connectivityManager: ConnectivityManager
     private lateinit var powerManager: PowerManager
@@ -438,6 +441,7 @@ class KetVpnService : VpnService() {
         spec: TunnelLaunchSpec,
         failedTransportId: String?,
         failureReason: String,
+        blameTransport: Boolean = true,
     ) {
         AndroidConnectionDiagnostics.record(
             stage = "route_recovery",
@@ -447,7 +451,9 @@ class KetVpnService : VpnService() {
             transport = failedTransportId,
             message = failureReason,
         )
-        if (failedTransportId != null) {
+        // After a network change the network, not the transport, was at fault: it is tried
+        // again first instead of being cooled down.
+        if (failedTransportId != null && blameTransport) {
             transportHistory.recordFailure(failedTransportId, SystemClock.elapsedRealtime())
             spec.transports.firstOrNull { it.id == failedTransportId }?.let {
                 noteFallback(it.displayName, failureReason)
@@ -508,7 +514,7 @@ class KetVpnService : VpnService() {
         }
     }
 
-    private fun requestRecovery(failureReason: String) {
+    private fun requestRecovery(failureReason: String, blameTransport: Boolean = true) {
         if (lifecycle.isStopping() || !reconnecting.compareAndSet(false, true)) return
         val currentEngine = engine
         val spec = launchSpec
@@ -523,6 +529,7 @@ class KetVpnService : VpnService() {
                 spec = spec,
                 failedTransportId = failedTransportId,
                 failureReason = failureReason,
+                blameTransport = blameTransport,
             )
         }
     }
@@ -594,12 +601,37 @@ class KetVpnService : VpnService() {
         networkChangeTask = scheduler.schedule(
             {
                 if (!lifecycle.isStopping() && underlyingNetworks.consumeRecoveryRequired()) {
-                    requestRecovery("The underlying network changed")
+                    verifyAfterNetworkChange()
                 }
             },
             NETWORK_CHANGE_DEBOUNCE_MILLIS,
             TimeUnit.MILLISECONDS,
         )
+    }
+
+    /**
+     * Keeps a route that survived the move as it is, with nothing shown; replaces one that did not.
+     * Runs on the worker, so it never overlaps a recovery.
+     */
+    private fun verifyAfterNetworkChange() {
+        if (reconnecting.get()) return
+        runCatching {
+            worker.execute {
+                if (lifecycle.isStopping() || reconnecting.get() || engine == null) return@execute
+                val survived = networkChangeVerifier.routeSurvived(lifecycle::isStopping)
+                if (lifecycle.isStopping()) return@execute
+                AndroidConnectionDiagnostics.record(
+                    stage = "network_change",
+                    outcome = if (survived) DiagnosticOutcome.Succeeded else DiagnosticOutcome.Failed,
+                    phase = if (survived) TunnelPhase.Connected else TunnelPhase.Reconnecting,
+                    transport = activeTransportId,
+                    code = if (survived) "route_kept" else "route_lost",
+                )
+                if (!survived) {
+                    requestRecovery("The route stopped working after the network changed", blameTransport = false)
+                }
+            }
+        }
     }
 
     private fun scheduleTelemetry() {
