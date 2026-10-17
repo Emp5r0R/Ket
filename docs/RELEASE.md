@@ -60,7 +60,7 @@ A release is tagged only after the exact commit has run on a real server. Stubs 
 
 ## Update ratings
 
-Before tagging, add the release to `crates/ket-update/releases.json` with its app and server ratings ([UPDATES.md](UPDATES.md)). Servers refuse apps based on these ratings, and servers with automatic updates apply `security` and `critical` releases on their own, so a wrong rating reaches users within a day.
+Before tagging, add the release to `crates/ket-update/releases.json` with its server rating and a rating for each app ([choosing a rating](UPDATES.md#choosing-a-rating)). Servers refuse apps based on these ratings, and servers with automatic updates apply `security` and `critical` releases on their own, so a wrong rating reaches users within a day.
 
 ## Server installer
 

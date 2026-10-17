@@ -87,6 +87,23 @@ while IFS= read -r case_json; do
   equals "update rating $installed -> $target" "$(update_category "$vector_manifest" "$installed" "$target")" "$expected"
 done <<<"$cases"
 
+app_vectors="$root/crates/ket-update/tests/vectors/app-updates.json"
+app_manifest=$(jq -c '.manifest' "$app_vectors")
+app_cases=$(jq -c '.cases[]' "$app_vectors")
+[[ -n $app_cases ]] || fail_test 'no shared app update vectors'
+while IFS= read -r case_json; do
+  installed=$(jq -r '.installed' <<<"$case_json")
+  target=$(jq -r '.target' <<<"$case_json")
+  platform=$(jq -r '.platform' <<<"$case_json")
+  expected=$(jq -r '.category // ""' <<<"$case_json")
+  equals "app rating $installed -> $target on $platform" \
+    "$(app_category "$app_manifest" "$installed" "$target" "$platform")" "$expected"
+done <<<"$app_cases"
+equals 'app ratings name each app' "$(app_ratings "$app_manifest" 1.0.1 1.3.0)" \
+  'android critical, linux security, windows security'
+equals 'app ratings collapse when alike' "$(app_ratings "$app_manifest" 1.3.0 1.10.0)" 'every app recommended'
+equals 'server-only updates rate no app' "$(app_ratings "$app_manifest" 1.1.0 1.2.0)" ''
+
 for allowed in all:optional all: security:security security:critical critical:critical; do
   auto_update_allows "${allowed%%:*}" "${allowed#*:}" || fail_test "KET_AUTO_UPDATE ${allowed%%:*} should apply ${allowed#*:}"
 done
@@ -376,13 +393,15 @@ release_manifest() { printf '%s' "$vector_manifest"; }
 output=$(cmd_update --check)
 contains 'check reports the rating' "$output" 'Ket v1.2.0 is available (installed: v1.0.1, update rating: security)'
 equals 'check is recorded' "$(jq -r .outcome "$KET_STATE_DIR/update-check.json")" available
+contains 'check reports the app ratings' "$output" 'Apps this server will ask to update: every app security'
+equals 'app ratings are recorded' "$(jq -r .apps "$KET_STATE_DIR/update-check.json")" 'every app security'
 printf 'KET_AUTO_UPDATE=critical\n' >> "$install_dir/.env"
 output=$(cmd_update --auto)
 contains 'auto waits below its policy' "$output" 'Not applied automatically (KET_AUTO_UPDATE=critical)'
 equals 'waiting is recorded' "$(jq -r .outcome "$KET_STATE_DIR/update-check.json")" 'waiting: KET_AUTO_UPDATE=critical'
 set_env_value KET_AUTO_UPDATE security
 output=$(cmd_update --auto)
-equals 'auto hands over to the bootstrap' "$output" "$(printf 'Ket v1.2.0 is available (installed: v1.0.1, update rating: security).\nBOOTSTRAP update v1.2.0 %s' "$install_dir")"
+equals 'auto hands over to the bootstrap' "$output" "$(printf 'Ket v1.2.0 is available (installed: v1.0.1, update rating: security).\nApps this server will ask to update: every app security\nBOOTSTRAP update v1.2.0 %s' "$install_dir")"
 output=$(cmd_update --yes --to v1.1.0)
 contains 'explicit target' "$output" 'BOOTSTRAP update v1.1.0'
 printf 'no\n' > "$KET_TTY"

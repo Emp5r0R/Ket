@@ -1,0 +1,28 @@
+{
+  "description": "What apps on each platform are told once a server moves from the installed version to the target: the most urgent app rating for that platform among the releases in between. A release's apps map rates each app; apps it leaves out are unchanged; without the map, client applies to every app. The Rust crate and the server's ket command (jq) must agree on every case.",
+  "manifest": {
+    "schema": 1,
+    "security_grace_days": 14,
+    "releases": [
+      {"version": "1.0.1", "published": "2026-09-02", "client": "optional", "server": "optional", "summary": "Baseline."},
+      {"version": "1.1.0", "published": "2026-10-01", "client": "security", "apps": {"android": "optional", "linux": "security", "windows": "security"}, "summary": "Desktop leak fix."},
+      {"version": "1.2.0", "published": "2026-11-01", "server": "recommended", "summary": "Server only."},
+      {"version": "1.3.0", "published": "2026-12-01", "client": "critical", "apps": {"android": "critical"}, "summary": "Android cannot connect."},
+      {"version": "1.10.0", "published": "2027-01-01", "client": "recommended", "summary": "Numeric ordering check."}
+    ]
+  },
+  "cases": [
+    {"installed": "1.0.1", "target": "1.0.1", "platform": "linux", "category": null},
+    {"installed": "1.0.1", "target": "1.1.0", "platform": "android", "category": "optional"},
+    {"installed": "1.0.1", "target": "1.1.0", "platform": "linux", "category": "security"},
+    {"installed": "1.0.1", "target": "1.1.0", "platform": "macos", "category": null},
+    {"installed": "1.1.0", "target": "1.2.0", "platform": "windows", "category": null},
+    {"installed": "1.0.1", "target": "1.3.0", "platform": "android", "category": "critical"},
+    {"installed": "1.0.1", "target": "1.3.0", "platform": "windows", "category": "security"},
+    {"installed": "1.2.0", "target": "1.3.0", "platform": "linux", "category": null},
+    {"installed": "1.3.0", "target": "1.10.0", "platform": "macos", "category": "recommended"},
+    {"installed": "1.9.0", "target": "1.10.0", "platform": "android", "category": "recommended"},
+    {"installed": "1.10.0", "target": "1.3.0", "platform": "android", "category": null},
+    {"installed": "0.9.0", "target": "1.0.1", "platform": "windows", "category": "optional"}
+  ]
+}

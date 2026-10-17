@@ -32,6 +32,7 @@ cmd_status() {
   check="$(ket_state_dir)/update-check.json"
   if [[ -r $check ]]; then
     jq -r '"Last update check \(.checked): latest \(.latest)\(if .category != "" then " (" + .category + ")" else "" end), \(.outcome)"' "$check"
+    jq -r 'select((.apps // "") != "") | "  Apps it will ask to update: \(.apps)"' "$check"
   fi
   info ''
   info 'Services:'

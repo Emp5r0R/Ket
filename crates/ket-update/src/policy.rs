@@ -94,12 +94,10 @@ impl ClientPolicy {
         } else {
             let grace = manifest.security_grace_seconds();
             let newer = manifest.releases.iter().filter(|release| {
-                release.version > client.version
-                    && release.version <= self.server_version
-                    && release.applies_to(client.platform)
+                release.version > client.version && release.version <= self.server_version
             });
             for release in newer {
-                let Some(category) = release.client else {
+                let Some(category) = release.client_rating(client.platform) else {
                     continue;
                 };
                 let rated = match category {
@@ -160,7 +158,7 @@ mod tests {
                {"version":"1.1.0","published":"2026-02-01","client":"recommended","summary":"fixes"},
                {"version":"1.2.0","published":"2026-03-01","client":"security","summary":"security fix"},
                {"version":"1.3.0","published":"2026-04-01","client":"optional","summary":"features"},
-               {"version":"1.4.0","published":"2026-05-01","client":"critical","platforms":["android"],"summary":"android critical"},
+               {"version":"1.4.0","published":"2026-05-01","client":"critical","apps":{"android":"critical","linux":"optional"},"summary":"android critical"},
                {"version":"1.5.0","published":"2026-06-01","server":"critical","summary":"server only"}"#,
         )
     }
@@ -215,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn critical_releases_apply_only_to_their_platforms() {
+    fn per_app_ratings_apply_only_to_their_platforms() {
         let manifest = releases();
         let android = ClientIdentity::new(ClientPlatform::Android, v("1.3.0"));
         assert_eq!(
@@ -226,6 +224,11 @@ mod tests {
             policy("1.5.0")
                 .evaluate(&manifest, linux("1.3.0"), 0)
                 .status,
+            ClientUpdateStatus::Optional
+        );
+        let windows = ClientIdentity::new(ClientPlatform::Windows, v("1.3.0"));
+        assert_eq!(
+            policy("1.5.0").evaluate(&manifest, windows, 0).status,
             ClientUpdateStatus::Current
         );
         // Legacy apps do not say which platform they are, so every rating counts.

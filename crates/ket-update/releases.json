@@ -21,10 +21,11 @@
       "published": "2026-10-16",
       "client": "security",
       "server": "recommended",
-      "platforms": [
-        "linux",
-        "windows"
-      ],
+      "apps": {
+        "android": "optional",
+        "linux": "security",
+        "windows": "security"
+      },
       "summary": "Fixes DNS leaks on Windows and on Linux desktops with systemd-resolved. Adds invite control in the ket command, app split tunneling and a new design on Android, and an optional split TLS greeting."
     }
   ]

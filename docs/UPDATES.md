@@ -11,8 +11,8 @@ Each release has an entry in [`crates/ket-update/releases.json`](../crates/ket-u
   "version": "1.1.0",
   "published": "2026-10-20",
   "client": "security",
+  "apps": { "android": "optional", "windows": "security" },
   "server": "recommended",
-  "platforms": ["windows"],
   "summary": "Fixes a DNS leak on Windows."
 }
 ```
@@ -24,7 +24,22 @@ Each release has an entry in [`crates/ket-update/releases.json`](../crates/ket-u
 | `security` | A warning that cannot be hidden. After the grace period (`security_grace_days`, 14 days from `published`) the update becomes required | Applied by the daily check with the default `KET_AUTO_UPDATE=security` |
 | `critical` | Required at once | Applied by the daily check unless automatic updates are off |
 
-`client` or `server` is left out when a release changes nothing there. A server weighs both ratings when it decides how urgent its own update is: apps only learn about a fix from servers that know the release, so an app-only security release still updates servers on their own. `platforms` limits the app rating to some apps (`android`, `linux`, `windows`, `macos`); apps from v1.0.1 and earlier do not say which platform they are, so every rating applies to them.
+`client` or `server` is left out when a release changes nothing there. A server weighs both ratings when it decides how urgent its own update is: apps only learn about a fix from servers that know the release, so an app-only security release still updates servers on their own.
+
+When the apps are not all affected alike, `apps` rates each one (`android`, `linux`, `windows`, `macos`); apps it leaves out are unchanged by the release. `client` must then be the most urgent of those ratings: servers rate their own update from it, and apps from v1.0.1 and earlier, which do not say which platform they are, get it. Without `apps`, `client` applies to every app.
+
+### Choosing a rating
+
+Rate each app by the worst thing the release fixes for it:
+
+| The release, for this app | Rating |
+| --- | --- |
+| Fixes a bug that stops the app working, or the server can no longer serve older apps | `critical` |
+| Fixes a serious security problem, such as leaking traffic, DNS, or credentials | `security` |
+| Fixes bugs people notice, or a minor security issue | `recommended` |
+| Adds features or polish only | `optional`, or `recommended` when most people will want it |
+
+`critical` cuts off every older app at once, including people who cannot easily download an update, so use it only when the old app is unusable anyway. The summary is shown on every platform, so name the platform when a fix affects only some.
 
 ## What apps see
 
@@ -57,10 +72,12 @@ Apply a change with `sudo ket restart`.
 
 A daily timer runs `ket update --auto`. It compares the installed release with the latest one, rates the gap with the rule above, and applies the update when `KET_AUTO_UPDATE` allows (`off`, `critical`, `security` (default), or `all`); otherwise `sudo ket status` shows what is waiting. Updates are health-checked and roll back on their own; see [SERVER_INSTALL.md](SERVER_INSTALL.md#updates) for the steps, `ket rollback`, and how v1.0.1 servers get the `ket` command.
 
-The rule exists twice, in Rust (`ReleaseManifest::server_update_category`) and in the `ket` command (jq); both replay [`server-updates.json`](../crates/ket-update/tests/vectors/server-updates.json) so they cannot drift apart.
+`sudo ket update --check` and `sudo ket status` also say what the waiting update asks of each app, such as `android optional, linux security`, so you know what your users will see once you apply it.
+
+The rules exist twice, in Rust (`ReleaseManifest::server_update_category` and `app_update_category`) and in the `ket` command (jq); both replay [`server-updates.json`](../crates/ket-update/tests/vectors/server-updates.json) and [`app-updates.json`](../crates/ket-update/tests/vectors/app-updates.json) so they cannot drift apart.
 
 Automatic updates trust GitHub release tags the same way the one-command install does. Set `KET_AUTO_UPDATE=off` to review every release yourself.
 
 ## Releasing
 
-Add the release's entry to `releases.json` in the commit that bumps the version. The `ket-update` tests fail when the newest entry does not match the workspace version, and when entries are out of order, malformed, or dated impossibly. Rate honestly: `critical` cuts off every older app immediately, including people who cannot easily download an update.
+Add the release's entry to `releases.json` in the commit that bumps the version, rated with the guide above. The `ket-update` tests fail when the newest entry does not match the workspace version, when `client` is not the most urgent `apps` rating, and when entries are out of order, malformed, or dated impossibly.

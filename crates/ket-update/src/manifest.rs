@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 use serde::Deserialize;
 
@@ -20,14 +20,18 @@ pub struct Release {
     /// Release day, `YYYY-MM-DD` (UTC).
     published: String,
     /// Urgency for apps; `None` when the release changes nothing in the apps.
+    /// With `apps`, the most urgent of those ratings: servers, and `ket`
+    /// commands that predate `apps`, rate their own update from this field.
     #[serde(default)]
     pub client: Option<UpdateCategory>,
     /// Urgency for servers; `None` when the release changes nothing on servers.
     #[serde(default)]
     pub server: Option<UpdateCategory>,
-    /// Apps the client rating applies to; empty means every platform.
+    /// Urgency for each app, when the apps are not all rated alike. Apps not
+    /// listed are unchanged by the release. Empty means `client` applies to
+    /// every app.
     #[serde(default)]
-    pub platforms: Vec<ClientPlatform>,
+    pub apps: BTreeMap<ClientPlatform, UpdateCategory>,
     pub summary: String,
     #[serde(skip)]
     published_epoch_seconds: u64,
@@ -38,11 +42,13 @@ impl Release {
         self.published_epoch_seconds
     }
 
-    /// Whether the client rating applies to an app on `platform`. Apps that
-    /// do not name their platform are covered by every release.
-    pub fn applies_to(&self, platform: Option<ClientPlatform>) -> bool {
-        self.platforms.is_empty()
-            || platform.is_none_or(|platform| self.platforms.contains(&platform))
+    /// How urgent this release is for an app on `platform`. Apps that do not
+    /// name their platform get `client`, the most urgent app rating.
+    pub fn client_rating(&self, platform: Option<ClientPlatform>) -> Option<UpdateCategory> {
+        match platform {
+            Some(platform) if !self.apps.is_empty() => self.apps.get(&platform).copied(),
+            _ => self.client,
+        }
     }
 }
 
@@ -99,6 +105,22 @@ impl ReleaseManifest {
             .max()
     }
 
+    /// What apps on `platform` are told once a server moves from `installed`
+    /// to `target`: the most urgent app rating for that platform among the
+    /// releases in between. `None` when the update changes nothing there.
+    pub fn app_update_category(
+        &self,
+        installed: Version,
+        target: Version,
+        platform: ClientPlatform,
+    ) -> Option<UpdateCategory> {
+        self.releases
+            .iter()
+            .filter(|release| release.version > installed && release.version <= target)
+            .filter_map(|release| release.client_rating(Some(platform)))
+            .max()
+    }
+
     fn validate(&mut self) -> Result<(), UpdateError> {
         let invalid = |message: String| Err(UpdateError::InvalidManifest(message));
         if self.schema != SCHEMA {
@@ -132,15 +154,9 @@ impl ReleaseManifest {
             {
                 return invalid(format!("{} has an invalid summary", release.version));
             }
-            let mut platforms = release.platforms.clone();
-            platforms.sort();
-            platforms.dedup();
-            if platforms.len() != release.platforms.len() {
-                return invalid(format!("{} repeats a platform", release.version));
-            }
-            if release.client.is_none() && !release.platforms.is_empty() {
+            if !release.apps.is_empty() && release.client != release.apps.values().max().copied() {
                 return invalid(format!(
-                    "{} lists platforms without a client rating",
+                    "{} needs a client rating equal to its most urgent app rating",
                     release.version
                 ));
             }
@@ -260,14 +276,36 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn platform_filters_cover_unnamed_platforms() {
+    fn apps_are_rated_per_platform_and_unnamed_apps_get_the_most_urgent_rating() {
         let manifest = manifest(
-            r#"{"version":"1.0.0","published":"2026-01-01","client":"security","platforms":["android"],"summary":"a"}"#,
+            r#"{"version":"1.0.0","published":"2026-01-01","client":"security","apps":{"android":"optional","windows":"security"},"summary":"a"},
+               {"version":"1.1.0","published":"2026-02-01","client":"recommended","summary":"b"}"#,
         );
         let release = &manifest.releases[0];
-        assert!(release.applies_to(Some(ClientPlatform::Android)));
-        assert!(!release.applies_to(Some(ClientPlatform::Windows)));
-        assert!(release.applies_to(None));
+        assert_eq!(
+            release.client_rating(Some(ClientPlatform::Android)),
+            Some(UpdateCategory::Optional)
+        );
+        assert_eq!(
+            release.client_rating(Some(ClientPlatform::Windows)),
+            Some(UpdateCategory::Security)
+        );
+        assert_eq!(release.client_rating(Some(ClientPlatform::Linux)), None);
+        assert_eq!(release.client_rating(None), Some(UpdateCategory::Security));
+        let rated = &manifest.releases[1];
+        assert_eq!(
+            rated.client_rating(Some(ClientPlatform::Linux)),
+            Some(UpdateCategory::Recommended)
+        );
+        let v = |value: &str| value.parse::<Version>().unwrap();
+        assert_eq!(
+            manifest.app_update_category(v("0.9.0"), v("1.1.0"), ClientPlatform::Android),
+            Some(UpdateCategory::Recommended)
+        );
+        assert_eq!(
+            manifest.app_update_category(v("0.9.0"), v("1.0.0"), ClientPlatform::Linux),
+            None
+        );
     }
 
     #[test]
@@ -286,8 +324,11 @@ pub(crate) mod tests {
             entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":""}"#),
             entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":"a","client":"urgent"}"#),
             entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":"a","extra":true}"#),
-            entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":"a","client":"optional","platforms":["linux","linux"]}"#),
-            entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":"a","platforms":["linux"]}"#),
+            entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":"a","apps":{"linux":"optional"}}"#),
+            entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":"a","client":"optional","apps":{"linux":"security"}}"#),
+            entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":"a","client":"critical","apps":{"linux":"security"}}"#),
+            entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":"a","client":"optional","apps":{"ios":"optional"}}"#),
+            entry(r#"{"version":"1.0.0","published":"2026-01-01","summary":"a","client":"optional","platforms":["linux"]}"#),
             entry(&format!(
                 r#"{{"version":"1.0.0","published":"2026-01-01","summary":"{}"}}"#,
                 "x".repeat(201)

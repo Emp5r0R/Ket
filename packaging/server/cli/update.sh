@@ -38,7 +38,7 @@ cmd_update() {
   require_commands curl jq
   [[ -z $target || $target =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || fail "unexpected release name: $target"
 
-  local installed installed_version target_version manifest category='' rating
+  local installed installed_version target_version manifest category='' apps='' rating
   installed=$(installed_ref)
   if [[ -z $target ]]; then
     target=$(latest_release_tag) || fail 'could not look up the latest Ket release; check outbound HTTPS to github.com'
@@ -48,6 +48,7 @@ cmd_update() {
   if [[ -n $installed_version && -n $target_version ]] \
     && manifest=$(release_manifest "$target" 2>/dev/null); then
     category=$(update_category "$manifest" "$installed_version" "$target_version")
+    apps=$(app_ratings "$manifest" "$installed_version" "$target_version")
   fi
   rating=${category:-unrated}
 
@@ -62,8 +63,9 @@ cmd_update() {
     return 0
   fi
   info "Ket $target is available (installed: $installed, update rating: $rating)."
+  [[ -z $apps ]] || info "Apps this server will ask to update: $apps"
   if $check; then
-    record_update_check "$installed" "$target" "$category" available
+    record_update_check "$installed" "$target" "$category" available "$apps"
     return 0
   fi
   if $auto; then
@@ -71,19 +73,19 @@ cmd_update() {
     policy=$(auto_update_policy)
     if [[ -z $installed_version ]]; then
       info "Automatic updates need a release install; this one runs $installed. Update with: sudo ket update"
-      record_update_check "$installed" "$target" "$category" 'waiting: not a release install'
+      record_update_check "$installed" "$target" "$category" 'waiting: not a release install' "$apps"
       return 0
     fi
     if ! auto_update_allows "$policy" "$category"; then
       info "Not applied automatically (KET_AUTO_UPDATE=$policy). Update with: sudo ket update"
-      record_update_check "$installed" "$target" "$category" "waiting: KET_AUTO_UPDATE=$policy"
+      record_update_check "$installed" "$target" "$category" "waiting: KET_AUTO_UPDATE=$policy" "$apps"
       return 0
     fi
   elif ! $yes; then
     has_terminal || fail 'no terminal to confirm on; rerun with --yes'
     confirm "Update Ket $installed to $target?" || { info 'Nothing changed.'; return 0; }
   fi
-  record_update_check "$installed" "$target" "$category" applying
+  record_update_check "$installed" "$target" "$category" applying "$apps"
   # The current release's bootstrap downloads the target and runs the target's
   # own apply-update, so the newer release decides how it is installed.
   exec env "KET_REF=$target" "KET_INSTALL_DIR=$install_dir" bash "$install_dir/install.sh" update
