@@ -145,6 +145,7 @@ server_contracts() {
   run_step 'One-command bootstrap tests' "$ROOT/packaging/test-bootstrap.sh"
   run_step 'Server ket command tests' "$ROOT/packaging/test-ket-cli.sh"
   run_step 'Compose overlay selection tests' "$ROOT/packaging/test-compose-overlays.sh"
+  run_step 'Bounded container logging tests' "$ROOT/packaging/test-compose-logging.sh"
   run_step 'Public edge renderer and template contract tests' "$ROOT/packaging/test-render-edge.sh"
   run_step 'Invite helper contract tests' "$ROOT/packaging/test-create-invite.sh"
   run_step 'Certificate trust-bundle tests' "$ROOT/packaging/test-certificate-trust-bundle.sh"

@@ -20,6 +20,12 @@ services:
         condition: service_healthy
         restart: true
     restart: unless-stopped
+    # Logs stay small and short-lived: nothing about users is kept for long.
+    logging:
+      driver: local
+      options:
+        max-size: "1m"
+        max-file: "3"
     expose:
       - "8444"
     volumes:

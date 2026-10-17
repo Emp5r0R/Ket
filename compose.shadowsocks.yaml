@@ -34,6 +34,12 @@ services:
         condition: service_healthy
         restart: true
     restart: unless-stopped
+    # Logs stay small and short-lived: nothing about users is kept for long.
+    logging:
+      driver: local
+      options:
+        max-size: "1m"
+        max-file: "3"
     ports:
       - "${KET_SHADOWSOCKS_BIND_ADDRESS:-0.0.0.0}:${KET_SHADOWSOCKS_PORT_START:-20000}-${KET_SHADOWSOCKS_PORT_END:-20999}:${KET_SHADOWSOCKS_PORT_START:-20000}-${KET_SHADOWSOCKS_PORT_END:-20999}/tcp"
       - "${KET_SHADOWSOCKS_BIND_ADDRESS:-0.0.0.0}:${KET_SHADOWSOCKS_PORT_START:-20000}-${KET_SHADOWSOCKS_PORT_END:-20999}:${KET_SHADOWSOCKS_PORT_START:-20000}-${KET_SHADOWSOCKS_PORT_END:-20999}/udp"

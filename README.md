@@ -52,6 +52,7 @@ Security fixes install themselves. The Ket app tells you when it needs updating.
 - [Server setup in detail](docs/SERVER_INSTALL.md): supported systems, domains and Cloudflare, the `ket` command, uninstalling.
 - [How updates work](docs/UPDATES.md): what gets updated automatically, and when an app must update.
 - [Features and transports](docs/FEATURES.md): what Ket does and how each connection method is tested.
+- [What a server knows about its users](docs/PRIVACY.md).
 - [How invites work](docs/INVITE_CAPSULE.md) and the [architecture](docs/ARCHITECTURE.md).
 - [Running the server by hand](docs/MANUAL_DEPLOYMENT.md) and [developing Ket](docs/DEVELOPMENT.md).
 

@@ -27,6 +27,9 @@ const MAX_LABEL_LENGTH: usize = 64;
 const MAX_CLIENT_NAME_LENGTH: usize = 96;
 const CRYPTO_WORKERS: usize = 4;
 const MAX_PENDING_CRYPTO_OPERATIONS: usize = 32;
+/// How long an expired invite stays listed before the server forgets it, so
+/// operators can still see why a device stopped connecting.
+const EXPIRED_GRANT_RETENTION_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 #[derive(Clone)]
 pub struct CreatedSession {
@@ -567,6 +570,8 @@ impl AccessService {
         Ok(allocation)
     }
 
+    /// Ends expired session leases and forgets invites that expired more than
+    /// [`EXPIRED_GRANT_RETENTION_SECONDS`] ago, label and all.
     pub async fn expire_sessions(&self) -> Result<Vec<SessionAllocation>, ServiceError> {
         let now = unix_time();
         let mut state = self.state.lock().await;
@@ -576,12 +581,13 @@ impl AccessService {
             .filter(|session| session.expires_at_epoch_seconds <= now)
             .map(session_allocation)
             .collect::<Result<Vec<_>, _>>()?;
-        if expired.is_empty() {
-            return Ok(expired);
-        }
         let mut next = state.clone();
         next.sessions
             .retain(|session| session.expires_at_epoch_seconds > now);
+        let forgot_grants = forget_stale_grants(&mut next, now);
+        if expired.is_empty() && !forgot_grants {
+            return Ok(expired);
+        }
         self.repository.store(&next).await?;
         *state = next;
         Ok(expired)
@@ -742,6 +748,28 @@ fn prepare_resource_slots(
         changed = true;
     }
     Ok(changed)
+}
+
+/// Removes invites that expired at least [`EXPIRED_GRANT_RETENTION_SECONDS`]
+/// ago, with any session still pointing at them. True when anything changed.
+fn forget_stale_grants(state: &mut PersistedState, now: u64) -> bool {
+    let stale = |grant: &AccessGrantRecord| {
+        grant.expires_at_epoch_seconds.is_some_and(|expires_at| {
+            now.saturating_sub(expires_at) >= EXPIRED_GRANT_RETENTION_SECONDS
+        })
+    };
+    let before = state.grants.len();
+    let forgotten: Vec<String> = state
+        .grants
+        .iter()
+        .filter(|grant| stale(grant))
+        .map(|grant| grant.id.clone())
+        .collect();
+    state.grants.retain(|grant| !stale(grant));
+    state
+        .sessions
+        .retain(|session| !forgotten.contains(&session.grant_id));
+    state.grants.len() != before
 }
 
 fn next_resource_slot(state: &PersistedState, max_sessions: u32) -> Option<u32> {
@@ -1070,6 +1098,38 @@ mod tests {
                 "a session resource slot exceeds node capacity"
             ))
         ));
+    }
+
+    #[test]
+    fn invites_are_forgotten_a_week_after_they_expire() {
+        let now = 10_000_000;
+        let grant = |id: &str, expires_at: Option<u64>| AccessGrantRecord {
+            id: id.to_owned(),
+            secret_hash: String::new(),
+            label: "Label".to_owned(),
+            max_connections: 1,
+            expires_at_epoch_seconds: expires_at,
+            created_at_epoch_seconds: 1,
+            paused: false,
+            protocols: Default::default(),
+        };
+        let mut state = PersistedState {
+            schema_version: 2,
+            grants: vec![
+                grant("Forgotten1", Some(now - EXPIRED_GRANT_RETENTION_SECONDS)),
+                grant(
+                    "RecentlyEx",
+                    Some(now - EXPIRED_GRANT_RETENTION_SECONDS + 1),
+                ),
+                grant("Unlimited1", None),
+                grant("Active0001", Some(now + 60)),
+            ],
+            sessions: Vec::new(),
+        };
+        assert!(forget_stale_grants(&mut state, now));
+        let kept: Vec<_> = state.grants.iter().map(|grant| grant.id.as_str()).collect();
+        assert_eq!(kept, ["RecentlyEx", "Unlimited1", "Active0001"]);
+        assert!(!forget_stale_grants(&mut state, now));
     }
 
     fn test_session(id: &str, resource_slot: Option<u32>, expires_at: u64) -> SessionRecord {

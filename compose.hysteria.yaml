@@ -14,9 +14,15 @@ services:
         condition: service_healthy
         restart: true
     restart: unless-stopped
+    # Logs stay small and short-lived: nothing about users is kept for long.
+    logging:
+      driver: local
+      options:
+        max-size: "1m"
+        max-file: "3"
     environment:
       HYSTERIA_DISABLE_UPDATE_CHECK: "1"
-      HYSTERIA_LOG_LEVEL: info
+      HYSTERIA_LOG_LEVEL: warn
       HYSTERIA_LOG_FORMAT: json
     ports:
       - "${KET_HYSTERIA_BIND_ADDRESS:-0.0.0.0}:${KET_HYSTERIA_PUBLIC_PORT:-443}:8443/udp"
