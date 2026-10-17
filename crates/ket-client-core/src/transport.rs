@@ -5,7 +5,7 @@ use ket_core::SessionTransport;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-use crate::{ClientError, ConnectOptions};
+use crate::{ClientError, ConnectOptions, NetworkReport};
 
 #[derive(Clone, Debug)]
 pub struct ProbeReport {
@@ -26,6 +26,10 @@ pub trait ActiveTunnel: Send + Sync {
     fn transport_id(&self) -> &str;
     fn status(&self) -> watch::Receiver<TunnelStatus>;
     async fn stop(&self) -> Result<(), ClientError>;
+    /// Tunnels that do not track the network report nothing.
+    fn network(&self) -> NetworkReport {
+        NetworkReport::default()
+    }
 }
 
 pub struct StartedTunnel {

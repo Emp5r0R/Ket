@@ -13,8 +13,8 @@ use tokio::{
 };
 
 use crate::{
-    ActiveTunnel, ClientError, ConnectOptions, ProbeReport, StartedTunnel, TransportAdapter,
-    TunnelStatus,
+    ActiveTunnel, ClientError, ConnectOptions, NetworkReport, ProbeReport, StartedTunnel,
+    TransportAdapter, TunnelStatus,
 };
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(50);
@@ -154,12 +154,14 @@ impl TransportAdapter for BrokerTransportAdapter {
             } if valid_tunnel_id(&tunnel_id) => {
                 let (command_tx, command_rx) = mpsc::channel(1);
                 let (status_tx, status_rx) = watch::channel(TunnelStatus::Connected);
+                let (network_tx, network_rx) = watch::channel(NetworkReport::default());
                 tokio::spawn(monitor_tunnel(
                     self.config.clone(),
                     tunnel_id.clone(),
                     transport.profile.id.clone(),
                     command_rx,
                     status_tx,
+                    network_tx,
                 ));
                 Ok(StartedTunnel {
                     tunnel: Arc::new(BrokerTunnel {
@@ -168,6 +170,7 @@ impl TransportAdapter for BrokerTransportAdapter {
                         transport_id: transport.profile.id.clone(),
                         command_tx,
                         status_rx,
+                        network_rx,
                         stop_timeout: DEFAULT_STOP_TIMEOUT,
                     }),
                     handshake_latency: Duration::from_millis(handshake_latency_ms),
@@ -190,6 +193,8 @@ struct BrokerTunnel {
     transport_id: String,
     command_tx: mpsc::Sender<TunnelCommand>,
     status_rx: watch::Receiver<TunnelStatus>,
+    /// The service's latest report, refreshed with every heartbeat.
+    network_rx: watch::Receiver<NetworkReport>,
     stop_timeout: Duration,
 }
 
@@ -201,6 +206,10 @@ impl ActiveTunnel for BrokerTunnel {
 
     fn status(&self) -> watch::Receiver<TunnelStatus> {
         self.status_rx.clone()
+    }
+
+    fn network(&self) -> NetworkReport {
+        *self.network_rx.borrow()
     }
 
     async fn stop(&self) -> Result<(), ClientError> {
@@ -239,6 +248,7 @@ async fn monitor_tunnel(
     transport_id: String,
     mut commands: mpsc::Receiver<TunnelCommand>,
     status: watch::Sender<TunnelStatus>,
+    network_report: watch::Sender<NetworkReport>,
 ) {
     let mut ticker = tokio::time::interval(config.heartbeat_interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -251,8 +261,11 @@ async fn monitor_tunnel(
                     BrokerRequest::Heartbeat { tunnel_id: tunnel_id.clone() },
                     &transport_id,
                 ).await {
-                    Ok(BrokerResponse::Tunnel { status: next }) => {
+                    Ok(BrokerResponse::Tunnel { status: next, network }) => {
                         failures = 0;
+                        network_report.send_if_modified(|report| {
+                            std::mem::replace(report, network) != network
+                        });
                         let next = tunnel_status(next);
                         if !matches!(next, TunnelStatus::Connected) {
                             let _ = stop_remote(
@@ -549,11 +562,83 @@ mod tests {
             transport_id: "test-transport".to_owned(),
             command_tx,
             status_rx,
+            network_rx: watch::channel(NetworkReport::default()).1,
             stop_timeout: Duration::from_secs(2),
         };
 
         tunnel.stop().await.unwrap();
 
+        server.await.unwrap();
+        fs::remove_file(token_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn heartbeats_carry_the_service_network_report_to_the_app() {
+        let suffix: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        let token_path = std::env::temp_dir().join(format!("ket-broker-token-{suffix}"));
+        let token = Arc::new(BrokerToken::generate());
+        token.write_new(&token_path).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_token = Arc::clone(&token);
+        let reported = NetworkReport {
+            generation: 2,
+            offline: true,
+        };
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                authenticate(&mut stream, &server_token).await;
+                let request: BrokerRequest = read_frame(&mut stream).await.unwrap();
+                if matches!(request, BrokerRequest::Stop { .. }) {
+                    write_frame(&mut stream, &BrokerResponse::Stopped)
+                        .await
+                        .unwrap();
+                    return;
+                }
+                write_frame(
+                    &mut stream,
+                    &BrokerResponse::Tunnel {
+                        status: BrokerTunnelStatus::Connected,
+                        network: reported,
+                    },
+                )
+                .await
+                .unwrap();
+            }
+        });
+        let config = BrokerConfig::new(address, &token_path)
+            .unwrap()
+            .with_timing(Duration::from_secs(2), Duration::from_millis(10));
+        let (commands, command_rx) = mpsc::channel(1);
+        let (status_tx, _status_rx) = watch::channel(TunnelStatus::Connected);
+        let (network_tx, mut network_rx) = watch::channel(NetworkReport::default());
+        let monitor = tokio::spawn(monitor_tunnel(
+            config,
+            "A".repeat(48),
+            "test-transport".to_owned(),
+            command_rx,
+            status_tx,
+            network_tx,
+        ));
+
+        timeout(Duration::from_secs(2), network_rx.changed())
+            .await
+            .expect("a heartbeat should publish the network report")
+            .unwrap();
+        assert_eq!(*network_rx.borrow(), reported);
+
+        let (completed, completion) = oneshot::channel();
+        commands
+            .send(TunnelCommand::Stop { completed })
+            .await
+            .unwrap();
+        completion.await.unwrap().unwrap();
+        monitor.await.unwrap();
         server.await.unwrap();
         fs::remove_file(token_path).unwrap();
     }
@@ -605,6 +690,7 @@ mod tests {
             "test-transport".to_owned(),
             command_rx,
             status_tx,
+            watch::channel(NetworkReport::default()).0,
         ));
 
         timeout(Duration::from_secs(2), status_rx.changed())

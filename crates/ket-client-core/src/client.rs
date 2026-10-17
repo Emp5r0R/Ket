@@ -19,6 +19,11 @@ use crate::{
 
 /// How many fallback reasons a snapshot keeps while a reconnect loop runs.
 const MAX_FALLBACKS: usize = 8;
+/// How often the tunnel is asked whether the device changed networks.
+const NETWORK_CHECK_INTERVAL: Duration = Duration::from_secs(2);
+/// How long the engines get to redial over a new network before the route
+/// is checked.
+const NETWORK_SETTLE_TIME: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProbeIdentity {
@@ -55,6 +60,8 @@ struct RuntimeState {
     connect_options: ConnectOptions,
     history: TransportHistory,
     probes: BTreeMap<String, CachedProbe>,
+    /// The network generation the current tunnel was last checked on.
+    network_generation: u64,
 }
 
 pub struct KetClient {
@@ -124,6 +131,7 @@ impl KetClient {
                 connect_options: ConnectOptions::default(),
                 history: TransportHistory::default(),
                 probes: BTreeMap::new(),
+                network_generation: 0,
             }),
             route_health,
             connect_cancellation,
@@ -311,7 +319,7 @@ impl KetClient {
         match self.refresh_locked(renew, false).await {
             Ok(snapshot) => Ok(snapshot),
             Err(error @ ClientError::Network(_)) => {
-                let (route_is_active, should_verify_route) = {
+                let (route_is_active, should_verify_route, offline) = {
                     let mut runtime = self.runtime.lock().await;
                     runtime.control_failures = runtime.control_failures.saturating_add(1);
                     let route_is_active = runtime.connection_requested && runtime.tunnel.is_some();
@@ -320,8 +328,19 @@ impl KetClient {
                         runtime.control_failures >= 2
                             && runtime.connection_requested
                             && runtime.tunnel.is_some(),
+                        runtime
+                            .tunnel
+                            .as_ref()
+                            .is_some_and(|tunnel| tunnel.network().offline),
                     )
                 };
+                // With no network at all a new tunnel could not do better, and
+                // tearing this one down would let traffic out unprotected the
+                // moment a network returns.
+                if route_is_active && offline {
+                    self.update_snapshot(|snapshot| snapshot.issue = Some(error.issue()));
+                    return Ok(self.snapshot());
+                }
                 if route_is_active && (!should_verify_route || self.route_health.is_healthy().await)
                 {
                     self.update_snapshot(|snapshot| snapshot.issue = None);
@@ -509,11 +528,19 @@ impl KetClient {
         let task = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut network_ticker = tokio::time::interval(NETWORK_CHECK_INTERVAL);
+            network_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
                         if client.runtime.lock().await.session.is_some() {
                             let _ = client.maintain_once().await;
+                        }
+                    }
+                    _ = network_ticker.tick() => {
+                        if client.network_moved().await {
+                            tokio::time::sleep(NETWORK_SETTLE_TIME).await;
+                            let _ = client.verify_after_network_change().await;
                         }
                     }
                     _ = &mut shutdown_rx => break,
@@ -524,6 +551,47 @@ impl KetClient {
             shutdown: Some(shutdown_tx),
             task: Some(task),
         }
+    }
+
+    /// True once when the tunnel reports the device is on another network.
+    async fn network_moved(&self) -> bool {
+        let mut runtime = self.runtime.lock().await;
+        let Some(report) = runtime.tunnel.as_ref().map(|tunnel| tunnel.network()) else {
+            return false;
+        };
+        if report.offline || report.generation == runtime.network_generation {
+            return false;
+        }
+        runtime.network_generation = report.generation;
+        true
+    }
+
+    /// Checks the route once the engines have had time to redial over a new
+    /// network. A healthy route needs nothing, and nothing shows; otherwise
+    /// the tunnel is replaced at once instead of after repeated failures.
+    pub async fn verify_after_network_change(&self) -> Result<ClientSnapshot, ClientError> {
+        let _operation = self.operation.lock().await;
+        let active = {
+            let runtime = self.runtime.lock().await;
+            runtime
+                .tunnel
+                .as_ref()
+                .filter(|_| runtime.connection_requested)
+                .map(Arc::clone)
+        };
+        let Some(tunnel) = active else {
+            return Ok(self.snapshot());
+        };
+        if tunnel.network().offline || self.route_health.is_healthy().await {
+            return Ok(self.snapshot());
+        }
+        let current = self.runtime.lock().await.tunnel.take();
+        if let Some(tunnel) = current {
+            self.stop_and_retain_on_failure(tunnel).await?;
+        }
+        // The network changed under a working transport: it is not to blame,
+        // so it is tried again first rather than cooled down.
+        self.reconnect_locked().await
     }
 
     async fn connect_locked(&self, reconnecting: bool) -> Result<ClientSnapshot, ClientError> {
@@ -648,6 +716,7 @@ impl KetClient {
                         runtime
                             .history
                             .record_success(&transport.profile.id, latency);
+                        runtime.network_generation = started.tunnel.network().generation;
                         runtime.tunnel = Some(started.tunnel);
                     }
                     self.update_snapshot(|snapshot| {
@@ -1630,6 +1699,86 @@ mod tests {
         assert_eq!(route_health.probes.load(Ordering::SeqCst), 2);
     }
 
+    async fn connected_recovery_client(
+        healthy_route: bool,
+    ) -> (
+        Arc<KetClient>,
+        Arc<MockApi>,
+        Arc<RecoveryAdapter>,
+        Arc<MockRouteHealth>,
+    ) {
+        let api = Arc::new(MockApi::new(test_manifest()));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let route_health = Arc::new(MockRouteHealth::new(healthy_route));
+        let client = KetClient::new_with_route_health(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api.clone(),
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+            route_health.clone(),
+        )
+        .unwrap();
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        client.connect().await.unwrap();
+        (client, api, adapter, route_health)
+    }
+
+    #[tokio::test]
+    async fn without_any_network_the_tunnel_is_held_instead_of_torn_down() {
+        let (client, api, adapter, route_health) = connected_recovery_client(false).await;
+        adapter.report_network(0, true);
+        api.fail_next_control_requests(4);
+
+        for _ in 0..4 {
+            let held = client.maintain_once().await.unwrap();
+            assert_eq!(held.phase, ClientPhase::Connected);
+            assert_eq!(
+                held.issue.map(|issue| issue.code).as_deref(),
+                Some("network_unavailable")
+            );
+        }
+        assert_eq!(adapter.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(route_health.probes.load(Ordering::SeqCst), 0);
+        assert!(!client.network_moved().await, "an outage is not a move");
+    }
+
+    #[tokio::test]
+    async fn a_new_network_with_a_working_route_changes_nothing() {
+        let (client, _api, adapter, route_health) = connected_recovery_client(true).await;
+        assert!(!client.network_moved().await);
+        adapter.report_network(1, false);
+        assert!(client.network_moved().await);
+        assert!(!client.network_moved().await, "each move is reported once");
+
+        let snapshot = client.verify_after_network_change().await.unwrap();
+        assert_eq!(snapshot.phase, ClientPhase::Connected);
+        assert_eq!(route_health.probes.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_new_network_that_broke_the_route_replaces_the_tunnel_at_once() {
+        let (client, _api, adapter, route_health) = connected_recovery_client(false).await;
+        adapter.report_network(1, false);
+        assert!(client.network_moved().await);
+
+        let snapshot = client.verify_after_network_change().await.unwrap();
+        assert_eq!(snapshot.phase, ClientPhase::Connected);
+        assert_eq!(route_health.probes.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.connection_attempts.load(Ordering::SeqCst), 2);
+        assert!(
+            snapshot.fallbacks.is_empty(),
+            "the network, not the transport, was to blame"
+        );
+    }
+
     #[test]
     fn renewal_deadline_uses_half_of_the_available_lease() {
         assert_eq!(renewal_deadline(100, 400), 250);
@@ -1946,6 +2095,8 @@ mod tests {
         connect_options: StdMutex<Vec<ConnectOptions>>,
         stops: Arc<AtomicUsize>,
         stop_failure: Arc<AtomicBool>,
+        /// What every tunnel from this adapter reports about the network.
+        network: Arc<StdMutex<crate::NetworkReport>>,
     }
 
     struct BlockingAdapter {
@@ -2006,7 +2157,15 @@ mod tests {
                 connect_options: StdMutex::new(Vec::new()),
                 stops: Arc::new(AtomicUsize::new(0)),
                 stop_failure: Arc::new(AtomicBool::new(false)),
+                network: Arc::new(StdMutex::new(crate::NetworkReport::default())),
             }
+        }
+
+        fn report_network(&self, generation: u64, offline: bool) {
+            *self.network.lock().expect("network lock") = crate::NetworkReport {
+                generation,
+                offline,
+            };
         }
 
         fn set_blocked<const N: usize>(&self, transport_ids: [&str; N]) {
@@ -2089,6 +2248,7 @@ mod tests {
                     status,
                     stops: Arc::clone(&self.stops),
                     stop_failure: Arc::clone(&self.stop_failure),
+                    network: Arc::clone(&self.network),
                 }),
                 handshake_latency: Duration::from_millis(25),
             })
@@ -2100,6 +2260,7 @@ mod tests {
         status: watch::Sender<TunnelStatus>,
         stops: Arc<AtomicUsize>,
         stop_failure: Arc<AtomicBool>,
+        network: Arc<StdMutex<crate::NetworkReport>>,
     }
 
     #[async_trait]
@@ -2110,6 +2271,10 @@ mod tests {
 
         fn status(&self) -> watch::Receiver<TunnelStatus> {
             self.status.subscribe()
+        }
+
+        fn network(&self) -> crate::NetworkReport {
+            *self.network.lock().expect("network lock")
         }
 
         async fn stop(&self) -> Result<(), ClientError> {

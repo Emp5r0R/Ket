@@ -253,6 +253,10 @@ impl HttpControlPlane {
             .redirect(Policy::none())
             .min_tls_version(Version::TLS_1_2)
             .no_proxy()
+            // A fresh connection per call: control calls are rare, and a kept
+            // connection can die silently inside the tunnel when the device
+            // changes networks, so the next call would hang until it timed out.
+            .pool_max_idle_per_host(0)
             // No version: sealed requests must not tell a front which app
             // version is asking. Plain requests name it in `Ket-Client`.
             .user_agent("Ket")

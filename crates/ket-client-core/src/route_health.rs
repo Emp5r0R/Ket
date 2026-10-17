@@ -25,6 +25,9 @@ impl HttpsRouteHealthProbe {
             .redirect(Policy::none())
             .min_tls_version(Version::TLS_1_2)
             .no_proxy()
+            // Each check needs a fresh path through the tunnel; a kept
+            // connection from before a network change may be dead.
+            .pool_max_idle_per_host(0)
             .user_agent(concat!("Ket/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|_| {

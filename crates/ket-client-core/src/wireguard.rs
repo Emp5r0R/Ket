@@ -18,8 +18,8 @@ use tokio::{
 use crate::{
     ClientError, ConnectOptions, ProbeReport, StartedTunnel, TransportAdapter,
     full_route::{
-        FullRouteBridge, reserve_proxy_port, stop_bridge, stop_child, supervise_with_carrier,
-        wait_until_three_stable,
+        Carrier, CarrierLauncher, FullRouteBridge, reserve_proxy_port, stop_bridge, stop_child,
+        supervise_with_carrier, wait_until_three_stable,
     },
     runtime::EphemeralConfig,
     xray::{check_binary, verify_tunnel_path, wait_for_socks},
@@ -161,21 +161,24 @@ impl TransportAdapter for WireGuardTlsAdapter {
         }
 
         let arguments = wstunnel_arguments(transport, server.ip(), wireguard_port)?;
-        let mut carrier = Command::new(&self.wstunnel_binary_path)
-            .args(arguments)
-            .env("NO_COLOR", "true")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|_| {
-                ClientError::transport(
-                    &transport.profile.id,
-                    "failed to launch the WebSocket TLS carrier",
-                    false,
-                )
-            })?;
+        let wstunnel = self.wstunnel_binary_path.clone();
+        let launch_carrier: CarrierLauncher = Box::new(move || {
+            Command::new(&wstunnel)
+                .args(&arguments)
+                .env("NO_COLOR", "true")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+        });
+        let mut carrier = launch_carrier().map_err(|_| {
+            ClientError::transport(
+                &transport.profile.id,
+                "failed to launch the WebSocket TLS carrier",
+                false,
+            )
+        })?;
         if let Err(error) = wait_for_process(&mut carrier, "wstunnel", &transport.profile.id).await
         {
             stop_child(&mut carrier).await;
@@ -248,8 +251,11 @@ impl TransportAdapter for WireGuardTlsAdapter {
                 transport.profile.id.clone(),
                 "Xray WireGuard",
                 xray,
-                "wstunnel",
-                carrier,
+                Carrier {
+                    name: "wstunnel",
+                    child: carrier,
+                    relaunch: launch_carrier,
+                },
                 bridge,
                 self.stop_timeout,
             ),

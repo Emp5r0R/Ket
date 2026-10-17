@@ -30,17 +30,18 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 readonly ROOT
 # shellcheck source=scripts/lib/canary.sh
 . "$ROOT/scripts/lib/canary.sh"
+# shellcheck source=scripts/lib/desktop-lab.sh
+. "$ROOT/scripts/lib/desktop-lab.sh"
 
-readonly IMAGE=ket-dns-leak-lab:ubuntu-24.04
 readonly NETWORK=ket-dns-leak-lab
 readonly SUBNET6=fd6b:6574:6c61::/64
 readonly LINK_LOCAL_RESOLVER=fe80::1
 # The resolver a DHCP renewal switches to mid-session.
 readonly RENEWED_RESOLVER=9.9.9.9
-readonly ENGINES=(xray tun2proxy hysteria sslocal wstunnel)
 
 failures=0
 container=''
+client_pid=''
 label=''
 # Extra connect_check options, such as --split-tls-hello.
 client_flags=()
@@ -57,72 +58,14 @@ die() {
   exit 2
 }
 
-lab() { docker exec "$container" "$@"; }
-
-# unit_sandbox: the shipped tunnel service's sandbox properties, one
-# KEY=VALUE per line, so the client runs under the same restrictions as on a
-# desktop.
-unit_sandbox() {
-  sed -n '/^\[Service\]/,/^\[/p' "$ROOT/packaging/linux/ket-tunnel.service" \
-    | grep -E '^[A-Za-z]+=' \
-    | grep -vE '^(Type|User|Group|Exec[A-Za-z]*|Kill[A-Za-z]*|Restart[A-Za-z]*|Timeout[A-Za-z]*)='
-}
-
-fetch_engines() {
-  local cache=$1 engine
-  mkdir -p "$cache"
-  for engine in "${ENGINES[@]}"; do
-    [[ -x $cache/$engine ]] && continue
-    case $engine in
-      sslocal) "$ROOT/packaging/fetch-shadowsocks.sh" linux-amd64 "$cache/sslocal" ;;
-      *) "$ROOT/packaging/fetch-$engine.sh" linux-amd64 "$cache/$engine" ;;
-    esac
-  done
-}
-
-# engines_from_deb DEB DIRECTORY: OpenVPN and stunnel from a Ket package.
-engines_from_deb() {
-  local unpacked engine
-  unpacked=$(mktemp -d)
-  dpkg-deb -x "$1" "$unpacked"
-  for engine in openvpn stunnel; do
-    install -m 0755 "$unpacked/usr/libexec/ket/$engine" "$2/$engine"
-  done
-  rm -rf -- "$unpacked"
-}
-
-build_image() {
-  docker build -q -t "$IMAGE" - >/dev/null <<'DOCKERFILE'
-FROM ubuntu:24.04
-RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      systemd systemd-sysv systemd-resolved dbus tcpdump iproute2 dnsutils curl ca-certificates procps \
- && rm -rf /var/lib/apt/lists/* \
- && systemctl mask systemd-networkd.service systemd-networkd.socket getty.target console-getty.service
-STOPSIGNAL SIGRTMIN+3
-CMD ["/sbin/init"]
-DOCKERFILE
-}
-
 ensure_network() {
   docker network inspect "$NETWORK" >/dev/null 2>&1 \
     || docker network create --ipv6 --subnet "$SUBNET6" "$NETWORK" >/dev/null
 }
 
 start_container() {
-  local engines=$1 probe=$2
-  container=ket-dns-leak-lab-$$
-  docker run -d --name "$container" --privileged --cgroupns=private --network "$NETWORK" \
-    --tmpfs /run --tmpfs /run/lock \
-    -v "$engines:/opt/ket/engines:ro" -v "$probe:/opt/ket/connect_check:ro" \
-    -v "$ROOT/scripts/dns-leak-check.sh:/opt/ket/dns-leak-check.sh:ro" \
-    "$IMAGE" >/dev/null
-  local attempt
-  for attempt in $(seq 1 30); do
-    [[ $(lab systemctl is-active systemd-resolved 2>/dev/null) == active ]] && return 0
-    sleep 1
-  done
-  die "systemd-resolved did not start in the lab container (after $attempt s)"
+  start_desktop "ket-dns-leak-lab-$$" "$NETWORK" "$1" "$2" \
+    -v "$ROOT/scripts/dns-leak-check.sh:/opt/ket/dns-leak-check.sh:ro"
 }
 
 # host_resolver: the resolver this computer's network hands out, which the
@@ -176,24 +119,14 @@ baseline_check() {
 
 # run_protocol MODE PROTOCOL INVITE
 run_protocol() {
-  local mode=$1 protocol=$2 invite=$3 before after attempt egress client_log property
-  local -a sandbox=()
+  local mode=$1 protocol=$2 invite=$3 before after egress client_log client
   step "$mode resolver, $protocol"
   client_log=$(mktemp)
-  while IFS= read -r property; do sandbox+=(-p "$property"); done < <(unit_sandbox)
   before=$(resolver_snapshot)
-  printf '%s\n' "$invite" | docker exec -i "$container" systemd-run --quiet --wait --pipe --collect \
-    --unit ket-leak-client "${sandbox[@]}" \
-    /opt/ket/connect_check --engines /opt/ket/engines --runtime /run/ket --protocol "$protocol" "${client_flags[@]}" \
-    >"$client_log" 2>&1 &
-  local client=$!
-  for attempt in $(seq 1 90); do
-    grep -q '^connected' "$client_log" && break
-    kill -0 "$client" 2>/dev/null || break
-    sleep 1
-  done
-  if ! grep -q '^connected' "$client_log"; then
-    problem "could not connect with $protocol within $attempt s: $(tr '\n' ' ' <"$client_log")"
+  start_client ket-leak-client "$client_log" "$protocol" "$invite" "${client_flags[@]}"
+  client=$client_pid
+  if ! wait_connected "$client_log" "$client" 90; then
+    problem "could not connect with $protocol within 90 s: $(tr '\n' ' ' <"$client_log")"
     lab systemctl kill --signal=TERM ket-leak-client.service 2>/dev/null || true
     wait "$client" 2>/dev/null || true
     return
@@ -258,14 +191,11 @@ main() {
   step 'Preparing the lab'
   fetch_engines "$cache/engines"
   [[ -z $deb ]] || engines_from_deb "$deb" "$cache/engines"
-  if [[ -z $probe ]]; then
-    (cd "$ROOT" && cargo build -q -p ket-client-core --example connect_check)
-    probe=$(cd "$ROOT" && cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/examples/connect_check
-  fi
+  [[ -n $probe ]] || probe=$(build_probe)
   build_image
   ensure_network
   network_resolver=$(host_resolver)
-  pass "image $IMAGE, engines in $cache/engines, network resolver $network_resolver"
+  pass "image $DESKTOP_LAB_IMAGE, engines in $cache/engines, network resolver $network_resolver"
 
   trap cleanup EXIT
   # Sessions run one at a time and each is released; the spare device covers

@@ -43,6 +43,7 @@
     "linux": {
       "deb": {
         "depends": [
+          "iproute2",
           "libcap-ng0",
           "libssl3",
           "util-linux-extra | login"

@@ -3,12 +3,15 @@
 //! broker runs, then holds it until Ctrl-C or SIGTERM and disconnects.
 //!
 //!   connect_check --engines DIR --runtime DIR [--protocol NAME] [--split-tls-hello]
+//!                 [--maintain]
 //!
 //! `--engines` holds the engine binaries under their installed names
 //! (`xray`, `hysteria`, `sslocal`, `tun2proxy`, `wstunnel`, `openvpn`,
 //! `stunnel`); missing engines simply drop their transports. `--protocol`
 //! takes a contract name such as `vless_xtls_reality`; `--split-tls-hello`
-//! turns on the setting of that name. Needs root on Linux,
+//! turns on the setting of that name; `--maintain` runs the apps' maintenance
+//! loop (renewal and automatic recovery) and prints `phase=…` on every change,
+//! so a test can tell a seamless network change from a reconnect. Needs root on Linux,
 //! like the broker (Administrator on Windows). Prints `connected protocol=…` once the route is up and
 //! `disconnected` after release; exits non-zero on any failure.
 
@@ -29,6 +32,7 @@ struct Options {
     runtime: PathBuf,
     protocol: Option<TransportProtocol>,
     connect: ConnectOptions,
+    maintain: bool,
 }
 
 #[tokio::main]
@@ -47,6 +51,7 @@ fn parse_options() -> Result<Options, String> {
     let mut runtime = None;
     let mut protocol = None;
     let mut connect = ConnectOptions::default();
+    let mut maintain = false;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         let mut value = || {
@@ -65,6 +70,7 @@ fn parse_options() -> Result<Options, String> {
                 );
             }
             "--split-tls-hello" => connect.split_tls_hello = true,
+            "--maintain" => maintain = true,
             other => return Err(format!("unknown option: {other}")),
         }
     }
@@ -73,6 +79,7 @@ fn parse_options() -> Result<Options, String> {
         runtime: runtime.ok_or("--runtime is required")?,
         protocol,
         connect,
+        maintain,
     })
 }
 
@@ -170,6 +177,20 @@ async fn run() -> Result<(), String> {
                 .map(|transport| format!("{:?}", transport.protocol))
                 .unwrap_or_else(|| "unknown".to_owned());
             println!("connected protocol={protocol}");
+            let _maintenance = options.maintain.then(|| {
+                let mut snapshots = client.subscribe();
+                tokio::spawn(async move {
+                    let mut last = None;
+                    while snapshots.changed().await.is_ok() {
+                        let phase = snapshots.borrow_and_update().phase.clone();
+                        if last.as_ref() != Some(&phase) {
+                            println!("phase={phase:?}");
+                            last = Some(phase);
+                        }
+                    }
+                });
+                client.spawn_maintenance(std::time::Duration::from_secs(5))
+            });
             wait_for_stop().await
         }
         Err(_) => Ok(()),

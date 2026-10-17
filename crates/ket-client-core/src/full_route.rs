@@ -18,8 +18,9 @@ use tokio::{
 };
 
 use crate::{
-    ActiveTunnel, ClientError, TunnelStatus,
+    ActiveTunnel, ClientError, NetworkReport, TunnelStatus,
     leak_guard::LeakGuard,
+    route_keeper::RouteKeeper,
     system_dns::{SystemDnsLease, SystemDnsManager},
 };
 
@@ -100,6 +101,15 @@ impl FullRouteBridge {
                 false,
             )
         })?;
+        // Installed before the bridge routes everything into the tunnel, so
+        // the engines never lose their direct path to the server.
+        let route_keeper = RouteKeeper::engage(&servers, TUNNEL_INTERFACE).map_err(|_| {
+            ClientError::transport(
+                transport_id,
+                "failed to keep the server reachable outside the protected tunnel",
+                false,
+            )
+        })?;
         let mut child = Command::new(&self.binary_path)
             .args(arguments(socks_port, server_addresses))
             .stdin(Stdio::null())
@@ -127,6 +137,7 @@ impl FullRouteBridge {
             diagnostic: Some(tokio::spawn(collect_bridge_diagnostic(stderr))),
             dns_lease,
             leak_guard: Some(leak_guard),
+            route_keeper: Some(route_keeper),
         })
     }
 }
@@ -137,9 +148,21 @@ pub(crate) struct FullRouteProcess {
     dns_lease: SystemDnsLease,
     /// Released only after the bridge has stopped routing into the tunnel.
     leak_guard: Option<LeakGuard>,
+    /// Keeps the engines' routes to the server on the current network; its
+    /// routes are removed when it is dropped, after the bridge has stopped.
+    route_keeper: Option<RouteKeeper>,
 }
 
 impl FullRouteProcess {
+    /// Network changes under this tunnel. Without a route keeper nothing is
+    /// ever reported.
+    fn network(&self) -> watch::Receiver<NetworkReport> {
+        self.route_keeper.as_ref().map_or_else(
+            || watch::channel(NetworkReport::default()).1,
+            RouteKeeper::network,
+        )
+    }
+
     /// Once the bridge has created its tunnel interface, admits it to the
     /// leak guard and routes the system resolver into it. `Ok(false)` while
     /// it does not exist yet.
@@ -332,13 +355,19 @@ fn arguments(socks_port: u16, server_addresses: &[SocketAddr]) -> Vec<String> {
         "--tun".to_owned(),
         TUNNEL_INTERFACE.to_owned(),
     ];
-    let addresses = server_addresses
-        .iter()
-        .map(SocketAddr::ip)
-        .collect::<BTreeSet<IpAddr>>();
-    for address in addresses {
-        arguments.push("--bypass".to_owned());
-        arguments.push(address.to_string());
+    // On Windows the route keeper owns the server routes outright: the
+    // bridge's own would point at the gateway of the network it started on.
+    // On Linux the bridge finds the keeper's more specific routes and leaves
+    // them alone.
+    if !cfg!(windows) {
+        let addresses = server_addresses
+            .iter()
+            .map(SocketAddr::ip)
+            .collect::<BTreeSet<IpAddr>>();
+        for address in addresses {
+            arguments.push("--bypass".to_owned());
+            arguments.push(address.to_string());
+        }
     }
     arguments
 }
@@ -485,6 +514,7 @@ pub(crate) async fn stop_bridge(bridge: &mut FullRouteProcess) -> std::io::Resul
     stop_bridge_child(&mut bridge.child).await;
     let _ = take_bridge_diagnostic(bridge).await;
     bridge.leak_guard = None;
+    bridge.route_keeper = None;
     bridge.dns_lease.restore()
 }
 
@@ -538,6 +568,7 @@ pub(crate) fn supervise(
 ) -> Arc<dyn ActiveTunnel> {
     let (command_tx, command_rx) = mpsc::channel(1);
     let (status_tx, status_rx) = watch::channel(TunnelStatus::Connected);
+    let network = bridge.network();
     tokio::spawn(supervise_processes(
         engine_name,
         engine,
@@ -549,25 +580,32 @@ pub(crate) fn supervise(
         transport_id,
         command_tx,
         status_rx,
+        network,
         stop_timeout,
     })
 }
 
+/// Starts a carrier again with the arguments it first ran with.
+pub(crate) type CarrierLauncher = Box<dyn Fn() -> std::io::Result<Child> + Send + Sync>;
+
+/// Supervises an engine whose carrier holds one long connection to the
+/// server (wstunnel for WireGuard). That connection dies with the network it
+/// was made on, so the carrier is started again whenever the device moves to
+/// another network; the engine and the tunnel interface stay up.
 pub(crate) fn supervise_with_carrier(
     transport_id: String,
     engine_name: &'static str,
     engine: Child,
-    carrier_name: &'static str,
-    carrier: Child,
+    carrier: Carrier,
     bridge: FullRouteProcess,
     stop_timeout: Duration,
 ) -> Arc<dyn ActiveTunnel> {
     let (command_tx, command_rx) = mpsc::channel(1);
     let (status_tx, status_rx) = watch::channel(TunnelStatus::Connected);
+    let network = bridge.network();
     tokio::spawn(supervise_three_processes(
         engine_name,
         engine,
-        carrier_name,
         carrier,
         bridge,
         command_rx,
@@ -577,8 +615,16 @@ pub(crate) fn supervise_with_carrier(
         transport_id,
         command_tx,
         status_rx,
+        network,
         stop_timeout,
     })
+}
+
+/// A running carrier process and how to start it again.
+pub(crate) struct Carrier {
+    pub(crate) name: &'static str,
+    pub(crate) child: Child,
+    pub(crate) relaunch: CarrierLauncher,
 }
 
 pub(crate) fn supervise_pair(
@@ -605,6 +651,7 @@ pub(crate) fn supervise_pair(
         transport_id,
         command_tx,
         status_rx,
+        network: watch::channel(NetworkReport::default()).1,
         stop_timeout,
     })
 }
@@ -652,50 +699,88 @@ async fn supervise_processes(
 async fn supervise_three_processes(
     engine_name: &'static str,
     mut engine: Child,
-    carrier_name: &'static str,
-    mut carrier: Child,
+    mut carrier: Carrier,
     mut bridge: FullRouteProcess,
     mut commands: mpsc::Receiver<ProcessCommand>,
     status: watch::Sender<TunnelStatus>,
 ) {
-    tokio::select! {
-        result = engine.wait() => {
-            let cleanup = stop_bridge(&mut bridge).await;
-            stop_child(&mut carrier).await;
-            let mut message = result.map_or_else(
-                |_| format!("failed to wait for {engine_name}"),
-                |exit| format!("{engine_name} exited unexpectedly ({exit})"),
-            );
-            append_dns_cleanup_failure(&mut message, cleanup);
-            status.send_replace(TunnelStatus::Failed(message));
+    let carrier_name = carrier.name;
+    let mut network = bridge.network();
+    let mut seen = network.borrow_and_update().generation;
+    loop {
+        tokio::select! {
+            result = engine.wait() => {
+                let cleanup = stop_bridge(&mut bridge).await;
+                stop_child(&mut carrier.child).await;
+                let mut message = result.map_or_else(
+                    |_| format!("failed to wait for {engine_name}"),
+                    |exit| format!("{engine_name} exited unexpectedly ({exit})"),
+                );
+                append_dns_cleanup_failure(&mut message, cleanup);
+                status.send_replace(TunnelStatus::Failed(message));
+                return;
+            }
+            result = carrier.child.wait() => {
+                let cleanup = stop_bridge(&mut bridge).await;
+                stop_child(&mut engine).await;
+                let mut message = result.map_or_else(
+                    |_| format!("failed to wait for {carrier_name}"),
+                    |exit| format!("{carrier_name} exited unexpectedly ({exit})"),
+                );
+                append_dns_cleanup_failure(&mut message, cleanup);
+                status.send_replace(TunnelStatus::Failed(message));
+                return;
+            }
+            result = bridge.child.wait() => {
+                stop_child(&mut carrier.child).await;
+                stop_child(&mut engine).await;
+                let diagnostic = take_bridge_diagnostic(&mut bridge).await;
+                let cleanup = bridge.dns_lease.restore();
+                let mut message = result.map_or_else(
+                    |_| "failed to wait for the full-route bridge".to_owned(),
+                    |exit| bridge_exit_message(exit, diagnostic),
+                );
+                append_dns_cleanup_failure(&mut message, cleanup);
+                status.send_replace(TunnelStatus::Failed(message));
+                return;
+            }
+            _ = commands.recv() => {
+                let cleanup = stop_bridge(&mut bridge).await;
+                stop_child(&mut carrier.child).await;
+                stop_child(&mut engine).await;
+                publish_stopped_or_dns_failure(&status, cleanup);
+                return;
+            }
+            () = moved_to_another_network(&mut network, &mut seen) => {
+                stop_child(&mut carrier.child).await;
+                match (carrier.relaunch)() {
+                    Ok(child) => carrier.child = child,
+                    Err(_) => {
+                        let cleanup = stop_bridge(&mut bridge).await;
+                        stop_child(&mut engine).await;
+                        let mut message =
+                            format!("{carrier_name} could not start again on the new network");
+                        append_dns_cleanup_failure(&mut message, cleanup);
+                        status.send_replace(TunnelStatus::Failed(message));
+                        return;
+                    }
+                }
+            }
         }
-        result = carrier.wait() => {
-            let cleanup = stop_bridge(&mut bridge).await;
-            stop_child(&mut engine).await;
-            let mut message = result.map_or_else(
-                |_| format!("failed to wait for {carrier_name}"),
-                |exit| format!("{carrier_name} exited unexpectedly ({exit})"),
-            );
-            append_dns_cleanup_failure(&mut message, cleanup);
-            status.send_replace(TunnelStatus::Failed(message));
+    }
+}
+
+/// Returns once the device is on a network it was not on at `seen`; never
+/// while it has no network at all.
+async fn moved_to_another_network(network: &mut watch::Receiver<NetworkReport>, seen: &mut u64) {
+    loop {
+        if network.changed().await.is_err() {
+            std::future::pending::<()>().await;
         }
-        result = bridge.child.wait() => {
-            stop_child(&mut carrier).await;
-            stop_child(&mut engine).await;
-            let diagnostic = take_bridge_diagnostic(&mut bridge).await;
-            let cleanup = bridge.dns_lease.restore();
-            let mut message = result.map_or_else(
-                |_| "failed to wait for the full-route bridge".to_owned(),
-                |exit| bridge_exit_message(exit, diagnostic),
-            );
-            append_dns_cleanup_failure(&mut message, cleanup);
-            status.send_replace(TunnelStatus::Failed(message));
-        }
-        _ = commands.recv() => {
-            let cleanup = stop_bridge(&mut bridge).await;
-            stop_child(&mut carrier).await;
-            stop_child(&mut engine).await;
-            publish_stopped_or_dns_failure(&status, cleanup);
+        let report = *network.borrow_and_update();
+        if report.generation > *seen && !report.offline {
+            *seen = report.generation;
+            return;
         }
     }
 }
@@ -760,6 +845,7 @@ struct FullRouteTunnel {
     transport_id: String,
     command_tx: mpsc::Sender<ProcessCommand>,
     status_rx: watch::Receiver<TunnelStatus>,
+    network: watch::Receiver<NetworkReport>,
     stop_timeout: Duration,
 }
 
@@ -771,6 +857,10 @@ impl ActiveTunnel for FullRouteTunnel {
 
     fn status(&self) -> watch::Receiver<TunnelStatus> {
         self.status_rx.clone()
+    }
+
+    fn network(&self) -> NetworkReport {
+        *self.network.borrow()
     }
 
     async fn stop(&self) -> Result<(), ClientError> {
@@ -829,6 +919,11 @@ mod tests {
             SocketAddr::from((Ipv4Addr::new(203, 0, 113, 9), 8443)),
         ];
 
+        let bypasses: &[&str] = if cfg!(windows) {
+            &[]
+        } else {
+            &["--bypass", "203.0.113.9", "--bypass", "2001:db8::9"]
+        };
         assert_eq!(
             arguments(10808, &addresses),
             [
@@ -843,11 +938,10 @@ mod tests {
                 "--ipv6-enabled",
                 "--tun",
                 TUNNEL_INTERFACE,
-                "--bypass",
-                "203.0.113.9",
-                "--bypass",
-                "2001:db8::9",
             ]
+            .into_iter()
+            .chain(bypasses.iter().copied())
+            .collect::<Vec<_>>()
         );
     }
 
@@ -935,6 +1029,7 @@ mod tests {
             transport_id: "test-route".to_owned(),
             command_tx,
             status_rx,
+            network: watch::channel(NetworkReport::default()).1,
             stop_timeout: Duration::from_secs(1),
         };
 

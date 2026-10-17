@@ -57,6 +57,18 @@ pub struct ConnectOptions {
     pub split_tls_hello: bool,
 }
 
+/// What a full-route tunnel knows about the physical network under it.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+pub struct NetworkReport {
+    /// Goes up each time the device moves to another network, such as from
+    /// Wi-Fi to Ethernet.
+    pub generation: u64,
+    /// No physical network at all: the server cannot be reached until one
+    /// returns, and reconnecting would not help.
+    pub offline: bool,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case", tag = "command")]
 pub enum BrokerRequest {
@@ -138,6 +150,9 @@ pub enum BrokerResponse {
     },
     Tunnel {
         status: BrokerTunnelStatus,
+        /// Absent from services older than network tracking.
+        #[serde(default)]
+        network: NetworkReport,
     },
     Stopped,
     Error {
@@ -168,9 +183,10 @@ impl std::fmt::Debug for BrokerResponse {
                 .field("tunnel_id", &"[REDACTED]")
                 .field("handshake_latency_ms", handshake_latency_ms)
                 .finish(),
-            Self::Tunnel { status } => formatter
+            Self::Tunnel { status, network } => formatter
                 .debug_struct("Tunnel")
                 .field("status", status)
+                .field("network", network)
                 .finish(),
             Self::Stopped => formatter.write_str("Stopped"),
             Self::Error { fault } => formatter.debug_tuple("Error").field(fault).finish(),
@@ -370,6 +386,35 @@ mod tests {
             .map(char::from)
             .collect();
         std::env::temp_dir().join(format!("ket-{label}-{suffix}"))
+    }
+
+    #[test]
+    fn network_reports_default_to_online_and_keep_their_wire_names() {
+        assert_eq!(
+            serde_json::to_value(NetworkReport {
+                generation: 3,
+                offline: true
+            })
+            .unwrap(),
+            serde_json::json!({"generation": 3, "offline": true})
+        );
+        assert_eq!(
+            serde_json::from_str::<NetworkReport>("{}").unwrap(),
+            NetworkReport::default()
+        );
+    }
+
+    #[test]
+    fn tunnel_responses_from_older_services_report_no_network_change() {
+        let response: BrokerResponse =
+            serde_json::from_str(r#"{"result":"tunnel","status":{"state":"connected"}}"#).unwrap();
+        assert!(matches!(
+            response,
+            BrokerResponse::Tunnel {
+                status: BrokerTunnelStatus::Connected,
+                network,
+            } if network == NetworkReport::default()
+        ));
     }
 
     #[test]

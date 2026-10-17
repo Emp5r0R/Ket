@@ -218,6 +218,7 @@ impl BrokerService {
         };
         let transport_id = lease.tunnel.transport_id().to_owned();
         let status = lease.tunnel.status().borrow().clone();
+        let network = lease.tunnel.network();
         if matches!(status, ket_client_core::TunnelStatus::Connected) {
             if heartbeat {
                 tunnels
@@ -236,6 +237,7 @@ impl BrokerService {
                     BrokerTunnelStatus::Failed(message)
                 }
             },
+            network,
         }
     }
 
@@ -842,7 +844,8 @@ mod tests {
         assert!(matches!(
             status,
             BrokerResponse::Tunnel {
-                status: BrokerTunnelStatus::Stopped
+                status: BrokerTunnelStatus::Stopped,
+                ..
             }
         ));
         assert!(service.tunnels.lock().await.contains_key(&tunnel_id));
