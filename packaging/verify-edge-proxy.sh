@@ -65,6 +65,12 @@ http {
       if ($http_authorization = "Bearer valid") { return 200 '{"session":"current"}'; }
       return 401 '{"code":"unauthorized","message":"credentials are invalid"}';
     }
+    location = /v1/sealed {
+      if ($request_method != POST) { return 405; }
+      # The node answers 200 for every request it can open and 404 otherwise.
+      if ($http_x_test_outcome = sealed) { return 200 'sealed-answer'; }
+      return 404;
+    }
     location / { return 200 'ket_active_sessions 1\n'; }
   }
   server { listen 8445; location / { return 200 'xhttp:$request_uri'; } }
@@ -153,6 +159,8 @@ expect_decoy 'invalid access code' POST /v1/sessions --data '{}'
 expect_decoy 'malformed enrollment' POST /v1/sessions -H 'X-Test-Outcome: malformed' --data '{}'
 expect_decoy 'oversized enrollment' POST /v1/sessions --data "$oversized"
 expect_decoy 'invalid session token' GET /v1/sessions/current -H 'Authorization: Bearer forged'
+expect_decoy 'unreadable sealed request' POST /v1/sealed --data x
+expect_decoy 'sealed method' GET /v1/sealed
 expect_decoy 'legacy XHTTP prefix' GET /ket-xhttp-0123456789abcdef
 expect_decoy 'legacy WireGuard prefix' GET /ket-wg-0123456789abcdef/events
 expect_decoy 'XHTTP path neighbour' GET "${xhttp_path}0/x"
@@ -175,6 +183,7 @@ expect 'server busy' 429 'server_busy' POST /v1/sessions -H 'X-Test-Outcome: bus
 expect 'node unavailable' 503 'data_plane_unavailable' POST /v1/sessions -H 'X-Test-Outcome: unavailable' --data '{}'
 expect 'app update required' 426 'client_update_required' POST /v1/sessions -H 'Ket-Client: android/0.9.0' --data '{}'
 expect 'session status' 200 'current' GET /v1/sessions/current -H 'Authorization: Bearer valid'
+expect 'sealed request' 200 'sealed-answer' POST /v1/sealed -H 'X-Test-Outcome: sealed' --data-binary x
 expect 'XHTTP exact path' 200 "xhttp:$xhttp_path" GET "$xhttp_path"
 expect 'XHTTP subpath' 200 "xhttp:$xhttp_path/session/0" POST "$xhttp_path/session/0" --data x
 expect 'WireGuard events' 200 "wireguard:/$wireguard_prefix/events" GET "/$wireguard_prefix/events"

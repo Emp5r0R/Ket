@@ -7,16 +7,20 @@
 use std::env;
 
 use anyhow::{Context, Result, bail};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ket_core::SecretString;
 use ket_invite::{
     ControlLocator, EnrollmentNonce, EnrollmentProof, KetInvite, NodeSigningKey,
     SignedInviteCapsule, encode_invite_text, node_fingerprint,
 };
+use ket_seal::NodeOpeningKey;
+use zeroize::Zeroizing;
 
 pub const NODE_SIGNING_KEY_ENV: &str = "KET_NODE_SIGNING_KEY";
 
 pub struct InviteIssuer {
     signing_key: NodeSigningKey,
+    opening_key: NodeOpeningKey,
     locator: ControlLocator,
 }
 
@@ -45,10 +49,25 @@ impl InviteIssuer {
                  without a path, or a loopback development URL"
             ),
         };
+        let seed = Zeroizing::new(
+            URL_SAFE_NO_PAD
+                .decode(signing_key.to_base64url().as_bytes())
+                .context("the node signing key has no seed")?,
+        );
+        let seed: &[u8; 32] = seed
+            .as_slice()
+            .try_into()
+            .context("the node signing seed is not 32 bytes")?;
         Ok(Self {
+            opening_key: NodeOpeningKey::from_ed25519_seed(seed),
             signing_key,
             locator,
         })
+    }
+
+    /// Opens control requests sealed to this node's pinned key.
+    pub fn opening_key(&self) -> &NodeOpeningKey {
+        &self.opening_key
     }
 
     pub fn fingerprint(&self) -> String {

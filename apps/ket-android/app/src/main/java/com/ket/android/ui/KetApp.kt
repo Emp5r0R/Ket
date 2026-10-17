@@ -120,6 +120,7 @@ internal fun KetApp(
     var accessCode by rememberSaveable { mutableStateOf(initialAccessCode) }
     // The node key is public; it pins every enrollment of an invite-based profile.
     var nodeKeyText by rememberSaveable { mutableStateOf(initialNodeKey?.base64Url) }
+    var nodeSealedControl by rememberSaveable { mutableStateOf(initialNodeKey?.sealedControl == true) }
     var addIssue by remember { mutableStateOf<String?>(null) }
     var preferredProtocolWireName by rememberSaveable { mutableStateOf(initialPreferredProtocol?.wireName) }
     var accessExpiresAtEpochSeconds by rememberSaveable { mutableStateOf(initialAccessExpiresAtEpochSeconds) }
@@ -206,6 +207,7 @@ internal fun KetApp(
                 serverUrl = target.serverUrl
                 accessCode = target.accessCode
                 nodeKeyText = target.nodeKey.base64Url
+                nodeSealedControl = target.nodeKey.sealedControl
                 onConnect(target.serverUrl, target.accessCode, null, target.nodeKey)
             }
             .onFailure { addIssue = inviteFailureMessage(it) }
@@ -313,7 +315,9 @@ internal fun KetApp(
                                                 serverUrl,
                                                 accessCode,
                                                 preferredProtocol,
-                                                nodeKeyText?.let(NodePublicKey::fromBase64Url),
+                                                nodeKeyText
+                                                    ?.let(NodePublicKey::fromBase64Url)
+                                                    ?.withSealedControl(nodeSealedControl),
                                             )
                                         }
                                     },

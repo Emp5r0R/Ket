@@ -10,6 +10,7 @@ async-trait.workspace = true
 base64.workspace = true
 ket-core = { path = "../ket-core" }
 ket-invite = { path = "../ket-invite" }
+ket-seal = { path = "../ket-seal" }
 ket-tunnel-protocol = { path = "../ket-tunnel-protocol" }
 rand.workspace = true
 reqwest.workspace = true

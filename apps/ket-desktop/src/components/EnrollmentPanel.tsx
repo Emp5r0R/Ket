@@ -96,7 +96,7 @@ export function EnrollmentPanel({
     }
     const code = accessCode;
     setAccessCode("");
-    await onEnroll({ serverUrl, deviceName, accessCode: code, nodeKey: null });
+    await onEnroll({ serverUrl, deviceName, accessCode: code, nodeKey: null, sealedControl: false });
   };
 
   return (

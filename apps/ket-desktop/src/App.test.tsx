@@ -224,10 +224,12 @@ describe("Ket desktop shell", () => {
       accessCode: "D".repeat(32),
       deviceName: "Ket desktop",
       nodeKey: `${"A".repeat(42)}E`,
+      sealedControl: true,
     });
     expect(localStorage.getItem("ket.server-url")).toBe("https://de-fra.ket.example");
     expect(localStorage.getItem("ket.access-code")).toBe("D".repeat(32));
     expect(localStorage.getItem("ket.node-key")).toBe(`${"A".repeat(42)}E`);
+    expect(localStorage.getItem("ket.sealed-control")).toBe("1");
   });
 
   it("enrolls from an invite QR image and pins its node key", async () => {
@@ -262,13 +264,14 @@ describe("Ket desktop shell", () => {
     expect(localStorage.getItem("ket.node-key")).toBeNull();
   });
 
-  it("restores a pinned profile with its node key", async () => {
+  it("restores a pinned profile with its node key and sealed control", async () => {
     const expiry = Math.floor(Date.now() / 1_000) + 3_600;
     const nodeKey = `${"N".repeat(42)}E`;
     localStorage.setItem("ket.server-url", "https://pinned.example.test");
     localStorage.setItem("ket.access-code", "S".repeat(32));
     localStorage.setItem("ket.access-expires-at", expiry.toString());
     localStorage.setItem("ket.node-key", nodeKey);
+    localStorage.setItem("ket.sealed-control", "1");
     const { bridge } = await import("./lib/bridge");
     const enroll = vi.spyOn(bridge, "enroll");
     const { default: App } = await import("./App");
@@ -280,6 +283,7 @@ describe("Ket desktop shell", () => {
       accessCode: "S".repeat(32),
       deviceName: "Ket desktop",
       nodeKey,
+      sealedControl: true,
     });
   });
 

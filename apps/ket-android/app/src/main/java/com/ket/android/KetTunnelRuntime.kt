@@ -50,6 +50,8 @@ internal class TunnelLaunchSpec(
     val accessExpiresAtEpochSeconds: Long?,
     val preferredProtocol: KetProtocol? = null,
     val updates: AndroidUpdateAdvice? = null,
+    /** Pinned from the invite; decides whether session calls are sealed. Null for URL + code. */
+    val controlNode: NodePublicKey?,
 ) {
     override fun toString(): String =
         "TunnelLaunchSpec(controlEndpoint=$controlEndpoint, sessionToken=[REDACTED], node=${node.displayName}, transports=$transports)"
@@ -66,12 +68,14 @@ internal class TunnelLaunchSpec(
         accessExpiresAtEpochSeconds = confirmedAccessExpiresAtEpochSeconds,
         preferredProtocol = preferredProtocol,
         updates = updates,
+        controlNode = controlNode,
     )
 
     companion object {
         fun fromEnrollment(
             controlEndpoint: String,
             result: EnrollmentResult,
+            controlNode: NodePublicKey?,
             preferredProtocol: KetProtocol? = null,
         ): TunnelLaunchSpec =
             TunnelLaunchSpec(
@@ -83,6 +87,7 @@ internal class TunnelLaunchSpec(
                 result.accessExpiresAtEpochSeconds,
                 preferredProtocol,
                 result.updates,
+                controlNode,
             )
     }
 }
@@ -188,7 +193,7 @@ object KetTunnelController {
                 }
                 if (!launched) {
                     val release = runCatching {
-                        KetControlApi.release(preparedSpec.controlEndpoint, preparedSpec.sessionToken)
+                        KetControlApi.release(preparedSpec.controlEndpoint, preparedSpec.sessionToken, preparedSpec.controlNode)
                     }
                     val sessionCleanup = runCatching {
                         TunnelCredentialCleanupPolicy.apply(
@@ -225,7 +230,7 @@ object KetTunnelController {
                 val requiredUpdate = (error as? KetControlException)?.requiredUpdate
                 KetTunnelRuntime.clearPending()
                 val release = spec?.let {
-                    runCatching { KetControlApi.release(it.controlEndpoint, it.sessionToken) }
+                    runCatching { KetControlApi.release(it.controlEndpoint, it.sessionToken, it.controlNode) }
                 }
                 if (sessionPrepared) runCatching {
                     TunnelCredentialCleanupPolicy.apply(
@@ -273,7 +278,7 @@ object KetTunnelController {
         )
         if (pending != null) {
             executor.execute {
-                val release = runCatching { KetControlApi.release(pending.controlEndpoint, pending.sessionToken) }
+                val release = runCatching { KetControlApi.release(pending.controlEndpoint, pending.sessionToken, pending.controlNode) }
                 val cleared = runCatching {
                     TunnelCredentialCleanupPolicy.apply(
                         AndroidTunnelCredentialStore.get(context.applicationContext),

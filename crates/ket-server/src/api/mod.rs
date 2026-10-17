@@ -17,8 +17,8 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ket_core::{
     CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate, CreateSessionRequest, ErrorResponse, HealthState,
-    NodeStatus, SecretString, SessionManifest, SessionStatus, SessionTraffic, SessionTransport,
-    TransportCredential, TransportProtocol, UpdateAdvice,
+    NodeStatus, SEALED_CONTROL_PATH, SecretString, SessionManifest, SessionStatus, SessionTraffic,
+    SessionTransport, TransportCredential, TransportProtocol, UpdateAdvice,
 };
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -30,6 +30,7 @@ use tower_http::{
 use ket_invite::{ENROLLMENT_NONCE_HEADER, EnrollmentNonce, NODE_SIGNATURE_HEADER};
 
 mod grants;
+mod sealed;
 
 use crate::{
     config::{HysteriaObfuscation, ServerConfig},
@@ -116,7 +117,7 @@ impl AppState {
 }
 
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/healthz", get(health))
         .route("/readyz", get(ready))
         .route("/metrics", get(metrics))
@@ -138,6 +139,30 @@ pub fn build_router(state: AppState) -> Router {
                 .patch(grants::update_grant)
                 .delete(grants::revoke_grant),
         )
+        .merge(session_routes());
+    let router = match state.config.invite_issuer.clone() {
+        Some(issuer) => {
+            let gateway =
+                sealed::SealedGateway::new(issuer, session_routes().with_state(state.clone()));
+            router.route(
+                SEALED_CONTROL_PATH,
+                post(move |body: axum::body::Bytes| gateway.clone().handle(body)),
+            )
+        }
+        None => router,
+    };
+    router
+        .layer(RequestBodyLimitLayer::new(16 * 1024))
+        .layer(TimeoutLayer::new(Duration::from_secs(15)))
+        .layer(CatchPanicLayer::new())
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+/// The session API. Served in the clear and, for nodes with an identity key,
+/// through the sealed gateway as well.
+fn session_routes() -> Router<AppState> {
+    Router::new()
         .route("/v1/sessions", post(create_session))
         .route(
             "/v1/sessions/current",
@@ -145,11 +170,6 @@ pub fn build_router(state: AppState) -> Router {
                 .put(renew_session)
                 .delete(release_session),
         )
-        .layer(RequestBodyLimitLayer::new(16 * 1024))
-        .layer(TimeoutLayer::new(Duration::from_secs(15)))
-        .layer(CatchPanicLayer::new())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
 }
 
 async fn health() -> StatusCode {
@@ -1315,6 +1335,203 @@ mod tests {
             .expect("request should complete");
         assert_eq!(response.status(), StatusCode::CREATED);
         assert!(response.headers().get(NODE_SIGNATURE_HEADER).is_none());
+    }
+
+    fn sealing_key() -> ket_seal::NodeSealingKey {
+        let public = ket_invite::NodeSigningKey::from_seed(&[0x55; 32]).public_key();
+        ket_seal::NodeSealingKey::from_ed25519(public.as_bytes()).expect("sealing key")
+    }
+
+    fn sealed_request(
+        method: ket_core::SealedMethod,
+        path: &str,
+        bearer: Option<&str>,
+        body: Option<serde_json::Value>,
+        sent_at: u64,
+    ) -> ket_core::SealedControlRequest {
+        ket_core::SealedControlRequest {
+            method,
+            path: path.to_owned(),
+            sent_at_epoch_seconds: sent_at,
+            bearer: bearer.map(SecretString::from),
+            client: Some("linux/9.9.9".to_owned()),
+            body: body.map(|body| SecretString::new(body.to_string())),
+        }
+    }
+
+    /// Sends `request` through `POST /v1/sealed` and opens the answer.
+    async fn send_sealed(
+        app: &Router,
+        request: &ket_core::SealedControlRequest,
+    ) -> ket_core::SealedControlResponse {
+        let plaintext = serde_json::to_vec(request).expect("request JSON");
+        let (body, opener) =
+            ket_seal::seal_request(&sealing_key(), &plaintext).expect("sealed request");
+        let (status, answer) = post_sealed(app, body).await;
+        assert_eq!(status, StatusCode::OK);
+        serde_json::from_slice(&opener.open(&answer).expect("the node sealed the answer"))
+            .expect("response JSON")
+    }
+
+    async fn post_sealed(app: &Router, body: Vec<u8>) -> (StatusCode, Vec<u8>) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sealed")
+                    .header(header::CONTENT_TYPE, "application/octet-stream")
+                    .body(Body::from(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("request should complete");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("body")
+            .to_vec();
+        (status, body)
+    }
+
+    fn sealed_body<T: serde::de::DeserializeOwned>(
+        response: &ket_core::SealedControlResponse,
+    ) -> T {
+        serde_json::from_str(response.body.as_ref().expect("a body").expose_secret())
+            .expect("body JSON")
+    }
+
+    #[tokio::test]
+    async fn the_session_api_works_sealed_end_to_end() {
+        use ket_core::SealedMethod::{Delete, Get, Post, Put};
+        let app = invite_test_app(invite_test_config()).await;
+        let grant = create_test_grant(&app).await;
+        let now = unix_time();
+        let enrollment = serde_json::json!({
+            "access_code": grant.access_code.expose_secret(),
+            "client_name": "Sealed test"
+        });
+
+        let created = send_sealed(
+            &app,
+            &sealed_request(Post, "/v1/sessions", None, Some(enrollment), now),
+        )
+        .await;
+        assert_eq!(created.status, 201);
+        assert!(created.server_time_epoch_seconds.abs_diff(now) <= 5);
+        let manifest: SessionManifest = sealed_body(&created);
+        let token = manifest.session_token.expose_secret().to_owned();
+        assert_eq!(
+            manifest
+                .updates
+                .as_ref()
+                .map(|advice| advice.server_version.as_str()),
+            Some(env!("CARGO_PKG_VERSION")),
+            "the sealed Ket-Client header reached the session API"
+        );
+
+        let status = send_sealed(
+            &app,
+            &sealed_request(Get, "/v1/sessions/current", Some(&token), None, now),
+        )
+        .await;
+        assert_eq!(status.status, 200);
+        let status: SessionStatus = sealed_body(&status);
+        assert_eq!(status.client_name, "Sealed test");
+
+        let renewed = send_sealed(
+            &app,
+            &sealed_request(Put, "/v1/sessions/current", Some(&token), None, now),
+        )
+        .await;
+        assert_eq!(renewed.status, 200);
+
+        let forged = send_sealed(
+            &app,
+            &sealed_request(Get, "/v1/sessions/current", Some("forged"), None, now),
+        )
+        .await;
+        assert_eq!(forged.status, 401);
+
+        let admin = send_sealed(
+            &app,
+            &sealed_request(Get, "/v1/admin/access-grants", Some(ADMIN_TOKEN), None, now),
+        )
+        .await;
+        assert_eq!(
+            admin.status, 404,
+            "only session routes are reachable sealed"
+        );
+
+        let released = send_sealed(
+            &app,
+            &sealed_request(Delete, "/v1/sessions/current", Some(&token), None, now),
+        )
+        .await;
+        assert_eq!(released.status, 204);
+        assert!(released.body.is_none());
+        let gone = send_sealed(
+            &app,
+            &sealed_request(Get, "/v1/sessions/current", Some(&token), None, now),
+        )
+        .await;
+        assert_eq!(gone.status, 401);
+    }
+
+    #[tokio::test]
+    async fn sealed_requests_are_refused_when_replayed_skewed_or_unreadable() {
+        use ket_core::SealedMethod::Get;
+        let app = invite_test_app(invite_test_config()).await;
+        let now = unix_time();
+
+        let request = sealed_request(Get, "/v1/sessions/current", Some("forged"), None, now);
+        let (body, opener) =
+            ket_seal::seal_request(&sealing_key(), &serde_json::to_vec(&request).unwrap()).unwrap();
+        let (status, first) = post_sealed(&app, body.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        let first: ket_core::SealedControlResponse =
+            serde_json::from_slice(&opener.open(&first).unwrap()).unwrap();
+        assert_eq!(first.status, 401);
+        let (status, replay) = post_sealed(&app, body).await;
+        assert_eq!(status, StatusCode::OK);
+        let replay: ket_core::SealedControlResponse =
+            serde_json::from_slice(&opener.open(&replay).unwrap()).unwrap();
+        assert_eq!(replay.status, 409);
+        let error: ErrorResponse = sealed_body(&replay);
+        assert_eq!(error.code, ket_core::SEALED_REPLAY_CODE);
+
+        for sent_at in [now - 301, now + 301] {
+            let skewed = send_sealed(
+                &app,
+                &sealed_request(Get, "/v1/sessions/current", Some("forged"), None, sent_at),
+            )
+            .await;
+            assert_eq!(skewed.status, 400);
+            let error: ErrorResponse = sealed_body(&skewed);
+            assert_eq!(error.code, ket_core::SEALED_CLOCK_SKEW_CODE);
+            assert!(skewed.server_time_epoch_seconds.abs_diff(now) <= 5);
+        }
+
+        let other_node = ket_seal::NodeOpeningKey::from_ed25519_seed(&[0x56; 32]).sealing_key();
+        let (foreign, _) = ket_seal::seal_request(&other_node, b"{}").unwrap();
+        for unreadable in [foreign, Vec::new(), vec![1; 80]] {
+            let (status, _) = post_sealed(&app, unreadable).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+        }
+        let (body, opener) = ket_seal::seal_request(&sealing_key(), b"not json").unwrap();
+        let (status, answer) = post_sealed(&app, body).await;
+        assert_eq!(status, StatusCode::OK);
+        let answer: ket_core::SealedControlResponse =
+            serde_json::from_slice(&opener.open(&answer).unwrap()).unwrap();
+        assert_eq!(answer.status, 400);
+    }
+
+    #[tokio::test]
+    async fn nodes_without_an_identity_key_have_no_sealed_route() {
+        let app = invite_test_app(test_config()).await;
+        let (body, _) = ket_seal::seal_request(&sealing_key(), b"{}").unwrap();
+        let (status, _) = post_sealed(&app, body).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

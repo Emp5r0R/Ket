@@ -2,6 +2,7 @@
 
 mod contract;
 mod grant;
+mod sealed;
 mod secret;
 mod secret_value;
 mod update;
@@ -10,6 +11,11 @@ pub use contract::*;
 pub use grant::{
     AccessGrantDetails, ConnectedDevice, OfferedProtocol, ProtocolAccess, UpdateAccessGrantRequest,
     UpdateAccessGrantResponse,
+};
+pub use sealed::{
+    SEALED_CLOCK_SKEW_CODE, SEALED_CONTENT_TYPE, SEALED_CONTROL_PATH,
+    SEALED_MAX_CLOCK_SKEW_SECONDS, SEALED_REPLAY_CODE, SealedControlRequest, SealedControlResponse,
+    SealedMethod,
 };
 pub use secret::{
     ACCESS_CODE_LENGTH, AccessCodeParts, SESSION_TOKEN_LENGTH, SecretError, SessionTokenParts,

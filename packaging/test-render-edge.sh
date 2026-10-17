@@ -81,7 +81,12 @@ if grep -Eq 'proxy_pass|readyz|metrics|node/status|admin|internal' <<<"$public_v
   printf 'FAIL: the public vhost exposes an operational route\n' >&2
   exit 1
 fi
-[[ $(grep -c 'include /etc/nginx/ket/session-proxy.conf;' <<<"$public_vhost") == 2 ]]
+# Exactly the session routes reach the control plane: plain and sealed.
+proxied=$(awk '/^ *location = / { route = $3 } /include \/etc\/nginx\/ket\/session-proxy.conf;/ { print route }' <<<"$public_vhost")
+[[ $proxied == $'/v1/sessions\n/v1/sessions/current\n/v1/sealed' ]] || {
+  printf 'FAIL: the public vhost proxies unexpected routes: %s\n' "$proxied" >&2
+  exit 1
+}
 grep -Fxq 'proxy_pass http://ket_control;' "$session_proxy"
 grep -Fxq 'proxy_intercept_errors on;' "$session_proxy"
 grep -Fq 'listen 127.0.0.1:8449;' "$template"

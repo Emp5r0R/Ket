@@ -115,37 +115,37 @@
       "error": "invalid_invite_signature",
       "name": "bad_signature",
       "now_epoch_seconds": null,
-      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw8"
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQIAGnc1lABYQAFnnFwHjx2H0QDnGdlt27GFznjUd1RZgrJfE5iFBxsYlCRi_ejwkO_89mE0EjbyfOYuFqF5fm0sPjU-GCAMUgA"
     },
     {
       "error": "invite_expired",
       "name": "expired",
       "now_epoch_seconds": 2000000000,
-      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4"
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQIAGnc1lABYQAFnnFwHjx2H0QDnGdlt27GFznjUd1RZgrJfE5iFBxsYlCRi_ejwkO_89mE0EjbyfOYuFqF5fm0sPjU-GCAMUgE"
     },
     {
       "error": "invalid_invite",
       "name": "trailing_bytes",
       "now_epoch_seconds": null,
-      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4A"
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQIAGnc1lABYQAFnnFwHjx2H0QDnGdlt27GFznjUd1RZgrJfE5iFBxsYlCRi_ejwkO_89mE0EjbyfOYuFqF5fm0sPjU-GCAMUgEA"
     },
     {
       "error": "invalid_invite",
       "name": "padded_text",
       "now_epoch_seconds": null,
-      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4="
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQIAGnc1lABYQAFnnFwHjx2H0QDnGdlt27GFznjUd1RZgrJfE5iFBxsYlCRi_ejwkO_89mE0EjbyfOYuFqF5fm0sPjU-GCAMUgE="
     },
     {
       "error": "invalid_invite",
       "name": "standard_base64_alphabet",
       "now_epoch_seconds": null,
-      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s+WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9+XKI+9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4"
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s+WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQIAGnc1lABYQAFnnFwHjx2H0QDnGdlt27GFznjUd1RZgrJfE5iFBxsYlCRi/ejwkO/89mE0EjbyfOYuFqF5fm0sPjU+GCAMUgE"
     },
     {
       "error": "invalid_invite",
       "name": "surrounding_whitespace",
       "now_epoch_seconds": null,
-      "text": " ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4"
+      "text": " ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQIAGnc1lABYQAFnnFwHjx2H0QDnGdlt27GFznjUd1RZgrJfE5iFBxsYlCRi_ejwkO_89mE0EjbyfOYuFqF5fm0sPjU-GCAMUgE"
     }
   ],
   "node_seed_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
@@ -153,7 +153,7 @@
     {
       "access_code": "Abcdefghijklmnopqrstuvwxyz012345",
       "access_expires_at_epoch_seconds": 2000000000,
-      "binary_hex": "8258748a016e6f72672e6b65742e6163636573730158200d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b08183016f6b65742e6578616d706c652e636f6d1901bb78204162636465666768696a6b6c6d6e6f707172737475767778797a3031323334350101001a773594005840b63570fbf1ba3d285754d1f15e764ab7bdf97288fbd25b965bde5df23037a05d386740d6d8877f89dfcdcf18a1c3431930cfce83901fd6ca05965ba21764030e",
+      "binary_hex": "8258748a016e6f72672e6b65742e6163636573730158200d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b08183016f6b65742e6578616d706c652e636f6d1901bb78204162636465666768696a6b6c6d6e6f707172737475767778797a3031323334350102001a77359400584001679c5c078f1d87d100e719d96ddbb185ce78d477545982b25f139885071b18942462fde8f090effcf661341236f27ce62e16a1797e6d2c3e353e18200c5201",
       "control_api_max": 1,
       "control_api_min": 1,
       "decode_at_epoch_seconds": 1900000000,
@@ -168,12 +168,12 @@
       "name": "single_https",
       "node_fingerprint": "16E7:E930:BB31:A9AC:2B4A:769B:F27A:214C",
       "node_public_key_hex": "0d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b0",
-      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQEAGnc1lABYQLY1cPvxuj0oV1TR8V52Sre9-XKI-9JbllveXfIwN6BdOGdA1tiHf4nfzc8YocNDGTDPzoOQH9bKBZZbohdkAw4"
+      "text": "ket:invite:glh0igFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIGDAW9rZXQuZXhhbXBsZS5jb20ZAbt4IEFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6MDEyMzQ1AQIAGnc1lABYQAFnnFwHjx2H0QDnGdlt27GFznjUd1RZgrJfE5iFBxsYlCRi_ejwkO_89mE0EjbyfOYuFqF5fm0sPjU-GCAMUgE"
     },
     {
       "access_code": "Abcdefghijklmnopqrstuvwxyz012345",
       "access_expires_at_epoch_seconds": null,
-      "binary_hex": "82588c8a016e6f72672e6b65742e6163636573730158200d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b083830170656467652e6578616d706c652e6e65741920fb83016f6b65742e6578616d706c652e636f6d1901bb83020419225378204162636465666768696a6b6c6d6e6f707172737475767778797a303132333435010100f658400bf596ad771672325f24ac1010fd0c588eed128c19bf9a4975e67df21c357991b0a4d6099b55a8de753a76f3b6a6f873b5fb5a4b5fd8a9a4220456c4bf40890e",
+      "binary_hex": "82588c8a016e6f72672e6b65742e6163636573730158200d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b083830170656467652e6578616d706c652e6e65741920fb83016f6b65742e6578616d706c652e636f6d1901bb83020419225378204162636465666768696a6b6c6d6e6f707172737475767778797a303132333435010200f6584062b897afec9d9763bcfcd8b85e94039a67d5d7b881d475d5fa980aeac19ef8eaa97bbae8f0d3920a4b33958325c2cbc0bac631cf09869b4568ff30bd3bdcc10d",
       "control_api_max": 1,
       "control_api_min": 1,
       "decode_at_epoch_seconds": 1900000000,
@@ -200,7 +200,7 @@
       "name": "multiple_locators_without_expiry",
       "node_fingerprint": "16E7:E930:BB31:A9AC:2B4A:769B:F27A:214C",
       "node_public_key_hex": "0d7550754e0800a5d237eef5826035766b9b3e5a15868a940ab289958788e3b0",
-      "text": "ket:invite:gliMigFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIODAXBlZGdlLmV4YW1wbGUubmV0GSD7gwFva2V0LmV4YW1wbGUuY29tGQG7gwIEGSJTeCBBYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NQEBAPZYQAv1lq13FnIyXySsEBD9DFiO7RKMGb-aSXXmffIcNXmRsKTWCZtVqN51Onbztqb4c7X7Wktf2KmkIgRWxL9AiQ4"
+      "text": "ket:invite:gliMigFub3JnLmtldC5hY2Nlc3MBWCANdVB1TggApdI37vWCYDV2a5s-WhWGipQKsomVh4jjsIODAXBlZGdlLmV4YW1wbGUubmV0GSD7gwFva2V0LmV4YW1wbGUuY29tGQG7gwIEGSJTeCBBYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NQECAPZYQGK4l6_snZdjvPzYuF6UA5pn1de4gdR11fqYCurBnvjqqXu66PDTkgpLM5WDJcLLwLrGMc8JhptFaP8wvTvcwQ0"
     }
   ]
 }

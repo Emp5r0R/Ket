@@ -102,7 +102,7 @@ class AndroidUpdateAdviceEnrollmentTest {
             )
             .toString()
         val enrollment = KetControlApi.parseEnrollment(manifest)
-        val spec = TunnelLaunchSpec.fromEnrollment("https://vpn.example.test", enrollment)
+        val spec = TunnelLaunchSpec.fromEnrollment("https://vpn.example.test", enrollment, controlNode = null)
         assertEquals(ClientUpdateStatus.Recommended, spec.updates!!.client.status)
         assertEquals("1.2.0", spec.withSessionExpiry(1L).updates!!.serverVersion)
         // The stored manifest is reparsed on restart and still carries the advice.

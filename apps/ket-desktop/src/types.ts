@@ -120,6 +120,8 @@ export interface EnrollmentInput {
   deviceName: string;
   /** Node key pinned from an invite (unpadded Base64URL); null for URL + code entry. */
   nodeKey: string | null;
+  /** The invite requires encrypted control requests; never sent in the clear. */
+  sealedControl: boolean;
 }
 
 /** A locally verified invite, as returned by the native `inspect_invite` command. */
@@ -129,6 +131,7 @@ export interface InviteDetails {
   access_expires_at_epoch_seconds: number | null;
   node_key: string;
   node_fingerprint: string;
+  sealed_control: boolean;
 }
 
 export interface TrafficPoint {

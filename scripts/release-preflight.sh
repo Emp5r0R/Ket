@@ -178,6 +178,9 @@ check_canary_enrollment() {
   elif result=$(cd "$ROOT" && cargo run -q -p ket-client-core --example invite_enroll_check <<<"$output" 2>&1); then
     version=$(sed -n 's/^server_version=//p' <<<"$result")
     pass "enrolled, node signature verified, session released ($(sed -n 's/^transports=//p' <<<"$result"))"
+    if grep -qx 'control=sealed' <<<"$result"; then pass 'the invite requires sealed control and every session call was sealed'; else
+      problem 'the canary issued an invite without sealed control'
+    fi
     if [[ $version == "$(workspace_version)" ]]; then pass "the canary reports version $version"; else
       problem "the canary reports version ${version:-none}, expected $(workspace_version)"
     fi

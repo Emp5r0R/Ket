@@ -41,6 +41,7 @@ internal class DurableTunnelCredentials(
         val parsed = TunnelLaunchSpec.fromEnrollment(
             profile.serverUrl,
             KetControlApi.parseEnrollment(manifest, requireActiveLease = false),
+            profile.nodeKey,
             profile.preferredProtocol,
         )
         sessionExpiresAtEpochSeconds?.let { parsed.withSessionExpiry(it) } ?: parsed
@@ -98,6 +99,7 @@ internal object DurableTunnelCredentialsCodec {
         "access_code",
         "preferred_protocol",
         "node_public_key",
+        "node_sealed_control",
         "session_manifest",
         "access_expires_at_epoch_seconds",
         "session_expires_at_epoch_seconds",
@@ -109,7 +111,10 @@ internal object DurableTunnelCredentialsCodec {
             .put("server_url", credentials.profile.serverUrl)
             .put("access_code", credentials.profile.accessCode)
         credentials.profile.preferredProtocol?.let { root.put("preferred_protocol", it.wireName) }
-        credentials.profile.nodeKey?.let { root.put("node_public_key", it.base64Url) }
+        credentials.profile.nodeKey?.let {
+            root.put("node_public_key", it.base64Url)
+            if (it.sealedControl) root.put("node_sealed_control", true)
+        }
         credentials.sessionManifest?.let { root.put("session_manifest", JSONObject(it)) }
         credentials.accessExpiresAtEpochSeconds?.let { root.put("access_expires_at_epoch_seconds", it) }
         credentials.sessionExpiresAtEpochSeconds?.let { root.put("session_expires_at_epoch_seconds", it) }
@@ -135,7 +140,8 @@ internal object DurableTunnelCredentialsCodec {
                 ?.let { KetProtocol.fromWireName(it) ?: throw IllegalArgumentException("Saved protocol is unsupported") },
             nodeKey = root.optString("node_public_key")
                 .takeIf(String::isNotEmpty)
-                ?.let(NodePublicKey::fromBase64Url),
+                ?.let(NodePublicKey::fromBase64Url)
+                ?.withSealedControl(root.optBoolean("node_sealed_control", false)),
         )
         val manifest = root.optJSONObject("session_manifest")?.toString()
         val enrollment = manifest?.let(KetControlApi::parseEnrollment)
@@ -296,8 +302,9 @@ internal class AndroidTunnelCredentialStore private constructor(context: Context
 internal interface TunnelSessionApi {
     /** With [nodeKey] (pinned from an invite) the response must carry that node's signature. */
     fun enroll(serverUrl: String, accessCode: String, clientName: String, nodeKey: NodePublicKey? = null): EnrollmentResult
-    fun renew(serverUrl: String, token: String): Long
-    fun release(serverUrl: String, token: String)
+    /** [node] decides whether the call is sealed; see [KetControlApi.status]. */
+    fun renew(serverUrl: String, token: String, node: NodePublicKey?): Long
+    fun release(serverUrl: String, token: String, node: NodePublicKey?)
 }
 
 /** Resolves an app launch, a process restart, or an unflagged system always-on launch. */
@@ -320,7 +327,7 @@ internal class DurableTunnelSessionResolver(
             return resolveSaved(updated)
         }
         saved?.launchSpec()?.let { previous ->
-            runCatching { api.release(previous.controlEndpoint, previous.sessionToken) }
+            runCatching { api.release(previous.controlEndpoint, previous.sessionToken, previous.controlNode) }
             store.clearAll()
         }
         return enroll(profile)
@@ -338,7 +345,7 @@ internal class DurableTunnelSessionResolver(
         var saved = initial
         saved.launchSpec()?.let { existing ->
             val renewedExpiry = try {
-                api.renew(existing.controlEndpoint, existing.sessionToken)
+                api.renew(existing.controlEndpoint, existing.sessionToken, existing.controlNode)
             } catch (error: Exception) {
                 val authorizationLost = (error as? KetControlException)?.authorizationLost == true
                 if (!authorizationLost && existing.sessionExpiresAtEpochSeconds > nowEpochSeconds()) {
@@ -386,10 +393,10 @@ internal class DurableTunnelSessionResolver(
         try {
             store.save(next)
         } catch (error: Exception) {
-            runCatching { api.release(profile.serverUrl, result.token) }
+            runCatching { api.release(profile.serverUrl, result.token, profile.nodeKey) }
             throw error
         }
-        return TunnelLaunchSpec.fromEnrollment(profile.serverUrl, result, profile.preferredProtocol)
+        return TunnelLaunchSpec.fromEnrollment(profile.serverUrl, result, profile.nodeKey, profile.preferredProtocol)
     }
 
     private fun rejectExpired(credentials: DurableTunnelCredentials) {

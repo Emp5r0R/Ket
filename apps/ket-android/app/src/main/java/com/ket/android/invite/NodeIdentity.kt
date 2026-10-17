@@ -15,12 +15,22 @@ class NodePublicKey private constructor(
     val base64Url: String,
     /** A short, human-comparable identity such as `1A2B:3C4D:...`. */
     val fingerprint: String,
+    /**
+     * The invite offered sealed control, so session requests to this node are never sent in the
+     * clear. Without it, requests are sealed when the server offers that and signed otherwise.
+     */
+    val sealedControl: Boolean = false,
 ) {
-    override fun equals(other: Any?): Boolean = other is NodePublicKey && base64Url == other.base64Url
+    override fun equals(other: Any?): Boolean =
+        other is NodePublicKey && base64Url == other.base64Url && sealedControl == other.sealedControl
 
-    override fun hashCode(): Int = base64Url.hashCode()
+    override fun hashCode(): Int = 31 * base64Url.hashCode() + sealedControl.hashCode()
 
     override fun toString(): String = "NodePublicKey($fingerprint)"
+
+    /** This key with sealed control required (or not), for restoring a saved profile. */
+    fun withSealedControl(required: Boolean): NodePublicKey =
+        if (required == sealedControl) this else NodePublicKey(base64Url, fingerprint, required)
 
     companion object {
         /** Throws [InviteException] with [InviteFailure.InvalidNodeKey] unless [value] is a valid key. */
@@ -30,7 +40,8 @@ class NodePublicKey private constructor(
         fun fromBytes(value: ByteArray): NodePublicKey = fromBase64Url(encodeBase64Url(value))
 
         /** A key the native reader already validated. */
-        internal fun verified(base64Url: String, fingerprint: String) = NodePublicKey(base64Url, fingerprint)
+        internal fun verified(base64Url: String, fingerprint: String, sealedControl: Boolean) =
+            NodePublicKey(base64Url, fingerprint, sealedControl)
     }
 }
 

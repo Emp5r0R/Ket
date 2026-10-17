@@ -5,6 +5,7 @@ import com.ket.android.inviteFailureMessage
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -26,7 +27,8 @@ class InviteReaderTest {
         assertEquals(case.getString("access_code"), target.accessCode)
         assertEquals(case.getLong("access_expires_at_epoch_seconds"), target.accessExpiresAtEpochSeconds)
         assertEquals(case.getString("node_fingerprint"), target.nodeKey.fingerprint)
-        assertEquals(target.nodeKey, NodePublicKey.fromBase64Url(target.nodeKey.base64Url))
+        assertTrue("current invites require sealed control", target.nodeKey.sealedControl)
+        assertEquals(target.nodeKey, NodePublicKey.fromBase64Url(target.nodeKey.base64Url).withSealedControl(true))
         assertFalse(target.toString().contains(target.accessCode))
 
         val multiple = valid("multiple_locators_without_expiry")

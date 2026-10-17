@@ -1,22 +1,18 @@
-use std::{net::IpAddr, time::Duration};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use ket_core::{
     CLIENT_HEADER, CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate, CreateSessionRequest, ErrorResponse,
-    SecretString, SessionManifest, SessionStatus, UpdateAdvice,
+    SEALED_CONTROL_PATH, SealedMethod, SecretString, SessionManifest, SessionStatus, UpdateAdvice,
 };
 use ket_invite::{
     ENROLLMENT_NONCE_HEADER, EnrollmentNonce, EnrollmentProof, NODE_SIGNATURE_HEADER, NodePublicKey,
 };
-use reqwest::{
-    Client, RequestBuilder, StatusCode, Url,
-    header::{HeaderMap, HeaderValue},
-    redirect::Policy,
-    tls::Version,
-};
+use reqwest::{Client, Method, StatusCode, Url, redirect::Policy, tls::Version};
 use serde::de::DeserializeOwned;
+use zeroize::Zeroizing;
 
-use crate::ClientError;
+use crate::{ClientError, sealed_control::SealedControl};
 
 const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 
@@ -41,11 +37,25 @@ pub enum InsecureHttpPolicy {
     Allow,
 }
 
+/// Whether session API requests to an endpoint are sealed to its node key.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Sealing {
+    /// No pinned node key: URL + access code clients.
+    Off,
+    /// A pinned key from an invite that predates sealed control. Seal when
+    /// the server offers it, otherwise enroll in the clear with a signed
+    /// response.
+    Preferred,
+    /// The invite offered sealed control, so nothing goes in the clear.
+    Required,
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct ControlEndpoint {
     base: Url,
     /// Pinned from an invite. When present, enrollment must be signed by it.
     node_key: Option<NodePublicKey>,
+    sealing: Sealing,
 }
 
 impl ControlEndpoint {
@@ -92,13 +102,34 @@ impl ControlEndpoint {
         Ok(Self {
             base,
             node_key: None,
+            sealing: Sealing::Off,
         })
     }
 
-    /// Requires every enrollment through this endpoint to be signed by `key`.
+    /// Requires every enrollment through this endpoint to be signed by `key`,
+    /// and seals requests to it when the server offers that.
     pub fn with_node_key(mut self, key: NodePublicKey) -> Self {
         self.node_key = Some(key);
+        self.sealing = self.sealing.max(Sealing::Preferred);
         self
+    }
+
+    /// Never sends a session API request in the clear. Only meaningful with
+    /// a node key; without one, nothing can be sealed and requests fail.
+    pub fn with_required_sealing(mut self, required: bool) -> Self {
+        if required {
+            self.sealing = Sealing::Required;
+        }
+        self
+    }
+
+    pub fn sealing(&self) -> Sealing {
+        self.sealing
+    }
+
+    /// Whether saved profiles must keep sealing required.
+    pub fn sealing_required(&self) -> bool {
+        self.sealing == Sealing::Required
     }
 
     /// Parses a saved profile: the URL plus the optional pinned node key in
@@ -141,6 +172,7 @@ impl std::fmt::Debug for ControlEndpoint {
             .debug_struct("ControlEndpoint")
             .field("base", &self.base.as_str())
             .field("node_key", &self.node_key)
+            .field("sealing", &self.sealing)
             .finish()
     }
 }
@@ -184,44 +216,113 @@ pub trait ControlPlane: Send + Sync {
 #[derive(Clone)]
 pub struct HttpControlPlane {
     client: Client,
+    sealed: Arc<SealedControl>,
+}
+
+/// One session API call, independent of whether it travels sealed.
+pub(crate) struct ControlRequest<'a> {
+    pub(crate) method: SealedMethod,
+    /// Relative to the endpoint, such as `v1/sessions`.
+    pub(crate) path: &'static str,
+    pub(crate) bearer: Option<&'a SecretString>,
+    /// JSON, for enrollment.
+    pub(crate) body: Option<Zeroizing<String>>,
+}
+
+/// The session API's answer, sealed or not.
+pub(crate) struct Exchange {
+    pub(crate) status: StatusCode,
+    pub(crate) body: Vec<u8>,
+}
+
+impl Exchange {
+    fn expect(self, expected: StatusCode) -> Result<Vec<u8>, ClientError> {
+        if self.status == expected {
+            Ok(self.body)
+        } else {
+            Err(api_error(self.status, &self.body))
+        }
+    }
 }
 
 impl HttpControlPlane {
     pub fn new() -> Result<Self, ClientError> {
-        let mut headers = HeaderMap::new();
-        if let Some(value) = client_header_value() {
-            headers.insert(CLIENT_HEADER, HeaderValue::from_static(value));
-        }
         let client = Client::builder()
-            .default_headers(headers)
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15))
             .redirect(Policy::none())
             .min_tls_version(Version::TLS_1_2)
             .no_proxy()
-            .user_agent(concat!("Ket/", env!("CARGO_PKG_VERSION")))
+            // No version: sealed requests must not tell a front which app
+            // version is asking. Plain requests name it in `Ket-Client`.
+            .user_agent("Ket")
             .build()
             .map_err(|_| ClientError::Local("failed to initialize HTTP client".to_owned()))?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            sealed: Arc::new(SealedControl::default()),
+        })
     }
 
-    async fn json<T: DeserializeOwned>(
+    /// Sends `request` sealed when the endpoint allows, otherwise in the
+    /// clear. Either way a successful enrollment is proven to come from the
+    /// pinned node: by the seal, or by the node's signature.
+    async fn exchange(
         &self,
-        request: RequestBuilder,
-        expected: StatusCode,
-    ) -> Result<T, ClientError> {
-        let response = self.send(request, expected).await?;
-        decode_json(&response.body)
+        endpoint: &ControlEndpoint,
+        request: ControlRequest<'_>,
+    ) -> Result<Exchange, ClientError> {
+        if let (Some(node_key), Sealing::Preferred | Sealing::Required) =
+            (endpoint.node_key(), endpoint.sealing())
+        {
+            let url = endpoint.route(SEALED_CONTROL_PATH)?;
+            match self
+                .sealed
+                .exchange(&self.client, url, node_key, &request)
+                .await?
+            {
+                Some(exchange) => return Ok(exchange),
+                None if endpoint.sealing() == Sealing::Preferred => {}
+                None => return Err(ClientError::SealedControlUnavailable),
+            }
+        } else if endpoint.sealing() == Sealing::Required {
+            return Err(ClientError::SealedControlUnavailable);
+        }
+        self.plain_exchange(endpoint, request).await
     }
 
-    /// Sends a request and returns the bounded body of an expected response;
-    /// any other status becomes an API error.
-    async fn send(
+    async fn plain_exchange(
         &self,
-        request: RequestBuilder,
-        expected: StatusCode,
-    ) -> Result<BoundedResponse, ClientError> {
-        let response = request
+        endpoint: &ControlEndpoint,
+        request: ControlRequest<'_>,
+    ) -> Result<Exchange, ClientError> {
+        let method = match request.method {
+            SealedMethod::Get => Method::GET,
+            SealedMethod::Post => Method::POST,
+            SealedMethod::Put => Method::PUT,
+            SealedMethod::Delete => Method::DELETE,
+        };
+        let mut builder = self.client.request(method, endpoint.route(request.path)?);
+        if let Some(value) = client_header_value() {
+            builder = builder.header(CLIENT_HEADER, value);
+        }
+        if let Some(token) = request.bearer {
+            builder = builder.bearer_auth(token.expose_secret());
+        }
+        let challenge = request.body.as_ref().and(
+            endpoint
+                .node_key()
+                .map(|key| (key, EnrollmentNonce::generate())),
+        );
+        if let Some((_, nonce)) = &challenge {
+            builder = builder.header(ENROLLMENT_NONCE_HEADER, nonce.header_value());
+        }
+        if let Some(body) = &request.body {
+            builder = builder
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.as_str().to_owned());
+        }
+        let response = builder
             .send()
             .await
             .map_err(|error| ClientError::request(&error))?;
@@ -231,22 +332,37 @@ impl HttpControlPlane {
             .get(NODE_SIGNATURE_HEADER)
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let body = read_bounded(response).await?;
-        if status != expected {
-            return Err(api_error(status, &body));
+        let body = read_bounded(response, MAX_RESPONSE_BYTES).await?;
+        if let Some((key, nonce)) = &challenge
+            && status.is_success()
+        {
+            EnrollmentProof::verify(key, nonce, &body, node_signature.as_deref())
+                .map_err(|_| ClientError::NodeIdentityMismatch)?;
         }
-        Ok(BoundedResponse {
-            body,
-            node_signature,
-        })
+        Ok(Exchange { status, body })
     }
 
-    async fn empty(
+    async fn status_call(
         &self,
-        request: RequestBuilder,
-        expected: StatusCode,
-    ) -> Result<(), ClientError> {
-        self.send(request, expected).await.map(|_| ())
+        endpoint: &ControlEndpoint,
+        method: SealedMethod,
+        token: &SecretString,
+    ) -> Result<SessionStatus, ClientError> {
+        let body = self
+            .exchange(
+                endpoint,
+                ControlRequest {
+                    method,
+                    path: "v1/sessions/current",
+                    bearer: Some(token),
+                    body: None,
+                },
+            )
+            .await?
+            .expect(StatusCode::OK)?;
+        let mut status: SessionStatus = decode_json(&body)?;
+        status.updates = sanitize_advice(status.updates.take());
+        Ok(status)
     }
 }
 
@@ -268,27 +384,23 @@ impl ControlPlane for HttpControlPlane {
             access_code: access_code.clone(),
             client_name: client_name.to_owned(),
         };
-        let mut builder = self
-            .client
-            .post(endpoint.route("v1/sessions")?)
-            .json(&request);
-        let challenge = endpoint
-            .node_key()
-            .map(|key| (key, EnrollmentNonce::generate()));
-        if let Some((_, nonce)) = &challenge {
-            builder = builder.header(ENROLLMENT_NONCE_HEADER, nonce.header_value());
-        }
-        let response = self.send(builder, StatusCode::CREATED).await?;
-        if let Some((key, nonce)) = &challenge {
-            EnrollmentProof::verify(
-                key,
-                nonce,
-                &response.body,
-                response.node_signature.as_deref(),
+        let body = Zeroizing::new(
+            serde_json::to_string(&request)
+                .map_err(|_| ClientError::Local("failed to encode a request".to_owned()))?,
+        );
+        let response = self
+            .exchange(
+                endpoint,
+                ControlRequest {
+                    method: SealedMethod::Post,
+                    path: "v1/sessions",
+                    bearer: None,
+                    body: Some(body),
+                },
             )
-            .map_err(|_| ClientError::NodeIdentityMismatch)?;
-        }
-        let mut manifest: SessionManifest = decode_json(&response.body)?;
+            .await?
+            .expect(StatusCode::CREATED)?;
+        let mut manifest: SessionManifest = decode_json(&response)?;
         manifest.updates = sanitize_advice(manifest.updates.take());
         Ok(manifest)
     }
@@ -298,16 +410,7 @@ impl ControlPlane for HttpControlPlane {
         endpoint: &ControlEndpoint,
         token: &SecretString,
     ) -> Result<SessionStatus, ClientError> {
-        let mut status: SessionStatus = self
-            .json(
-                self.client
-                    .get(endpoint.route("v1/sessions/current")?)
-                    .bearer_auth(token.expose_secret()),
-                StatusCode::OK,
-            )
-            .await?;
-        status.updates = sanitize_advice(status.updates.take());
-        Ok(status)
+        self.status_call(endpoint, SealedMethod::Get, token).await
     }
 
     async fn renew_session(
@@ -315,16 +418,7 @@ impl ControlPlane for HttpControlPlane {
         endpoint: &ControlEndpoint,
         token: &SecretString,
     ) -> Result<SessionStatus, ClientError> {
-        let mut status: SessionStatus = self
-            .json(
-                self.client
-                    .put(endpoint.route("v1/sessions/current")?)
-                    .bearer_auth(token.expose_secret()),
-                StatusCode::OK,
-            )
-            .await?;
-        status.updates = sanitize_advice(status.updates.take());
-        Ok(status)
+        self.status_call(endpoint, SealedMethod::Put, token).await
     }
 
     async fn release_session(
@@ -332,19 +426,19 @@ impl ControlPlane for HttpControlPlane {
         endpoint: &ControlEndpoint,
         token: &SecretString,
     ) -> Result<(), ClientError> {
-        self.empty(
-            self.client
-                .delete(endpoint.route("v1/sessions/current")?)
-                .bearer_auth(token.expose_secret()),
-            StatusCode::NO_CONTENT,
+        self.exchange(
+            endpoint,
+            ControlRequest {
+                method: SealedMethod::Delete,
+                path: "v1/sessions/current",
+                bearer: Some(token),
+                body: None,
+            },
         )
-        .await
+        .await?
+        .expect(StatusCode::NO_CONTENT)
+        .map(|_| ())
     }
-}
-
-struct BoundedResponse {
-    body: Vec<u8>,
-    node_signature: Option<String>,
 }
 
 fn decode_json<T: DeserializeOwned>(body: &[u8]) -> Result<T, ClientError> {
@@ -352,10 +446,13 @@ fn decode_json<T: DeserializeOwned>(body: &[u8]) -> Result<T, ClientError> {
         .map_err(|_| ClientError::InvalidResponse("JSON decoding failed".to_owned()))
 }
 
-async fn read_bounded(mut response: reqwest::Response) -> Result<Vec<u8>, ClientError> {
+pub(crate) async fn read_bounded(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, ClientError> {
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+        .is_some_and(|length| length > limit as u64)
     {
         return Err(ClientError::ResponseTooLarge);
     }
@@ -365,7 +462,7 @@ async fn read_bounded(mut response: reqwest::Response) -> Result<Vec<u8>, Client
         .await
         .map_err(|error| ClientError::request(&error))?
     {
-        if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+        if body.len().saturating_add(chunk.len()) > limit {
             return Err(ClientError::ResponseTooLarge);
         }
         body.extend_from_slice(&chunk);
@@ -378,7 +475,7 @@ async fn read_bounded(mut response: reqwest::Response) -> Result<Vec<u8>, Client
 /// The public edge answers rejected credentials with the same neutral `404`
 /// page it serves to scanners, so on the session routes a `404` means the
 /// access code or session token was not accepted.
-fn api_error(status: StatusCode, body: &[u8]) -> ClientError {
+pub(crate) fn api_error(status: StatusCode, body: &[u8]) -> ClientError {
     if status == StatusCode::NOT_FOUND {
         return ClientError::Api {
             status: status.as_u16(),
@@ -763,7 +860,7 @@ mod tests {
     #[tokio::test]
     async fn http_client_stops_reading_oversized_responses() {
         let app = Router::new().route(
-            "/oversized",
+            "/v1/sessions/current",
             get(|| async { vec![b'x'; MAX_RESPONSE_BYTES + 1] }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -772,14 +869,217 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let endpoint = ControlEndpoint::parse(&format!("http://{address}")).unwrap();
-        let api = HttpControlPlane::new().unwrap();
-        let result = api
-            .json::<serde_json::Value>(
-                api.client.get(endpoint.route("oversized").unwrap()),
-                StatusCode::OK,
-            )
+        let result = HttpControlPlane::new()
+            .unwrap()
+            .session_status(&endpoint, &SecretString::from("token"))
             .await;
         assert!(matches!(result, Err(ClientError::ResponseTooLarge)));
+        server.abort();
+    }
+
+    const SEALED_NODE_SEED: [u8; 32] = [0x79; 32];
+
+    #[derive(Clone, Default)]
+    struct SealedNode {
+        /// Opened requests, in order.
+        seen: std::sync::Arc<std::sync::Mutex<Vec<ket_core::SealedControlRequest>>>,
+        /// Plain requests, which a sealing client must never send.
+        plain: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        /// Seconds the node's clock is ahead of the device's.
+        clock_ahead: u64,
+        /// Answer every sealed request with 404, as an older server does.
+        no_sealed_route: bool,
+    }
+
+    /// A node that answers the session API sealed (and in the clear, counting
+    /// those requests), enforcing the clock window like the real gateway.
+    async fn sealed_node(node: SealedNode) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        use axum::{body::Bytes, response::IntoResponse};
+        let opening = std::sync::Arc::new(ket_seal::NodeOpeningKey::from_ed25519_seed(
+            &SEALED_NODE_SEED,
+        ));
+        let manifest = test_manifest();
+        let sealed_state = node.clone();
+        let plain_state = node.clone();
+        let plain_manifest = manifest.clone();
+        let app = Router::new()
+            .route(
+                "/v1/sealed",
+                post(move |body: Bytes| {
+                    let node = sealed_state.clone();
+                    let manifest = manifest.clone();
+                    let opened = ket_seal::open_request(&opening, &body);
+
+                    async move {
+                        if node.no_sealed_route {
+                            return StatusCode::NOT_FOUND.into_response();
+                        }
+                        let Ok(opened) = opened else {
+                            return StatusCode::NOT_FOUND.into_response();
+                        };
+                        let request: ket_core::SealedControlRequest =
+                            serde_json::from_slice(&opened.plaintext).unwrap();
+                        node.seen.lock().unwrap().push(request.clone());
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            + node.clock_ahead;
+                        let (status, body) = if request.sent_at_epoch_seconds.abs_diff(now)
+                            > ket_core::SEALED_MAX_CLOCK_SKEW_SECONDS
+                        {
+                            (
+                                400,
+                                Some(
+                                    serde_json::json!({
+                                        "code": ket_core::SEALED_CLOCK_SKEW_CODE,
+                                        "message": "clock"
+                                    })
+                                    .to_string(),
+                                ),
+                            )
+                        } else {
+                            match (request.method, request.path.as_str()) {
+                                (SealedMethod::Post, "/v1/sessions") => {
+                                    (201, Some(serde_json::to_string(&manifest).unwrap()))
+                                }
+                                (SealedMethod::Delete, "/v1/sessions/current") => (204, None),
+                                _ => (404, None),
+                            }
+                        };
+                        let answer = ket_core::SealedControlResponse {
+                            status,
+                            server_time_epoch_seconds: now,
+                            body: body.map(SecretString::new),
+                        };
+                        let sealed = opened
+                            .sealer
+                            .seal(&serde_json::to_vec(&answer).unwrap())
+                            .unwrap();
+                        (StatusCode::OK, sealed).into_response()
+                    }
+                }),
+            )
+            .route(
+                "/v1/sessions",
+                post(move || {
+                    plain_state
+                        .plain
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let manifest = plain_manifest.clone();
+                    async move { (StatusCode::CREATED, Json(manifest)) }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (address, server)
+    }
+
+    fn pinned_endpoint(address: std::net::SocketAddr, required: bool) -> ControlEndpoint {
+        ControlEndpoint::parse(&format!("http://{address}"))
+            .unwrap()
+            .with_node_key(ket_invite::NodeSigningKey::from_seed(&SEALED_NODE_SEED).public_key())
+            .with_required_sealing(required)
+    }
+
+    #[tokio::test]
+    async fn pinned_endpoints_seal_every_session_request() {
+        let node = SealedNode::default();
+        let (address, server) = sealed_node(node.clone()).await;
+        let endpoint = pinned_endpoint(address, true);
+        let api = HttpControlPlane::new().unwrap();
+        let code = SecretString::from("A2345678901234567890123456789012");
+        let manifest = api
+            .create_session(&endpoint, &code, "Sealed client")
+            .await
+            .unwrap();
+        assert_eq!(manifest.node.node_id, "test-node");
+        api.release_session(&endpoint, &manifest.session_token)
+            .await
+            .unwrap();
+        let seen = node.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].path, "/v1/sessions");
+        let body: CreateSessionRequest =
+            serde_json::from_str(seen[0].body.as_ref().unwrap().expose_secret()).unwrap();
+        assert_eq!(body.access_code, code);
+        assert_eq!(seen[0].client.as_deref(), client_header_value());
+        assert_eq!(seen[1].method, SealedMethod::Delete);
+        assert_eq!(seen[1].bearer.as_ref(), Some(&manifest.session_token));
+        assert_eq!(node.plain.load(std::sync::atomic::Ordering::SeqCst), 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_skewed_device_clock_is_corrected_once_from_the_sealed_answer() {
+        let node = SealedNode {
+            clock_ahead: 3_600,
+            ..SealedNode::default()
+        };
+        let (address, server) = sealed_node(node.clone()).await;
+        let endpoint = pinned_endpoint(address, true);
+        let api = HttpControlPlane::new().unwrap();
+        let code = SecretString::from("A2345678901234567890123456789012");
+        api.create_session(&endpoint, &code, "Skewed client")
+            .await
+            .unwrap();
+        api.create_session(&endpoint, &code, "Skewed client")
+            .await
+            .unwrap();
+        assert_eq!(
+            node.seen.lock().unwrap().len(),
+            3,
+            "one refused attempt, then both calls use the corrected clock"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn required_sealing_never_falls_back_to_the_clear() {
+        let node = SealedNode {
+            no_sealed_route: true,
+            ..SealedNode::default()
+        };
+        let (address, server) = sealed_node(node.clone()).await;
+        let api = HttpControlPlane::new().unwrap();
+        let code = SecretString::from("A2345678901234567890123456789012");
+        let result = api
+            .create_session(&pinned_endpoint(address, true), &code, "Client")
+            .await;
+        assert!(matches!(result, Err(ClientError::SealedControlUnavailable)));
+        assert_eq!(node.plain.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        // An endpoint from an invite that predates sealed control may still
+        // enroll in the clear, but must then get the node's signature.
+        let result = api
+            .create_session(&pinned_endpoint(address, false), &code, "Client")
+            .await;
+        assert!(matches!(result, Err(ClientError::NodeIdentityMismatch)));
+        assert_eq!(node.plain.load(std::sync::atomic::Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_answer_sealed_by_anyone_but_the_pinned_node_is_refused() {
+        let (address, server) = sealed_node(SealedNode::default()).await;
+        let endpoint = ControlEndpoint::parse(&format!("http://{address}"))
+            .unwrap()
+            .with_node_key(ket_invite::NodeSigningKey::from_seed(&[0x7a; 32]).public_key())
+            .with_required_sealing(true);
+        // The node cannot open a request sealed to another key and answers
+        // 404, so nothing is sent in the clear and nothing is accepted.
+        let result = HttpControlPlane::new()
+            .unwrap()
+            .create_session(
+                &endpoint,
+                &SecretString::from("A2345678901234567890123456789012"),
+                "Client",
+            )
+            .await;
+        assert!(matches!(result, Err(ClientError::SealedControlUnavailable)));
         server.abort();
     }
 

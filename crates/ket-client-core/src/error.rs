@@ -52,6 +52,10 @@ pub enum ClientError {
     Invite(ket_invite::InviteError),
     #[error("the server could not prove it is the node named in the invite")]
     NodeIdentityMismatch,
+    /// The invite requires encrypted control requests and the server did not
+    /// accept one. Ket never falls back to sending them in the clear.
+    #[error("the server did not accept an encrypted request; it may need an update")]
+    SealedControlUnavailable,
     #[error("this server requires a newer version of Ket")]
     UpdateRequired(Box<ClientUpdate>),
 }
@@ -115,6 +119,7 @@ impl ClientError {
             Self::Local(_) => issue("local_failure", self, false),
             Self::Invite(error) => issue(error.code(), self, false),
             Self::NodeIdentityMismatch => issue("node_identity_mismatch", self, false),
+            Self::SealedControlUnavailable => issue("sealed_control_unavailable", self, false),
             Self::UpdateRequired(_) => issue(CLIENT_UPDATE_REQUIRED_CODE, self, false),
         }
     }
@@ -227,6 +232,11 @@ mod tests {
             (
                 ClientError::NodeIdentityMismatch,
                 "node_identity_mismatch",
+                false,
+            ),
+            (
+                ClientError::SealedControlUnavailable,
+                "sealed_control_unavailable",
                 false,
             ),
             (

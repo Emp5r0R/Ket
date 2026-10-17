@@ -3,8 +3,9 @@
 
 use ket_invite::{
     CONTROL_API_VERSION, EnrollmentNonce, EnrollmentProof, InviteError, NodePublicKey,
-    decode_invite_text, node_fingerprint,
+    SEALED_CONTROL_API_VERSION, decode_invite_text, node_fingerprint,
 };
+use ket_seal::{NodeSealingKey, ResponseOpener};
 use zeroize::Zeroizing;
 
 /// A verified invite, reduced to what the app stores and shows.
@@ -13,6 +14,8 @@ pub struct InviteFields {
     pub node_fingerprint: String,
     pub access_code: Zeroizing<String>,
     pub access_expires_at_epoch_seconds: Option<u64>,
+    /// The invite offers sealed control, so the app must use it.
+    pub sealed_control: bool,
     /// Control API origins (`https://host[:port]`), in the invite's order.
     pub origins: Vec<String>,
 }
@@ -31,6 +34,7 @@ pub fn read_invite(text: &str, now_epoch_seconds: i64) -> Result<InviteFields, I
         node_fingerprint: node_fingerprint(capsule.node_public_key()),
         access_code: Zeroizing::new(capsule.capability().expose().to_owned()),
         access_expires_at_epoch_seconds: capsule.expires_at_epoch_seconds(),
+        sealed_control: capsule.supports_protocol(SEALED_CONTROL_API_VERSION),
         origins: capsule
             .locators()
             .iter()
@@ -56,6 +60,33 @@ pub fn verify_enrollment(
     let node_key = NodePublicKey::from_base64url(node_key)?;
     let nonce = EnrollmentNonce::from_header_value(nonce)?;
     EnrollmentProof::verify(&node_key, &nonce, body, signature)
+}
+
+/// A request sealed to a stored node key, and the opener for its answer.
+/// The opener is key material: keep it only until the answer is read.
+pub struct SealedRequest {
+    pub sealed: Vec<u8>,
+    pub opener: Zeroizing<Vec<u8>>,
+}
+
+pub fn seal_request(node_key: &str, plaintext: &[u8]) -> Result<SealedRequest, InviteError> {
+    let node_key = NodePublicKey::from_base64url(node_key)?;
+    let sealing = NodeSealingKey::from_ed25519(node_key.as_bytes())
+        .map_err(|_| InviteError::InvalidNodeKey)?;
+    let (sealed, opener) =
+        ket_seal::seal_request(&sealing, plaintext).map_err(|_| InviteError::Invalid)?;
+    Ok(SealedRequest {
+        sealed,
+        opener: opener.to_bytes(),
+    })
+}
+
+/// Opens the node's answer; fails unless that node sealed it for this request.
+pub fn open_response(opener: &[u8], sealed: &[u8]) -> Result<Zeroizing<Vec<u8>>, InviteError> {
+    ResponseOpener::from_bytes(opener)
+        .and_then(|opener| opener.open(sealed))
+        .map(Zeroizing::new)
+        .map_err(|_| InviteError::NodeIdentityMismatch)
 }
 
 #[cfg(test)]
@@ -100,6 +131,7 @@ mod tests {
         );
         assert_eq!(fields.access_code.as_str(), CODE);
         assert_eq!(fields.access_expires_at_epoch_seconds, Some(2_000_000_000));
+        assert!(fields.sealed_control);
         assert_eq!(
             fields.origins,
             ["https://ket.example.com:8443", "http://10.0.2.2:8787"]
@@ -159,6 +191,34 @@ mod tests {
         assert_eq!(
             verify_enrollment(&node, "bad", b"{}", Some(&signature)),
             Err(InviteError::Invalid)
+        );
+    }
+
+    #[test]
+    fn sealed_requests_open_only_at_the_node_and_answers_only_here() {
+        let node = key().public_key().to_base64url();
+        let request = seal_request(&node, b"request").unwrap();
+        let opening = ket_seal::NodeOpeningKey::from_ed25519_seed(&[0x24; 32]);
+        let opened = ket_seal::open_request(&opening, &request.sealed).unwrap();
+        assert_eq!(opened.plaintext, b"request");
+        let answer = opened.sealer.seal(b"answer").unwrap();
+        assert_eq!(
+            open_response(&request.opener, &answer).unwrap().as_slice(),
+            b"answer"
+        );
+        let mut tampered = answer.clone();
+        tampered[40] ^= 1;
+        assert_eq!(
+            open_response(&request.opener, &tampered).map(|_| ()),
+            Err(InviteError::NodeIdentityMismatch)
+        );
+        assert_eq!(
+            open_response(b"short", &answer).map(|_| ()),
+            Err(InviteError::NodeIdentityMismatch)
+        );
+        assert_eq!(
+            seal_request("bad", b"x").map(|_| ()),
+            Err(InviteError::InvalidNodeKey)
         );
     }
 }

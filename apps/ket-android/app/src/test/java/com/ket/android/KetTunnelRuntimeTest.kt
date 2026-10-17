@@ -65,7 +65,8 @@ class KetTunnelRuntimeTest {
         val spec = TunnelLaunchSpec.fromEnrollment(
             "https://ket.example.test",
             result,
-            KetProtocol.Stealth,
+            controlNode = null,
+            preferredProtocol = KetProtocol.Stealth,
         )
 
         assertEquals(token, spec.sessionToken)
@@ -83,6 +84,7 @@ class KetTunnelRuntimeTest {
         transports = emptyList(),
         accessExpiresAtEpochSeconds = 3_000,
         preferredProtocol = null,
+        controlNode = null,
     )
 
     private fun node(): AndroidNodeStatus = AndroidNodeStatus(

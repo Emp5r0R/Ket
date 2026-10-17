@@ -15,4 +15,5 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 jni = { version = "=0.21.1", default-features = false }
 ket-invite = { path = "../ket-invite" }
+ket-seal = { path = "../ket-seal" }
 zeroize.workspace = true

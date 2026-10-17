@@ -41,6 +41,7 @@ describe("server enrollment", () => {
       deviceName: "Workstation",
       accessCode: "A".repeat(32),
       nodeKey: null,
+      sealedControl: false,
     });
     expect(input).toHaveValue("");
   });

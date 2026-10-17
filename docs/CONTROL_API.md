@@ -4,7 +4,7 @@ The base URL is the configured `KET_PUBLIC_URL`. JSON requests use `Content-Type
 
 ## Public exposure
 
-Only the client session routes are public. The HTTPS edge (`packaging/server/nginx.conf`) forwards exactly `/v1/sessions` and `/v1/sessions/current` to the control plane, forwards the exact deployment-secret XHTTP and WireGuard paths to their origins, serves a neutral page at `/`, and returns one fixed neutral `404` page for everything else.
+Only the client session routes are public. The HTTPS edge (`packaging/server/nginx.conf`) forwards exactly `/v1/sessions`, `/v1/sessions/current`, and `/v1/sealed` to the control plane, forwards the exact deployment-secret XHTTP and WireGuard paths to their origins, serves a neutral page at `/`, and returns one fixed neutral `404` page for everything else.
 
 On the session routes the edge replaces `400`, `401`, `404`, `405`, `411`, `413`, `414`, `415`, `422`, and `431` with that same neutral `404`, so a request without a valid access code or session token is indistinguishable from a request for an unknown page. `403 grant_expired`, `409 grant_capacity_reached`, `429 server_busy`, and `5xx` pass through unchanged because enrolled clients need them to choose between expiry, capacity, back-off, and retry. Desktop and Android therefore treat `401` and `404` from the session routes as rejected credentials.
 
@@ -67,6 +67,10 @@ A Shadowsocks 2022 profile uses `protocol=shadowsocks2022`, `network=tcp_and_udp
 A WireGuard TLS profile uses `protocol=wire_guard`, `network=tcp`, and a certificate-verified TLS server name. `credential.auth` is a standard-base64 32-byte client private key; `credential.secrets` contains only `preshared_key` and `server_public_key`, both standard-base64 32-byte WireGuard keys. The exact options are `address_allocation=lease_slot`, `allowed_ips=0.0.0.0/0`, `keepalive_seconds=25`, `mtu=1280`, `transport=websocket_tls`, `client_address`, `path_prefix`, and the manager-restricted `remote_address`. Unknown fields, malformed keys or addresses, unsafe paths, extra secrets, TLS downgrades, and route changes fail closed on desktop and Android.
 
 An OpenVPN/stunnel profile uses `protocol=open_vpn_stunnel`, `network=tcp`, and a certificate-verified TLS server name. `credential.auth` is the 44-character scoped OpenVPN password. Its secret keys are exactly `username`, `ca_certificate_pem_b64`, `stunnel_ca_certificate_pem_b64`, and `tls_crypt_key_b64`; the username must equal the public 12-character prefix of the scoped password. The exact options are `auth_mode=session_token`, `cipher=aes_256_gcm`, `remote_cert_tls=server`, `tls_crypt=v1`, `tls_minimum=1.2`, and `transport=stunnel_tls`. Linux, Windows, and Android reject unknown fields, malformed key envelopes, extra secrets, certificate identity mismatches, and downgrade-shaped values.
+
+## Sealed requests
+
+Nodes with a signing key also serve every session endpoint sealed to that key through `POST /v1/sealed`, and invites from them require apps to use it. The body is opaque, the answer is always `200` when the node could open the request, and the real status and JSON travel inside. See [INVITE_CAPSULE.md](INVITE_CAPSULE.md#sealed-control) for the construction. The endpoints below describe what the sealed messages carry.
 
 ## Session endpoints
 

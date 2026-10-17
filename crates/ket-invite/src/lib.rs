@@ -23,6 +23,6 @@ pub use invite_capsule::{
 };
 pub use profile::{
     ACCESS_CODE_BYTES, AccessCode, CONTROL_API_VERSION, INVITE_TEXT_PREFIX, InviteCapsuleV1,
-    KET_APPLICATION_ID, KetInvite, NODE_FINGERPRINT_DOMAIN, SignedInviteCapsule,
-    decode_invite_text, encode_invite_text, node_fingerprint,
+    KET_APPLICATION_ID, KetInvite, NODE_FINGERPRINT_DOMAIN, SEALED_CONTROL_API_VERSION,
+    SignedInviteCapsule, decode_invite_text, encode_invite_text, node_fingerprint,
 };

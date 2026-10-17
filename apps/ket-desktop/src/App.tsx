@@ -42,6 +42,7 @@ const PROTOCOL_KEY = "ket.protocol-preference";
 const SPLIT_TLS_HELLO_KEY = "ket.split-tls-hello";
 const ACCESS_EXPIRY_KEY = "ket.access-expires-at";
 const NODE_KEY_KEY = "ket.node-key";
+const SEALED_CONTROL_KEY = "ket.sealed-control";
 const THEME_KEY = "ket.theme";
 const RESTORE_RETRY_INITIAL_DELAY_MS = 2_000;
 const RESTORE_RETRY_MAX_DELAY_MS = 30_000;
@@ -59,6 +60,8 @@ interface SavedEnrollment {
   accessExpiresAt: number | null;
   /** Pinned from an invite; restores must stay verified against this node. */
   nodeKey: string | null;
+  /** The invite required encrypted control requests; restores keep requiring them. */
+  sealedControl: boolean;
 }
 
 function clearSavedEnrollment() {
@@ -66,12 +69,14 @@ function clearSavedEnrollment() {
   localStorage.removeItem(ACCESS_CODE_KEY);
   localStorage.removeItem(ACCESS_EXPIRY_KEY);
   localStorage.removeItem(NODE_KEY_KEY);
+  localStorage.removeItem(SEALED_CONTROL_KEY);
 }
 
 function clearSavedAccess() {
   localStorage.removeItem(ACCESS_CODE_KEY);
   localStorage.removeItem(ACCESS_EXPIRY_KEY);
   localStorage.removeItem(NODE_KEY_KEY);
+  localStorage.removeItem(SEALED_CONTROL_KEY);
 }
 
 function loadSavedEnrollment(): SavedEnrollment {
@@ -79,7 +84,7 @@ function loadSavedEnrollment(): SavedEnrollment {
   const expiresAt = savedExpiry === null ? null : Number(savedExpiry);
   if (expiresAt !== null && Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now() / 1000) {
     clearSavedEnrollment();
-    return { serverUrl: "", accessCode: "", accessExpiresAt: null, nodeKey: null };
+    return { serverUrl: "", accessCode: "", accessExpiresAt: null, nodeKey: null, sealedControl: false };
   }
   const validExpiry = expiresAt !== null && Number.isFinite(expiresAt) && expiresAt > 0
     ? expiresAt
@@ -91,10 +96,11 @@ function loadSavedEnrollment(): SavedEnrollment {
   const accessCode = validExpiry === null ? "" : (localStorage.getItem(ACCESS_CODE_KEY) ?? "");
   if (!savedProfileCanRestore(serverUrl, accessCode, validExpiry)) {
     clearSavedAccess();
-    return { serverUrl, accessCode: "", accessExpiresAt: null, nodeKey: null };
+    return { serverUrl, accessCode: "", accessExpiresAt: null, nodeKey: null, sealedControl: false };
   }
   const nodeKey = localStorage.getItem(NODE_KEY_KEY);
-  return { serverUrl, accessCode, accessExpiresAt: validExpiry, nodeKey };
+  const sealedControl = nodeKey !== null && localStorage.getItem(SEALED_CONTROL_KEY) === "1";
+  return { serverUrl, accessCode, accessExpiresAt: validExpiry, nodeKey, sealedControl };
 }
 
 /** A full or paused invite comes back without any change on this device. */
@@ -190,6 +196,7 @@ export default function App() {
   const [savedAccessCode, setSavedAccessCode] = useState(initialEnrollment.accessCode);
   const [accessExpiresAt, setAccessExpiresAt] = useState(initialEnrollment.accessExpiresAt);
   const [savedNodeKey, setSavedNodeKey] = useState(initialEnrollment.nodeKey);
+  const [savedSealedControl, setSavedSealedControl] = useState(initialEnrollment.sealedControl);
   const [deviceName, setDeviceName] = useState(
     () => localStorage.getItem(DEVICE_KEY) ?? "Ket desktop",
   );
@@ -406,6 +413,7 @@ export default function App() {
           accessCode: savedAccessCode,
           deviceName,
           nodeKey: savedNodeKey,
+          sealedControl: savedSealedControl,
         });
         if (active) {
           applyRestoredEnrollment(snapshot);
@@ -441,6 +449,7 @@ export default function App() {
     restoreGeneration,
     savedAccessCode,
     savedNodeKey,
+    savedSealedControl,
     serverUrl,
     state.configured,
   ]);
@@ -593,17 +602,25 @@ export default function App() {
         );
         if (input.nodeKey === null) {
           localStorage.removeItem(NODE_KEY_KEY);
+          localStorage.removeItem(SEALED_CONTROL_KEY);
         } else {
           localStorage.setItem(NODE_KEY_KEY, input.nodeKey);
+          if (input.sealedControl) {
+            localStorage.setItem(SEALED_CONTROL_KEY, "1");
+          } else {
+            localStorage.removeItem(SEALED_CONTROL_KEY);
+          }
         }
         setSavedAccessCode(input.accessCode);
         setAccessExpiresAt(snapshot.access_expires_at_epoch_seconds);
         setSavedNodeKey(input.nodeKey);
+        setSavedSealedControl(input.nodeKey !== null && input.sealedControl);
       } else {
         clearSavedAccess();
         setSavedAccessCode("");
         setAccessExpiresAt(null);
         setSavedNodeKey(null);
+        setSavedSealedControl(false);
       }
       setState((current) => ({ ...current, configured: true }));
       return snapshot;
@@ -627,6 +644,7 @@ export default function App() {
       accessCode: details.access_code,
       deviceName: inviteDeviceName,
       nodeKey: details.node_key,
+      sealedControl: details.sealed_control,
     });
   };
 

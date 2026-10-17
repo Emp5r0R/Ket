@@ -40,6 +40,12 @@ data class SessionTelemetry(
     val updates: AndroidUpdateAdvice? = null,
 )
 
+/**
+ * Thrown when an invite required sealed control and the server did not accept a sealed request.
+ * Ket never falls back to sending such requests in the clear.
+ */
+internal const val SEALED_CONTROL_UNAVAILABLE_STATUS = 421
+
 internal class KetControlException(
     val statusCode: Int,
     message: String,
@@ -57,26 +63,33 @@ object KetControlApi : TunnelSessionApi {
     private const val MAX_RESPONSE_BYTES = 128 * 1024
     private const val MAX_ERROR_MESSAGE_CHARS = 256
     internal const val CREDENTIALS_REJECTED_MESSAGE = "Server address or access code was not accepted"
+    private const val SESSIONS_PATH = "/v1/sessions"
+    private const val CURRENT_SESSION_PATH = "/v1/sessions/current"
+
+    private val sealedChannel = SealedControlChannel(
+        post = ::postSealed,
+        clientHeader = AndroidUpdateAdviceParser::clientHeaderValue,
+    )
 
     override fun enroll(serverUrl: String, accessCode: String, clientName: String, nodeKey: NodePublicKey?): EnrollmentResult {
         val base = normalizeBaseUrl(serverUrl)
         val validatedAccessCode = validateAccessCode(accessCode)
         val validatedClientName = validateClientName(clientName)
+        val requestBody = JSONObject()
+            .put("access_code", validatedAccessCode)
+            .put("client_name", validatedClientName)
+            .toString()
+        sealedCall(base, nodeKey, "POST", SESSIONS_PATH, bearer = null, body = requestBody)?.let { answer ->
+            requireSuccess(answer.code, HttpURLConnection.HTTP_CREATED, answer.body, "Enrollment failed")
+            return parseEnrollment(answer.body, requireActiveLease = true)
+        }
         val nonce = nodeKey?.let { EnrollmentNonce.generate() }
         val connection = open("$base/v1/sessions").apply {
             requestMethod = "POST"; readTimeout = 15_000; doOutput = true
             setRequestProperty("Content-Type", "application/json")
             nonce?.let { setRequestProperty(ENROLLMENT_NONCE_HEADER, it.headerValue) }
         }
-        connection.outputStream.use {
-            it.write(
-                JSONObject()
-                    .put("access_code", validatedAccessCode)
-                    .put("client_name", validatedClientName)
-                    .toString()
-                    .toByteArray(StandardCharsets.UTF_8),
-            )
-        }
+        connection.outputStream.use { it.write(requestBody.toByteArray(StandardCharsets.UTF_8)) }
         val response = response(connection)
         requireSuccess(response.code, HttpURLConnection.HTTP_CREATED, response.body, "Enrollment failed")
         if (nodeKey != null && nonce != null) {
@@ -86,37 +99,89 @@ object KetControlApi : TunnelSessionApi {
         return parseEnrollment(response.body, requireActiveLease = true)
     }
 
-    fun status(serverUrl: String, token: String): SessionTelemetry {
+    /** [node] is the key pinned from the invite, or null for URL + access code profiles. */
+    fun status(serverUrl: String, token: String, node: NodePublicKey?): SessionTelemetry {
         val validatedToken = validateSessionToken(token)
-        val connection = open("${normalizeBaseUrl(serverUrl)}/v1/sessions/current").apply {
-            requestMethod = "GET"; setRequestProperty("Authorization", "Bearer $validatedToken")
-        }
-        val (code, body) = response(connection)
+        val (code, body) = sessionCall(serverUrl, node, "GET", validatedToken)
         requireSuccess(code, HttpURLConnection.HTTP_OK, body, "Session status unavailable")
         return parseStatus(body, validatedToken.take(SESSION_ID_LENGTH))
     }
 
-    override fun renew(serverUrl: String, token: String): Long {
-        return renewStatus(serverUrl, token).expiresAtEpochSeconds
+    override fun renew(serverUrl: String, token: String, node: NodePublicKey?): Long {
+        return renewStatus(serverUrl, token, node).expiresAtEpochSeconds
     }
 
-    fun renewStatus(serverUrl: String, token: String): SessionTelemetry {
+    fun renewStatus(serverUrl: String, token: String, node: NodePublicKey?): SessionTelemetry {
         val validatedToken = validateSessionToken(token)
-        val connection = open("${normalizeBaseUrl(serverUrl)}/v1/sessions/current").apply {
-            requestMethod = "PUT"; setRequestProperty("Authorization", "Bearer $validatedToken")
-        }
-        val (code, body) = response(connection)
+        val (code, body) = sessionCall(serverUrl, node, "PUT", validatedToken)
         requireSuccess(code, HttpURLConnection.HTTP_OK, body, "Session renewal failed")
         return parseStatus(body, validatedToken.take(SESSION_ID_LENGTH))
     }
 
-    override fun release(serverUrl: String, token: String) {
+    override fun release(serverUrl: String, token: String, node: NodePublicKey?) {
         val validatedToken = validateSessionToken(token)
-        val connection = open("${normalizeBaseUrl(serverUrl)}/v1/sessions/current").apply {
-            requestMethod = "DELETE"; setRequestProperty("Authorization", "Bearer $validatedToken")
+        val (code, body) = sessionCall(serverUrl, node, "DELETE", validatedToken)
+        requireSuccess(code, HttpURLConnection.HTTP_NO_CONTENT, body, "Session release failed")
+    }
+
+    /** A `/v1/sessions/current` call, sealed when [node] allows, otherwise in the clear. */
+    private fun sessionCall(serverUrl: String, node: NodePublicKey?, method: String, token: String): Pair<Int, String> {
+        val base = normalizeBaseUrl(serverUrl)
+        sealedCall(base, node, method, CURRENT_SESSION_PATH, bearer = token, body = null)?.let {
+            return it.code to it.body
+        }
+        val connection = open("$base$CURRENT_SESSION_PATH").apply {
+            requestMethod = method; setRequestProperty("Authorization", "Bearer $token")
         }
         val (code, body) = response(connection)
-        requireSuccess(code, HttpURLConnection.HTTP_NO_CONTENT, body, "Session release failed")
+        return code to body
+    }
+
+    /**
+     * The sealed answer, or null when the request should go in the clear: no pinned node, or a
+     * server from before sealed control and an invite that did not require it.
+     */
+    private fun sealedCall(
+        base: String,
+        node: NodePublicKey?,
+        method: String,
+        path: String,
+        bearer: String?,
+        body: String?,
+    ): SealedAnswer? {
+        node ?: return null
+        val answer = sealedChannel.exchange(base, node, method, path, bearer, body)
+        if (answer == null && node.sealedControl) {
+            throw KetControlException(
+                SEALED_CONTROL_UNAVAILABLE_STATUS,
+                "The server did not accept an encrypted request. It may need an update.",
+            )
+        }
+        return answer
+    }
+
+    private fun postSealed(url: String, body: ByteArray): SealedHttpResponse {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 5_000
+            readTimeout = 15_000
+            instanceFollowRedirects = false
+            requestMethod = "POST"
+            doOutput = true
+            // No Ket-Client header: the app version travels inside the sealed request.
+            setRequestProperty("Content-Type", SealedControlChannel.CONTENT_TYPE)
+            setRequestProperty("Accept", SealedControlChannel.CONTENT_TYPE)
+        }
+        return try {
+            connection.outputStream.use { it.write(body) }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            SealedHttpResponse(
+                code,
+                readBoundedBytes(stream, connection.contentLengthLong, SealedControlChannel.MAX_SEALED_BYTES),
+            )
+        } finally {
+            connection.disconnect()
+        }
     }
 
     internal fun parseEnrollment(
@@ -291,13 +356,26 @@ object KetControlApi : TunnelSessionApi {
         }
 
     internal fun readBoundedBody(stream: InputStream?, declaredLength: Long = -1): String {
-        require(declaredLength in -1..MAX_RESPONSE_BYTES.toLong()) {
+        val bytes = readBoundedBytes(stream, declaredLength, MAX_RESPONSE_BYTES)
+        return try {
+            StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        } catch (_: Exception) {
+            throw IllegalArgumentException("Control response is not valid UTF-8")
+        }
+    }
+
+    internal fun readBoundedBytes(stream: InputStream?, declaredLength: Long, maximum: Int): ByteArray {
+        require(declaredLength in -1..maximum.toLong()) {
             "Control response exceeded the size limit"
         }
-        if (stream == null) return ""
+        if (stream == null) return ByteArray(0)
         val output = ByteArrayOutputStream(
             when (declaredLength) {
-                in 0..MAX_RESPONSE_BYTES.toLong() -> declaredLength.toInt()
+                in 0..maximum.toLong() -> declaredLength.toInt()
                 else -> 0
             },
         )
@@ -306,21 +384,13 @@ object KetControlApi : TunnelSessionApi {
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
-                require(output.size() + count <= MAX_RESPONSE_BYTES) {
+                require(output.size() + count <= maximum) {
                     "Control response exceeded the size limit"
                 }
                 output.write(buffer, 0, count)
             }
         }
-        return try {
-            StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(output.toByteArray()))
-                .toString()
-        } catch (_: Exception) {
-            throw IllegalArgumentException("Control response is not valid UTF-8")
-        }
+        return output.toByteArray()
     }
 
     internal fun sanitizeServerMessage(message: String): String = message

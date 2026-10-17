@@ -54,6 +54,8 @@ struct InviteDetails {
     access_expires_at_epoch_seconds: Option<u64>,
     node_key: String,
     node_fingerprint: String,
+    /// The invite requires encrypted control requests.
+    sealed_control: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -171,6 +173,7 @@ fn invite_details(invite: &str, now_epoch_seconds: u64) -> Result<InviteDetails,
         access_expires_at_epoch_seconds: enrollment.access_expires_at_epoch_seconds,
         node_key,
         node_fingerprint: enrollment.node_fingerprint,
+        sealed_control: enrollment.endpoint.sealing_required(),
     })
 }
 
@@ -220,10 +223,12 @@ async fn enroll(
     access_code: String,
     device_name: String,
     node_key: Option<String>,
+    sealed_control: Option<bool>,
 ) -> Result<ClientSnapshot, ClientIssue> {
     let _lifecycle = controller.lifecycle.lock().await;
-    let endpoint =
-        ControlEndpoint::parse_pinned(server_url.trim(), node_key.as_deref()).map_err(issue)?;
+    let endpoint = ControlEndpoint::parse_pinned(server_url.trim(), node_key.as_deref())
+        .map_err(issue)?
+        .with_required_sealing(sealed_control.unwrap_or(false));
     let api = Arc::new(HttpControlPlane::new().map_err(issue)?);
     retire_current_session(&controller).await?;
     let adapter = Arc::new(controller.adapter.clone());
@@ -483,6 +488,7 @@ mod command_contract_tests {
             details.node_fingerprint,
             ket_invite::node_fingerprint(&key.public_key())
         );
+        assert!(details.sealed_control, "new invites require sealed control");
         let pinned =
             ControlEndpoint::parse_pinned(&details.server_url, Some(&details.node_key)).unwrap();
         assert_eq!(pinned.node_key(), Some(&key.public_key()));

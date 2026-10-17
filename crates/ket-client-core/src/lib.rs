@@ -11,6 +11,7 @@ mod leak_guard;
 mod openvpn;
 mod route_health;
 mod runtime;
+mod sealed_control;
 mod shadowsocks;
 mod state;
 mod strategy;
@@ -20,7 +21,7 @@ mod validation;
 mod wireguard;
 mod xray;
 
-pub use api::{ControlEndpoint, ControlPlane, HttpControlPlane, InsecureHttpPolicy};
+pub use api::{ControlEndpoint, ControlPlane, HttpControlPlane, InsecureHttpPolicy, Sealing};
 pub use broker::{BrokerConfig, BrokerReadiness, BrokerTransportAdapter};
 pub use client::{KetClient, MaintenanceTask};
 pub use error::{ClientError, ClientIssue};

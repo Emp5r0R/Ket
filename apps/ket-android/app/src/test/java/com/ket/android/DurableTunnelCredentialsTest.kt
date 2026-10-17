@@ -278,6 +278,14 @@ class DurableTunnelCredentialsTest {
         assertEquals(NODE_KEY.base64Url, JSONObject(String(encoded)).getString("node_public_key"))
         assertEquals(NODE_KEY, DurableTunnelCredentialsCodec.decode(encoded).profile.nodeKey)
         assertTrue(pinned.profile.toString().contains(NODE_KEY.fingerprint))
+        assertFalse(JSONObject(String(encoded)).has("node_sealed_control"))
+
+        val sealedKey = NODE_KEY.withSealedControl(true)
+        val sealed = DurableTunnelCredentialsCodec.encode(credentials(null, nodeKey = sealedKey))
+        assertTrue(JSONObject(String(sealed)).getBoolean("node_sealed_control"))
+        val restored = DurableTunnelCredentialsCodec.decode(sealed).profile.nodeKey
+        assertEquals(sealedKey, restored)
+        assertTrue("a restored profile keeps requiring sealed control", restored!!.sealedControl)
 
         val legacy = DurableTunnelCredentialsCodec.encode(credentials(null))
         assertFalse(JSONObject(String(legacy)).has("node_public_key"))
@@ -424,14 +432,15 @@ class DurableTunnelCredentialsTest {
             return enrollment
         }
 
-        override fun renew(serverUrl: String, token: String): Long {
+        override fun renew(serverUrl: String, token: String, node: NodePublicKey?): Long {
             assertEquals(SERVER_URL, serverUrl)
+            assertEquals(expectedNodeKey, node)
             renewals += 1
             renewalError?.let { throw it }
             return renewedExpiry
         }
 
-        override fun release(serverUrl: String, token: String) {
+        override fun release(serverUrl: String, token: String, node: NodePublicKey?) {
             assertEquals(SERVER_URL, serverUrl)
             releasedTokens += token
         }

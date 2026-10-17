@@ -2,8 +2,9 @@
 //! the same client code the apps ship, then releases the session.
 //!
 //! Prints `key=value` lines (no secrets) for `scripts/release-preflight.sh`:
-//! `node_signature=verified`, `server_version=…`, `client_update=…`,
-//! `transports=…`, and `released=yes`. Exits non-zero on any failure.
+//! `node_signature=verified`, `control=sealed|preferred`, `server_version=…`,
+//! `client_update=…`, `transports=…`, and `released=yes`. Exits non-zero on
+//! any failure.
 
 use std::io::Read;
 use std::process::ExitCode;
@@ -40,7 +41,8 @@ async fn run() -> Result<(), String> {
         InviteEnrollment::from_text(invite, now).map_err(|error| format!("invite: {error}"))?;
     let plane = HttpControlPlane::new().map_err(|error| format!("client: {error}"))?;
 
-    // A node-keyed endpoint only accepts a manifest signed by that node.
+    // A node-keyed endpoint only accepts a manifest signed or sealed by that
+    // node; an invite that offers sealed control is never used in the clear.
     let manifest = plane
         .create_session(
             &enrollment.endpoint,
@@ -50,6 +52,14 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|error| format!("enrollment: {error}"))?;
     println!("node_signature=verified");
+    println!(
+        "control={}",
+        if enrollment.endpoint.sealing_required() {
+            "sealed"
+        } else {
+            "preferred"
+        }
+    );
     println!("node_fingerprint={}", enrollment.node_fingerprint);
     let mut protocols: Vec<String> = manifest
         .transports

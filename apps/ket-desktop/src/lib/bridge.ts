@@ -35,6 +35,7 @@ const tauriBridge: DesktopBridge = {
       accessCode: input.accessCode,
       deviceName: input.deviceName,
       nodeKey: input.nodeKey,
+      sealedControl: input.sealedControl,
     }),
   connect: (preferredProtocol, options) =>
     invoke<ClientSnapshot>("connect", {
@@ -175,6 +176,7 @@ function mockBridge(): DesktopBridge {
         access_expires_at_epoch_seconds: now() + 86_400,
         node_key: "A".repeat(42) + "E",
         node_fingerprint: "DEMO:0000:0000:0000:0000:0000:0000:0000",
+        sealed_control: true,
       };
     },
     decodeInviteQr: async (image) => {
@@ -191,6 +193,7 @@ function mockBridge(): DesktopBridge {
         access_expires_at_epoch_seconds: now() + 86_400,
         node_key: "A".repeat(42) + "E",
         node_fingerprint: "DEMO:0000:0000:0000:0000:0000:0000:0000",
+        sealed_control: true,
       };
     },
     enroll: async ({ serverUrl, accessCode }) => {

@@ -115,8 +115,64 @@ URL + access-code clients and v1.0.1 clients keep working. A malformed nonce is
 rejected with `400`, which the public edge masks as its neutral `404`.
 
 This proves the response came from the holder of the node key even when TLS
-terminates elsewhere (Cloudflare) or a certificate is mis-issued. Renewal and
-status responses are not signed; they carry no transport credentials.
+terminates elsewhere (Cloudflare) or a certificate is mis-issued. It does not
+hide anything: whoever terminates TLS still reads the access code, the session
+token, and the credentials in the manifest. Sealed control fixes that.
+
+## Sealed control
+
+Invites carry a range of control API versions. Version 1 is the signed
+enrollment above. Version 2 seals every session API request to the node key.
+Servers that support it issue invites for versions 1 through 2, so older apps
+keep enrolling in the clear while newer apps must seal: an app holding a
+version 2 invite never sends a session request in the clear, even when the
+server answers `404`. Profiles saved from version 1 invites seal when the server
+offers it and fall back to signed enrollment otherwise.
+
+Every sealed request is one `POST /v1/sealed` with an opaque
+`application/octet-stream` body:
+
+```text
+request  = 0x01 || enc (32 bytes) || HPKE ciphertext
+response = response_nonce (32 bytes) || ChaCha20-Poly1305 ciphertext
+```
+
+- The request is HPKE (RFC 9180) base mode with DHKEM(X25519, HKDF-SHA256),
+  HKDF-SHA256, and ChaCha20-Poly1305, `info = "KET-SEAL-V1 request" ||
+  node_ed25519_public_key`, and the version byte as associated data. The
+  node's X25519 key is the Montgomery form of its Ed25519 key, so every invite
+  already carries it; [Thormarker 2021](https://eprint.iacr.org/2021/509)
+  covers using one key pair for both.
+- The response follows Oblivious HTTP (RFC 9458, section 4.4): a secret
+  exported from the request's HPKE context (`"KET-SEAL-V1 response"`), salted
+  with `enc || response_nonce` through HKDF-SHA256, gives the AEAD key
+  (`"key"`) and nonce (`"nonce"`). A fresh response nonce means answering a
+  replayed request never reuses a key and nonce.
+- The plaintext request is JSON: `method`, `path` (`/v1/sessions` or
+  `/v1/sessions/current`), `sent_at_epoch_seconds`, and optionally `bearer`
+  (the session token), `client` (the `Ket-Client` value), and `body` (the
+  enrollment JSON). The plaintext answer is `status`,
+  `server_time_epoch_seconds`, and an optional `body`: exactly what the session
+  API would have sent in the clear.
+- The node refuses a request more than 300 seconds from its clock with
+  `400 request_clock_skew` and its own time; the app corrects its offset once
+  and retries. It answers a request it has already answered with
+  `409 request_replayed`.
+- The node answers `200` for every request it can open. A request it cannot
+  open gets the same neutral `404` as an unknown page.
+
+A front that terminates TLS therefore sees one route and opaque bodies: not the
+access code, the session token, the credentials the node returns, the app
+version, or whether a request succeeded. Only the pinned node can open a
+request, and only the app that sealed it can open the answer, so a sealed
+answer also proves the node's identity. The data-plane protocols still carry
+their own credentials; a front that relays a data-plane protocol (XHTTP through
+a CDN, for example) sees that protocol's credential the way it always has.
+
+Implementations: `crates/ket-seal` (the construction), the gateway in
+`crates/ket-server/src/api/sealed.rs`, the desktop client in
+`crates/ket-client-core/src/sealed_control.rs`, and Android through the same
+Rust code over JNI (`SealedControlChannel.kt`).
 
 ## Node signing key
 
@@ -152,7 +208,7 @@ valid replacement. Possession of an invite grants the access code it contains.
   `crates/ket-client-core/src/invite.rs`.
 - Android: the same Rust code over JNI. `crates/ket-invite-android` builds
   `libket_invite_jni.so` for every ABI; the app reads invites, validates stored node
-  keys, and checks enrollment signatures only through it
+  keys, checks enrollment signatures, and seals control requests only through it
   (`apps/ket-android/app/src/main/java/com/ket/android/invite/NativeInvites.kt`), so
   Android reports exactly the Rust error codes. There is no Kotlin port and no Tink.
 

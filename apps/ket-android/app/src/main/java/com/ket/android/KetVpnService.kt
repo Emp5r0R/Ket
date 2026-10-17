@@ -625,9 +625,9 @@ class KetVpnService : VpnService() {
             val remote: SessionTelemetry
             try {
                 remote = if (renewalDue) {
-                    KetControlApi.renewStatus(spec.controlEndpoint, spec.sessionToken)
+                    KetControlApi.renewStatus(spec.controlEndpoint, spec.sessionToken, spec.controlNode)
                 } else {
-                    KetControlApi.status(spec.controlEndpoint, spec.sessionToken)
+                    KetControlApi.status(spec.controlEndpoint, spec.sessionToken, spec.controlNode)
                 }
                 confirmSessionLease(spec, remote, nowEpochSeconds, renewalDue)
                 renewalFailures = 0
@@ -803,7 +803,7 @@ class KetVpnService : VpnService() {
         val spec = launchSpec
         launchSpec = null
         val release = spec?.let {
-            runCatching { KetControlApi.release(it.controlEndpoint, it.sessionToken) }
+            runCatching { KetControlApi.release(it.controlEndpoint, it.sessionToken, it.controlNode) }
         }
         val releaseConclusive = TunnelCredentialCleanupPolicy.releaseIsConclusive(
             release?.exceptionOrNull(),

@@ -17,7 +17,10 @@ internal object NativeInvites {
         }
     }
 
-    /** Failure: `[code]`. Success: `[null, nodeKey, fingerprint, accessCode, expiresAt?, origin...]`. */
+    /**
+     * Failure: `[code]`. Success: `[null, nodeKey, fingerprint, accessCode, expiresAt?,
+     * sealedControl ("1" or "0"), origin...]`.
+     */
     @JvmStatic
     external fun readInvite(text: String, nowEpochSeconds: Long): Array<String?>?
 
@@ -28,6 +31,14 @@ internal object NativeInvites {
     /** Null when [nodeKey] signed this [nonce] and exact [body], otherwise the rejection code. */
     @JvmStatic
     external fun verifyEnrollment(nodeKey: String, nonce: String, body: ByteArray, signature: String?): String?
+
+    /** `[sealed, opener]` for a request sealed to [nodeKey], or null for an invalid key. */
+    @JvmStatic
+    external fun sealRequest(nodeKey: String, plaintext: ByteArray): Array<ByteArray>?
+
+    /** The answer's plaintext, or null unless the pinned node sealed it for this [opener]. */
+    @JvmStatic
+    external fun openResponse(opener: ByteArray, sealed: ByteArray): ByteArray?
 
     @JvmStatic
     external fun controlApiVersion(): Long
@@ -41,7 +52,8 @@ internal class NativeInvite private constructor(
     val origins: List<String>,
 ) {
     companion object {
-        private const val FIRST_ORIGIN = 5
+        private const val SEALED_CONTROL = 5
+        private const val FIRST_ORIGIN = 6
 
         /** Throws [InviteException] with the reference error code on any rejection. */
         fun read(text: String, nowEpochSeconds: Long): NativeInvite {
@@ -51,7 +63,7 @@ internal class NativeInvite private constructor(
             val nodeKey = row[1] ?: fail(InviteFailure.Invalid)
             val fingerprint = row[2] ?: fail(InviteFailure.Invalid)
             return NativeInvite(
-                nodeKey = NodePublicKey.verified(nodeKey, fingerprint),
+                nodeKey = NodePublicKey.verified(nodeKey, fingerprint, row[SEALED_CONTROL] == "1"),
                 accessCode = row[3] ?: fail(InviteFailure.Invalid),
                 accessExpiresAtEpochSeconds = row[4]?.toLong(),
                 origins = row.drop(FIRST_ORIGIN).filterNotNull(),

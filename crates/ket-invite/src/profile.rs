@@ -11,7 +11,11 @@ use invite_capsule::{
 use zeroize::Zeroizing;
 
 pub const KET_APPLICATION_ID: &str = "org.ket.access";
+/// The session API in the clear, with signed enrollment responses.
 pub const CONTROL_API_VERSION: u16 = 1;
+/// The session API sealed to the node's key (`POST /v1/sealed`). An invite
+/// that offers it obliges the app to use it.
+pub const SEALED_CONTROL_API_VERSION: u16 = 2;
 pub const ACCESS_CODE_BYTES: usize = 32;
 pub const INVITE_TEXT_PREFIX: &str = "ket:invite:";
 /// Domain for the node fingerprints Ket shows people.
@@ -35,7 +39,9 @@ pub type InviteCapsuleV1 = InviteCapsule<KetInvite>;
 pub type SignedInviteCapsule = SignedInvite<KetInvite>;
 
 impl KetInvite {
-    /// An invite for control API version [`CONTROL_API_VERSION`].
+    /// An invite for control API versions [`CONTROL_API_VERSION`] through
+    /// [`SEALED_CONTROL_API_VERSION`]: older apps keep enrolling in the clear,
+    /// newer ones must seal.
     pub fn capsule(
         node_public_key: NodePublicKey,
         locators: Vec<Locator>,
@@ -47,7 +53,7 @@ impl KetInvite {
             locators,
             AccessCode::new(access_code)?,
             CONTROL_API_VERSION,
-            CONTROL_API_VERSION,
+            SEALED_CONTROL_API_VERSION,
             access_expires_at_epoch_seconds,
         )
     }
@@ -145,7 +151,8 @@ mod tests {
         let capsule = decoded.capsule();
         assert_eq!(capsule.capability().expose(), CODE);
         assert!(capsule.supports_protocol(CONTROL_API_VERSION));
-        assert!(!capsule.supports_protocol(CONTROL_API_VERSION + 1));
+        assert!(capsule.supports_protocol(SEALED_CONTROL_API_VERSION));
+        assert!(!capsule.supports_protocol(SEALED_CONTROL_API_VERSION + 1));
         assert_eq!(
             decode_invite_text(&text, Some(2_000_000_000)),
             Err(CapsuleError::Expired)

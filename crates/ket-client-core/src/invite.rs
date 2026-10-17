@@ -1,7 +1,10 @@
 //! Turns invite text into a pinned enrollment target.
 
 use ket_core::SecretString;
-use ket_invite::{CONTROL_API_VERSION, InviteError, decode_invite_text, node_fingerprint};
+use ket_invite::{
+    CONTROL_API_VERSION, InviteError, SEALED_CONTROL_API_VERSION, decode_invite_text,
+    node_fingerprint,
+};
 
 use crate::{ClientError, ControlEndpoint};
 
@@ -29,7 +32,8 @@ impl InviteEnrollment {
             .iter()
             .find_map(|locator| ControlEndpoint::parse(&locator.base_url()).ok())
             .ok_or(ClientError::Invite(InviteError::UnsupportedLocator))?
-            .with_node_key(*capsule.node_public_key());
+            .with_node_key(*capsule.node_public_key())
+            .with_required_sealing(capsule.supports_protocol(SEALED_CONTROL_API_VERSION));
         Ok(Self {
             endpoint,
             access_code: SecretString::new(capsule.capability().expose()),
@@ -74,6 +78,25 @@ mod tests {
     }
 
     #[test]
+    fn invites_from_servers_before_sealed_control_only_prefer_it() {
+        let key = NodeSigningKey::from_seed(&[0x66; 32]);
+        let capsule = ket_invite::InviteCapsuleV1::new(
+            key.public_key(),
+            vec![ControlLocator::https("ket.example.com", 443).unwrap()],
+            ket_invite::AccessCode::new(CODE).unwrap(),
+            CONTROL_API_VERSION,
+            CONTROL_API_VERSION,
+            None,
+        )
+        .unwrap();
+        let text = encode_invite_text(&SignedInviteCapsule::sign(capsule, &key).unwrap())
+            .unwrap()
+            .to_string();
+        let enrollment = InviteEnrollment::from_text(&text, 1_900_000_000).unwrap();
+        assert_eq!(enrollment.endpoint.sealing(), crate::Sealing::Preferred);
+    }
+
+    #[test]
     fn invites_produce_a_pinned_endpoint_and_access_code() {
         let text = invite_text(
             vec![ControlLocator::https("ket.example.com", 8443).unwrap()],
@@ -92,6 +115,10 @@ mod tests {
         );
         let key = NodeSigningKey::from_seed(&[0x66; 32]).public_key();
         assert_eq!(enrollment.endpoint.node_key(), Some(&key));
+        assert!(
+            enrollment.endpoint.sealing_required(),
+            "invites that offer sealed control oblige the app to use it"
+        );
         assert_eq!(enrollment.node_fingerprint, node_fingerprint(&key));
         assert!(!format!("{enrollment:?}").contains(CODE));
     }
