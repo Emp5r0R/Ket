@@ -781,6 +781,7 @@ class KetVpnService : VpnService() {
                     sentBytes = local?.getOrNull(1) ?: remoteTraffic?.sent ?: it.sentBytes,
                     receivedBytes = local?.getOrNull(3) ?: remoteTraffic?.received ?: it.receivedBytes,
                     onlineConnections = remoteTraffic?.online ?: it.onlineConnections,
+                    allowance = remote.allowance,
                     serverVersion = remote.updates?.serverVersion ?: it.serverVersion,
                     clientUpdate = remote.updates?.client ?: it.clientUpdate,
                 )

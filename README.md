@@ -55,6 +55,7 @@ Security fixes install themselves. The Ket app tells you when it needs updating.
 - [What a server knows about its users](docs/PRIVACY.md).
 - [When someone cannot connect](docs/TROUBLESHOOTING.md).
 - [Sharing Ket with a device that cannot run it](docs/SHARING.md).
+- [Keeping a shared server fair](docs/FAIRNESS.md): data allowances per invite, and fair sharing of a full connection.
 - [How invites work](docs/INVITE_CAPSULE.md) and the [architecture](docs/ARCHITECTURE.md).
 - [Running the server by hand](docs/MANUAL_DEPLOYMENT.md) and [developing Ket](docs/DEVELOPMENT.md).
 

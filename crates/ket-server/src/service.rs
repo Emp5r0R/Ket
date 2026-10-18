@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -8,8 +8,8 @@ use std::{
 };
 
 use ket_core::{
-    AccessGrantSummary, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
-    CreateAccessGrantResponse, GrantActivity, GrantActivityEvent,
+    AccessGrantSummary, AllowanceStatus, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
+    CreateAccessGrantResponse, DataAllowance, GrantActivity, GrantActivityEvent,
     MAX_ACCESS_GRANT_VALIDITY_MINUTES, ProtocolAccess, SecretString, TransportProtocol,
     UpdateAccessGrantRequest, generate_access_code, generate_scoped_token, generate_session_token,
     hash_secret, hash_token_secret, split_access_code, split_session_token, verify_secret,
@@ -20,7 +20,8 @@ use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
     activity::{Activity, ActivityLog},
-    grant_admin,
+    allowance, grant_admin,
+    meter::MeteredSession,
     model::{AccessGrantRecord, PersistedState, SessionRecord},
     repository::{FileStateRepository, RepositoryError, StateRepository},
 };
@@ -32,6 +33,9 @@ const MAX_PENDING_CRYPTO_OPERATIONS: usize = 32;
 /// How long an expired invite stays listed before the server forgets it, so
 /// operators can still see why a device stopped connecting.
 const EXPIRED_GRANT_RETENTION_SECONDS: u64 = 7 * 24 * 60 * 60;
+/// How often counted data is written to the state file when nothing else
+/// writes it. Ket restarting loses at most this much counting.
+const USAGE_STORE_INTERVAL_SECONDS: u64 = 60;
 
 #[derive(Clone)]
 pub struct CreatedSession {
@@ -45,6 +49,7 @@ pub struct CreatedSession {
     pub expires_at_epoch_seconds: u64,
     pub access_expires_at_epoch_seconds: Option<u64>,
     pub protocols: ProtocolAccess,
+    pub allowance: Option<AllowanceStatus>,
 }
 
 impl std::fmt::Debug for CreatedSession {
@@ -64,6 +69,7 @@ impl std::fmt::Debug for CreatedSession {
                 &self.access_expires_at_epoch_seconds,
             )
             .field("protocols", &self.protocols)
+            .field("allowance", &self.allowance)
             .finish()
     }
 }
@@ -78,6 +84,7 @@ pub struct SessionView {
     pub access_expires_at_epoch_seconds: Option<u64>,
     /// The protocols the session's access grant allows.
     pub protocols: ProtocolAccess,
+    pub allowance: Option<AllowanceStatus>,
 }
 
 /// A device connected through an access grant.
@@ -107,6 +114,11 @@ pub enum ServiceError {
     GrantCapacity,
     #[error("the server owner has paused this invite")]
     GrantPaused,
+    #[error(
+        "this invite has used its data allowance; it works again from {}",
+        ket_core::utc_minute(*resets_at_epoch_seconds)
+    )]
+    AllowanceUsed { resets_at_epoch_seconds: u64 },
     #[error("the node session capacity has been reached")]
     NodeCapacity,
     #[error("secure secret processing is temporarily busy")]
@@ -136,6 +148,8 @@ pub struct AccessService {
     max_sessions: u32,
     /// In memory only; see [`crate::activity`].
     activity: std::sync::Mutex<ActivityLog>,
+    /// When counted data was last written to the state file.
+    usage_stored_at: AtomicU64,
 }
 
 impl AccessService {
@@ -171,6 +185,7 @@ impl AccessService {
             session_ttl,
             max_sessions,
             activity: std::sync::Mutex::default(),
+            usage_stored_at: AtomicU64::new(unix_time()),
         })
     }
 
@@ -193,6 +208,7 @@ impl AccessService {
             )));
         }
         validate_protocols(&request.protocols)?;
+        validate_allowance(request.allowance.as_ref())?;
         let now = unix_time();
         let expires_at_epoch_seconds =
             now.saturating_add(u64::from(request.valid_for_minutes) * 60);
@@ -209,6 +225,9 @@ impl AccessService {
             created_at_epoch_seconds: now,
             paused: false,
             protocols: request.protocols.clone(),
+            allowance: request.allowance,
+            allowance_since_epoch_seconds: request.allowance.map(|_| now),
+            usage: None,
         };
 
         let mut state = self.state.lock().await;
@@ -229,6 +248,7 @@ impl AccessService {
             expires_at_epoch_seconds,
             created_at_epoch_seconds: now,
             protocols: request.protocols,
+            allowance: request.allowance,
             invite: None,
         })
     }
@@ -251,6 +271,7 @@ impl AccessService {
                     max_connections: request.max_connections,
                     valid_for_minutes: request.valid_for_minutes,
                     protocols: request.protocols.clone(),
+                    allowance: request.allowance,
                 })
                 .await?,
             );
@@ -335,6 +356,9 @@ impl AccessService {
         if let Some(protocols) = &changes.protocols {
             validate_protocols(protocols)?;
         }
+        if let Some(allowance) = &changes.allowance {
+            validate_allowance(allowance.as_ref())?;
+        }
 
         let mut state = self.state.lock().await;
         let mut next = state.clone();
@@ -410,14 +434,19 @@ impl AccessService {
         secret: String,
         client_name: String,
     ) -> Result<CreatedSession, ServiceError> {
-        if !self.verify(secret, grant.secret_hash).await? {
+        if !self.verify(secret, grant.secret_hash.clone()).await? {
             return Err(ServiceError::Unauthorized);
         }
         if grant.paused {
             return Err(ServiceError::GrantPaused);
         }
-
         let now = unix_time();
+        if let Some(resets_at_epoch_seconds) = allowance::used_up_until(&grant, now) {
+            return Err(ServiceError::AllowanceUsed {
+                resets_at_epoch_seconds,
+            });
+        }
+
         let token = generate_session_token();
         let token_parts = split_session_token(&token).map_err(|_| ServiceError::Crypto)?;
         let control_secret_hash = hash_token_secret(&token_parts.secret);
@@ -448,6 +477,11 @@ impl AccessService {
         if grant.paused {
             return Err(ServiceError::GrantPaused);
         }
+        if let Some(resets_at_epoch_seconds) = allowance::used_up_until(grant, now) {
+            return Err(ServiceError::AllowanceUsed {
+                resets_at_epoch_seconds,
+            });
+        }
         let active_for_grant = next
             .sessions
             .iter()
@@ -471,6 +505,7 @@ impl AccessService {
 
         let access_expires_at_epoch_seconds = grant.expires_at_epoch_seconds;
         let protocols = grant.protocols.clone();
+        let allowance = allowance::status(grant, now);
         let mut expires_at = now.saturating_add(self.session_ttl.as_secs());
         if let Some(grant_expiry) = access_expires_at_epoch_seconds {
             expires_at = expires_at.min(grant_expiry);
@@ -506,6 +541,7 @@ impl AccessService {
             expires_at_epoch_seconds: expires_at,
             access_expires_at_epoch_seconds,
             protocols,
+            allowance,
         })
     }
 
@@ -514,11 +550,12 @@ impl AccessService {
         let resource_slot = required_resource_slot(&record)?;
         Ok(SessionView {
             id: record.id,
-            grant_id: grant.id,
+            grant_id: grant.id.clone(),
             resource_slot,
             client_name: record.client_name,
             expires_at_epoch_seconds: record.expires_at_epoch_seconds,
             access_expires_at_epoch_seconds: grant.expires_at_epoch_seconds,
+            allowance: allowance::status(&grant, unix_time()),
             protocols: grant.protocols,
         })
     }
@@ -583,12 +620,7 @@ impl AccessService {
             return Err(ServiceError::Unauthorized);
         }
         let now = unix_time();
-        if session.expires_at_epoch_seconds <= now
-            || grant.paused
-            || grant
-                .expires_at_epoch_seconds
-                .is_some_and(|expiry| expiry <= now)
-        {
+        if !admits(&session, &grant, now) {
             return Err(ServiceError::Unauthorized);
         }
         if !grant.protocols.allows(protocol) {
@@ -597,6 +629,7 @@ impl AccessService {
         let resource_slot = required_resource_slot(&session)?;
         Ok(SessionView {
             id: session.id,
+            allowance: allowance::status(&grant, now),
             grant_id: grant.id,
             resource_slot,
             client_name: session.client_name,
@@ -636,6 +669,7 @@ impl AccessService {
         let resource_slot = required_resource_slot(&record)?;
         Ok(SessionView {
             id: record.id,
+            allowance: allowance::status(&grant, now),
             grant_id: grant.id,
             resource_slot,
             client_name: record.client_name,
@@ -747,6 +781,78 @@ impl AccessService {
         Ok(expired)
     }
 
+    /// The live sessions of every grant with a data allowance.
+    pub(crate) async fn metered_sessions(&self) -> Vec<MeteredSession> {
+        let now = unix_time();
+        let state = self.state.lock().await;
+        state
+            .sessions
+            .iter()
+            .filter(|session| session.expires_at_epoch_seconds > now)
+            .filter_map(|session| {
+                let grant = state
+                    .grants
+                    .iter()
+                    .find(|grant| grant.id == session.grant_id && grant.allowance.is_some())?;
+                Some(MeteredSession {
+                    allocation: session_allocation(session).ok()?,
+                    issued_at_epoch_seconds: session.issued_at_epoch_seconds,
+                    counted_since_epoch_seconds: grant.allowance_since_epoch_seconds.unwrap_or(0),
+                })
+            })
+            .collect()
+    }
+
+    /// Adds what each session moved (by session ID) to its grant's total,
+    /// then ends the sessions of every grant that has used up its allowance
+    /// and returns them for the caller to disconnect from the data plane.
+    pub(crate) async fn record_usage(
+        &self,
+        moved: &HashMap<String, u64>,
+        now: u64,
+    ) -> Result<Vec<SessionAllocation>, ServiceError> {
+        let mut state = self.state.lock().await;
+        let mut next = state.clone();
+        let mut per_grant: HashMap<&str, u64> = HashMap::new();
+        for session in &state.sessions {
+            if let Some(bytes) = moved.get(&session.id).filter(|bytes| **bytes > 0) {
+                let total = per_grant.entry(session.grant_id.as_str()).or_insert(0);
+                *total = total.saturating_add(*bytes);
+            }
+        }
+        for grant in &mut next.grants {
+            if let Some(bytes) = per_grant.get(grant.id.as_str()) {
+                allowance::add(grant, *bytes, now);
+            }
+        }
+        let used_up = next
+            .grants
+            .iter()
+            .filter(|grant| allowance::used_up_until(grant, now).is_some())
+            .map(|grant| grant.id.clone())
+            .collect::<HashSet<_>>();
+        let (ending, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut next.sessions)
+            .into_iter()
+            .partition(|session| used_up.contains(&session.grant_id));
+        next.sessions = kept;
+        let ended = ending
+            .iter()
+            .map(session_allocation)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let stored_at = self.usage_stored_at.load(Ordering::Relaxed);
+        if !ending.is_empty()
+            || (!per_grant.is_empty()
+                && now.saturating_sub(stored_at) >= USAGE_STORE_INTERVAL_SECONDS)
+        {
+            self.repository.store(&next).await?;
+            self.usage_stored_at.store(now, Ordering::Relaxed);
+        }
+        *state = next;
+        self.note_ended(&state, &ending, GrantActivityEvent::EndedAllowanceUsed);
+        Ok(ended)
+    }
+
     pub async fn active_session_count(&self) -> u32 {
         let now = unix_time();
         self.state
@@ -816,13 +922,7 @@ impl AccessService {
         if !authorized {
             return Err(ServiceError::Unauthorized);
         }
-        let now = unix_time();
-        if session.expires_at_epoch_seconds <= now
-            || grant.paused
-            || grant
-                .expires_at_epoch_seconds
-                .is_some_and(|expiry| expiry <= now)
-        {
+        if !admits(&session, &grant, unix_time()) {
             return Err(ServiceError::Unauthorized);
         }
         Ok((session, grant))
@@ -920,6 +1020,7 @@ fn enrollment_refusal(error: &ServiceError) -> Option<GrantActivityEvent> {
         ServiceError::Unauthorized => Some(GrantActivityEvent::RefusedWrongCode),
         ServiceError::GrantExpired => Some(GrantActivityEvent::RefusedExpired),
         ServiceError::GrantPaused => Some(GrantActivityEvent::RefusedPaused),
+        ServiceError::AllowanceUsed { .. } => Some(GrantActivityEvent::RefusedAllowanceUsed),
         ServiceError::GrantCapacity => Some(GrantActivityEvent::RefusedDeviceLimit),
         ServiceError::NodeCapacity => Some(GrantActivityEvent::RefusedServerFull),
         _ => None,
@@ -992,7 +1093,19 @@ fn grant_summary(
         created_at_epoch_seconds: grant.created_at_epoch_seconds,
         paused: grant.paused,
         protocols: grant.protocols.clone(),
+        allowance: allowance::status(grant, now),
     }
+}
+
+/// Whether the session's grant still lets it in: the lease and the grant
+/// are current, the grant is not paused, and its allowance is not used up.
+fn admits(session: &SessionRecord, grant: &AccessGrantRecord, now: u64) -> bool {
+    session.expires_at_epoch_seconds > now
+        && !grant.paused
+        && grant
+            .expires_at_epoch_seconds
+            .is_none_or(|expiry| expiry > now)
+        && allowance::used_up_until(grant, now).is_none()
 }
 
 fn validate_protocols(protocols: &ProtocolAccess) -> Result<(), ServiceError> {
@@ -1002,6 +1115,18 @@ fn validate_protocols(protocols: &ProtocolAccess) -> Result<(), ServiceError> {
         Err(ServiceError::InvalidInput(
             "protocols must name at least one protocol".to_owned(),
         ))
+    }
+}
+
+fn validate_allowance(allowance: Option<&DataAllowance>) -> Result<(), ServiceError> {
+    if allowance.is_none_or(DataAllowance::is_valid) {
+        Ok(())
+    } else {
+        Err(ServiceError::InvalidInput(format!(
+            "allowance bytes must be between {} and {}",
+            ket_core::MIN_ALLOWANCE_BYTES,
+            ket_core::MAX_ALLOWANCE_BYTES
+        )))
     }
 }
 
@@ -1063,6 +1188,7 @@ mod tests {
                 max_connections: 1,
                 valid_for_minutes: 60,
                 protocols: Default::default(),
+                allowance: None,
             })
             .await
             .expect("grant should be created");
@@ -1117,6 +1243,7 @@ mod tests {
                 max_connections: 2,
                 valid_for_minutes: 60,
                 protocols: Default::default(),
+                allowance: None,
             })
             .await
             .expect("grant should be created");
@@ -1179,6 +1306,9 @@ mod tests {
                 created_at_epoch_seconds: now.saturating_sub(60),
                 paused: false,
                 protocols: Default::default(),
+                allowance: None,
+                allowance_since_epoch_seconds: None,
+                usage: None,
             }],
             sessions: vec![SessionRecord {
                 id: session_id.to_owned(),
@@ -1229,6 +1359,7 @@ mod tests {
                     max_connections: 1,
                     valid_for_minutes,
                     protocols: Default::default(),
+                    allowance: None,
                 })
                 .await;
             assert!(matches!(result, Err(ServiceError::InvalidInput(_))));
@@ -1240,6 +1371,7 @@ mod tests {
                 max_connections: 1,
                 valid_for_minutes: 1_440,
                 protocols: Default::default(),
+                allowance: None,
             })
             .await
             .expect("bounded grant should be created");
@@ -1272,6 +1404,7 @@ mod tests {
                 max_connections: 1,
                 valid_for_minutes: 60,
                 protocols: Default::default(),
+                allowance: None,
             })
             .await;
 
@@ -1343,6 +1476,9 @@ mod tests {
             created_at_epoch_seconds: 1,
             paused: false,
             protocols: Default::default(),
+            allowance: None,
+            allowance_since_epoch_seconds: None,
+            usage: None,
         };
         let mut state = PersistedState {
             schema_version: 2,

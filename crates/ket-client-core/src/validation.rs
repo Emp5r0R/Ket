@@ -115,7 +115,14 @@ pub(crate) fn validate_status(
         now_epoch_seconds,
     )?;
     validate_node(&status.node)?;
-    validate_traffic(&status.traffic)
+    validate_traffic(&status.traffic)?;
+    if status
+        .allowance
+        .is_some_and(|allowance| !allowance.allowance.is_valid())
+    {
+        return Err(invalid("data allowance is invalid"));
+    }
+    Ok(())
 }
 
 fn validate_access_expiry(
@@ -428,6 +435,35 @@ mod tests {
     }
 
     #[test]
+    fn accepts_a_data_allowance_and_rejects_an_impossible_one() {
+        let manifest = manifest();
+        let mut response = status();
+        let allowance = ket_core::AllowanceStatus {
+            allowance: ket_core::DataAllowance {
+                bytes: 10 << 30,
+                period: ket_core::AllowancePeriod::Week,
+            },
+            used_bytes: 20 << 30,
+            resets_at_epoch_seconds: NOW + 3_600,
+        };
+        response.allowance = Some(allowance);
+        validate_status(&response, &manifest.session_token, "Desktop", NOW)
+            .expect("a used-up allowance is still a valid status");
+
+        response.allowance = Some(ket_core::AllowanceStatus {
+            allowance: ket_core::DataAllowance {
+                bytes: 0,
+                ..allowance.allowance
+            },
+            ..allowance
+        });
+        assert_invalid(
+            validate_status(&response, &manifest.session_token, "Desktop", NOW),
+            "allowance",
+        );
+    }
+
+    #[test]
     fn rejects_inconsistent_traffic_telemetry() {
         let manifest = manifest();
         let mut response = status();
@@ -487,6 +523,7 @@ mod tests {
                 observed_at_epoch_seconds: NOW,
             },
             updates: None,
+            allowance: None,
         }
     }
 

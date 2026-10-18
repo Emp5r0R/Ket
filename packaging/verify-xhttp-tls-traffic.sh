@@ -2,6 +2,8 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=packaging/lib/verify-allowance.sh
+. "$repo_root/packaging/lib/verify-allowance.sh"
 server_bin=${KET_E2E_SERVER_BIN:-$repo_root/target/debug/ket-server}
 xray_bin=${KET_E2E_XRAY_BINARY:-$repo_root/apps/ket-desktop/src-tauri/binaries/xray}
 stunnel_bin=${KET_E2E_STUNNEL_BINARY:-$(command -v stunnel || command -v stunnel4 || true)}
@@ -156,6 +158,18 @@ request_target() {
     --socks5-hostname "127.0.0.1:$socks_port" "https://$target_host/"
 }
 
+# Eight requests at once: enough to use an allowance soon even when the
+# target's page is small.
+request_target_burst() {
+  local pids=() failed=0
+  for _ in {1..8}; do
+    request_target >/dev/null 2>&1 &
+    pids+=("$!")
+  done
+  for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+  return "$failed"
+}
+
 assert_target_reachable() {
   local response
   response=$(request_target)
@@ -265,6 +279,7 @@ jq -e \
 xray_pid=$!
 wait_xray_api
 wait_ready "http://127.0.0.1:$control_port/readyz" 'Ket control plane'
+control_url="http://127.0.0.1:$control_port"
 
 grant=$(curl --fail --silent --show-error \
   -H "Authorization: Bearer $admin_token" -H 'Content-Type: application/json' \
@@ -304,6 +319,22 @@ start_client "$user_uuid" released
 assert_target_blocked
 stop_client
 
+# A data allowance: Ket counts Xray's per-user statistics, removes the user
+# once its grant has used the allowance, and refuses it until the count is
+# reset.
+release_code=$access_code
+access_code=$(allowance_grant 'XHTTP allowance' | jq -er '.access_code')
+start_session 'XHTTP allowance test'
+start_client "$user_uuid" allowance
+assert_target_reachable
+use_up_allowance "${access_code:0:10}" request_target_burst
+stop_client
+start_client "$user_uuid" allowance-used
+assert_target_blocked
+stop_client
+assert_allowance_refused "$access_code"
+access_code=$release_code
+
 start_session 'XHTTP revocation test'
 start_client "$user_uuid" revocation
 assert_target_reachable
@@ -315,4 +346,4 @@ start_client "$user_uuid" revoked
 assert_target_blocked
 stop_client
 
-printf 'Verified XHTTP/TLS traffic: strict TLS, scoped UUID enforcement, counters, release, and grant revocation.\n'
+printf 'Verified XHTTP/TLS traffic: strict TLS, scoped UUID enforcement, counters, a data allowance, release, and grant revocation.\n'

@@ -1,6 +1,7 @@
 import { Cpu, Database, Gauge, Radio, Timer, Users } from "lucide-react";
 import { formatBytes, formatDuration } from "../lib/format";
 import type { ClientSnapshot, TrafficPoint } from "../types";
+import { AllowanceSection } from "./AllowanceSection";
 import { TrafficChart } from "./TrafficChart";
 
 interface MetricsViewProps {
@@ -105,6 +106,8 @@ export function MetricsView({ snapshot, history }: MetricsViewProps) {
           <span style={{ width: `${Math.min(Math.max(node?.capacity_percent ?? 0, 0), 100)}%` }} />
         </div>
       </section>
+
+      {snapshot.allowance && <AllowanceSection allowance={snapshot.allowance} />}
     </div>
   );
 }

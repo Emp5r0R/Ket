@@ -11,7 +11,7 @@ set -euo pipefail
 self=$(readlink -f -- "${BASH_SOURCE[0]}")
 source_dir=$(cd -- "$(dirname -- "$self")/../.." && pwd)
 install_dir=${KET_INSTALL_DIR:-$source_dir}
-for library in paths common releases image units backup update protocols invites keys status doctor uninstall; do
+for library in paths common releases image units backup update protocols allowance invites shaping keys status doctor uninstall; do
   # shellcheck source=/dev/null
   . "$source_dir/packaging/server/cli/$library.sh"
 done
@@ -28,7 +28,7 @@ Everyday:
   invites show ID     See an invite and the devices connected through it
   invites pause ID    Pause an invite (resume ID turns it back on)
   invites edit ID     Rename, change devices, extend or shorten, or limit
-                      which protocols it may use
+                      its protocols or the data its devices may use
   revoke ID           Revoke an invite and disconnect its devices
   status              Version, services, connected devices, certificate
 
@@ -44,6 +44,7 @@ Keeping up to date:
 
 Other:
   keys                Show the node fingerprint, or rotate keys
+  shaping             Share the server's connection fairly when it is full
   uninstall           Remove Ket from this server
   version             Print the installed release
 
@@ -88,6 +89,7 @@ main() {
     rollback) cmd_rollback "$@" ;;
     backup) cmd_backup "$@" ;;
     keys) cmd_keys "$@" ;;
+    shaping) cmd_shaping "$@" ;;
     uninstall) cmd_uninstall "$@" ;;
     version) installed_ref; printf '\n' ;;
     apply-update) cmd_apply_update "$@" ;;

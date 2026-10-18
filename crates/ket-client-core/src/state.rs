@@ -1,6 +1,6 @@
 use ket_core::{
-    ClientUpdate, Network, NodeStatus, SessionTraffic, TransportProfile, TransportProtocol,
-    UpdateAdvice,
+    AllowanceStatus, ClientUpdate, Network, NodeStatus, SessionTraffic, TransportProfile,
+    TransportProtocol, UpdateAdvice,
 };
 use serde::{Deserialize, Serialize};
 
@@ -76,6 +76,10 @@ pub struct ClientSnapshot {
     pub preferred_protocol: Option<TransportProtocol>,
     pub active_transport: Option<TransportSummary>,
     pub traffic: Option<SessionTraffic>,
+    /// The invite's data allowance, shared by all its devices, and this
+    /// period's use, when the server set one.
+    #[serde(default)]
+    pub allowance: Option<AllowanceStatus>,
     pub handshake_latency_ms: Option<u64>,
     pub session_expires_at_epoch_seconds: Option<u64>,
     pub access_expires_at_epoch_seconds: Option<u64>,

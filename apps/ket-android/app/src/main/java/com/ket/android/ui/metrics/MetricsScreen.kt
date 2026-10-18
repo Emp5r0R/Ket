@@ -18,8 +18,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ket.android.AndroidNodeStatus
+import com.ket.android.DataAllowanceStatus
 import com.ket.android.TunnelPhase
 import com.ket.android.TunnelSnapshot
+import com.ket.android.formatAllowanceReset
 import com.ket.android.formatBytes
 import com.ket.android.formatDuration
 import com.ket.android.formatSetupTime
@@ -53,7 +55,43 @@ internal fun MetricsScreen(snapshot: TunnelSnapshot, accessRemainingSeconds: Lon
             InfoRow("Set up in", formatSetupTime(snapshot.handshakeLatencyMs))
             InfoRow("Access left", formatDuration(accessRemainingSeconds))
         }
+        snapshot.allowance?.let { AllowanceCard(it) }
         ServerCard(node)
+    }
+}
+
+/** How much of the invite's data allowance its devices have used this period. */
+@Composable
+private fun AllowanceCard(allowance: DataAllowanceStatus) {
+    val tone = if (allowance.usedUp) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    SectionCard(title = "Data allowance") {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth()) {
+                Text(
+                    "Used ${allowance.period.current}",
+                    Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text("${formatBytes(allowance.usedBytes)} of ${formatBytes(allowance.bytes)}", style = MaterialTheme.typography.bodyMedium)
+            }
+            LinearProgressIndicator(
+                progress = { allowance.fraction },
+                modifier = Modifier.fillMaxWidth().height(6.dp),
+                color = tone,
+                trackColor = MaterialTheme.colorScheme.outlineVariant,
+            )
+        }
+        Text(allowanceText(allowance), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+internal fun allowanceText(allowance: DataAllowanceStatus): String {
+    val reset = formatAllowanceReset(allowance.resetsAtEpochSeconds)
+    return if (allowance.usedUp) {
+        "Used up. Ket can connect again from $reset."
+    } else {
+        "${formatBytes(allowance.bytes)} ${allowance.period.each}, shared by every device using this invite. Starts again $reset."
     }
 }
 

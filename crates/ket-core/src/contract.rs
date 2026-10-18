@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ClientUpdate, ProtocolAccess, SecretString, UpdateAdvice};
+use crate::{
+    AllowanceStatus, ClientUpdate, DataAllowance, ProtocolAccess, SecretString, UpdateAdvice,
+};
 
 pub const MAX_ACCESS_GRANT_VALIDITY_MINUTES: u32 = 365 * 24 * 60;
 
@@ -101,6 +103,9 @@ pub struct CreateAccessGrantRequest {
     pub valid_for_minutes: u32,
     #[serde(default, skip_serializing_if = "ProtocolAccess::is_all")]
     pub protocols: ProtocolAccess,
+    /// How much its devices may move together each period; none limits nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<DataAllowance>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -111,6 +116,8 @@ pub struct CreateAccessGrantBatchRequest {
     pub valid_for_minutes: u32,
     #[serde(default, skip_serializing_if = "ProtocolAccess::is_all")]
     pub protocols: ProtocolAccess,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<DataAllowance>,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -125,6 +132,8 @@ pub struct CreateAccessGrantResponse {
     pub created_at_epoch_seconds: u64,
     #[serde(default)]
     pub protocols: ProtocolAccess,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<DataAllowance>,
     /// `ket:invite:...` wrapping `access_code`, present when the node has a
     /// signing key. Returned exactly once, like the access code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -143,6 +152,7 @@ impl std::fmt::Debug for CreateAccessGrantResponse {
             .field("expires_at_epoch_seconds", &self.expires_at_epoch_seconds)
             .field("created_at_epoch_seconds", &self.created_at_epoch_seconds)
             .field("protocols", &self.protocols)
+            .field("allowance", &self.allowance)
             .field("invite", &self.invite)
             .finish()
     }
@@ -161,6 +171,9 @@ pub struct AccessGrantSummary {
     pub paused: bool,
     #[serde(default)]
     pub protocols: ProtocolAccess,
+    /// Its data allowance and this period's use, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<AllowanceStatus>,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -258,6 +271,10 @@ pub struct SessionStatus {
     pub traffic: SessionTraffic,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updates: Option<UpdateAdvice>,
+    /// The invite's data allowance, shared by all its devices, and this
+    /// period's use, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<AllowanceStatus>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -366,8 +383,10 @@ mod tests {
             max_connections: 5,
             valid_for_minutes: MAX_ACCESS_GRANT_VALIDITY_MINUTES,
             protocols: ProtocolAccess::All,
+            allowance: None,
         };
-        // Grants for every protocol keep the wire form older servers read.
+        // Grants for every protocol and no allowance keep the wire form older
+        // servers read.
         assert_wire_round_trip(
             request.clone(),
             json!({
@@ -379,13 +398,28 @@ mod tests {
         assert_wire_round_trip(
             CreateAccessGrantRequest {
                 protocols: ProtocolAccess::Only([TransportProtocol::Stealth].into()),
-                ..request
+                ..request.clone()
             },
             json!({
                 "label": "Personal devices",
                 "max_connections": 5,
                 "valid_for_minutes": 525600,
                 "protocols": {"only": ["stealth"]}
+            }),
+        );
+        assert_wire_round_trip(
+            CreateAccessGrantRequest {
+                allowance: Some(crate::DataAllowance {
+                    bytes: 1 << 30,
+                    period: crate::AllowancePeriod::Day,
+                }),
+                ..request.clone()
+            },
+            json!({
+                "label": "Personal devices",
+                "max_connections": 5,
+                "valid_for_minutes": 525600,
+                "allowance": {"bytes": 1_073_741_824, "period": "day"}
             }),
         );
 
@@ -403,11 +437,29 @@ mod tests {
                 observed_at_epoch_seconds: 1_500,
             },
             updates: None,
+            allowance: None,
         };
         let value = serde_json::to_value(&status).expect("status must serialize");
         assert_eq!(value["access_expires_at_epoch_seconds"], 3_000);
         assert_eq!(value["traffic"]["bytes_received"], 20);
-        assert_wire_round_trip(status, value);
+        assert!(value.get("allowance").is_none());
+        assert_wire_round_trip(status.clone(), value);
+
+        let allowance = crate::AllowanceStatus {
+            allowance: crate::DataAllowance {
+                bytes: 10 << 30,
+                period: crate::AllowancePeriod::Month,
+            },
+            used_bytes: 1 << 30,
+            resets_at_epoch_seconds: 4_000,
+        };
+        let value = serde_json::to_value(SessionStatus {
+            allowance: Some(allowance),
+            ..status
+        })
+        .expect("status must serialize");
+        assert_eq!(value["allowance"]["used_bytes"], 1_073_741_824_u64);
+        assert_eq!(value["allowance"]["period"], "month");
     }
 
     fn assert_wire_round_trip<T>(value: T, expected: Value)

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
@@ -72,7 +72,42 @@ pub(crate) trait DataPlaneControl: Send + Sync {
     async fn provision(&self, session: &SessionAllocation) -> Result<(), DataPlaneError>;
     async fn reconcile(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError>;
     async fn traffic(&self, session: &SessionAllocation) -> Result<SessionTraffic, DataPlaneError>;
+    /// The engine's running byte counters for `sessions`, in one call
+    /// however many there are. Sessions the engine has no counter for are
+    /// left out.
+    async fn usage(
+        &self,
+        sessions: &[SessionAllocation],
+    ) -> Result<Vec<UsageReading>, DataPlaneError>;
     async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError>;
+}
+
+/// What one engine has counted for one session, both directions together,
+/// since `since`: when the engine began this counter, where it says (an
+/// OpenVPN connection), or 0. Counters also start again from zero when an
+/// engine restarts; see [`crate::meter`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UsageReading {
+    pub session_id: String,
+    /// Which engine counted it, so two engines' counters stay apart.
+    pub engine: usize,
+    pub since: u64,
+    pub bytes: u64,
+}
+
+impl UsageReading {
+    fn new(session_id: &str, since: u64, bytes: u64) -> Self {
+        Self {
+            session_id: session_id.to_owned(),
+            engine: 0,
+            since,
+            bytes,
+        }
+    }
+}
+
+fn session_ids(sessions: &[SessionAllocation]) -> HashSet<&str> {
+    sessions.iter().map(|session| session.id.as_str()).collect()
 }
 
 pub(crate) fn from_config(
@@ -215,6 +250,26 @@ impl DataPlaneControl for OpenVpnControl {
             .into_iter()
             .find(|status| status.username == session.id);
         Ok(openvpn_session_traffic(status.as_ref(), unix_time()))
+    }
+
+    async fn usage(
+        &self,
+        sessions: &[SessionAllocation],
+    ) -> Result<Vec<UsageReading>, DataPlaneError> {
+        let wanted = session_ids(sessions);
+        Ok(self
+            .sessions()
+            .await?
+            .iter()
+            .filter(|status| wanted.contains(status.username.as_str()))
+            .map(|status| {
+                UsageReading::new(
+                    &status.username,
+                    status.connected_since_epoch_seconds,
+                    status.bytes_received.saturating_add(status.bytes_sent),
+                )
+            })
+            .collect())
     }
 
     async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
@@ -362,6 +417,36 @@ impl DataPlaneControl for WireGuardControl {
         Ok(wireguard_session_traffic(peer.as_ref(), unix_time()))
     }
 
+    async fn usage(
+        &self,
+        sessions: &[SessionAllocation],
+    ) -> Result<Vec<UsageReading>, DataPlaneError> {
+        let by_address = sessions
+            .iter()
+            .map(|session| {
+                let address = self
+                    .config
+                    .client_address(session.resource_slot)
+                    .expect("validated WireGuard capacity covers every resource slot");
+                (address, session.id.as_str())
+            })
+            .collect::<HashMap<_, _>>();
+        Ok(self
+            .peers()
+            .await?
+            .iter()
+            .filter_map(|peer| {
+                by_address.get(&peer.address).map(|session_id| {
+                    UsageReading::new(
+                        session_id,
+                        0,
+                        peer.bytes_received.saturating_add(peer.bytes_sent),
+                    )
+                })
+            })
+            .collect())
+    }
+
     async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
         let addresses = sessions
             .iter()
@@ -420,6 +505,13 @@ impl DataPlaneControl for NoDataPlane {
         _session: &SessionAllocation,
     ) -> Result<SessionTraffic, DataPlaneError> {
         Ok(unavailable_traffic())
+    }
+
+    async fn usage(
+        &self,
+        _sessions: &[SessionAllocation],
+    ) -> Result<Vec<UsageReading>, DataPlaneError> {
+        Ok(Vec::new())
     }
 
     async fn kick(&self, _sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
@@ -486,6 +578,35 @@ impl DataPlaneControl for CompositeDataPlane {
         } else {
             Err(DataPlaneError::Composite(failures.join("; ")))
         }
+    }
+
+    /// An engine that cannot be read this time is left out, so its
+    /// counters are read again next time rather than taken as reset.
+    async fn usage(
+        &self,
+        sessions: &[SessionAllocation],
+    ) -> Result<Vec<UsageReading>, DataPlaneError> {
+        let mut readings = Vec::new();
+        let mut failures = Vec::new();
+        for (engine, control) in self.controls.iter().enumerate() {
+            match control.usage(sessions).await {
+                Ok(engine_readings) => {
+                    readings.extend(
+                        engine_readings
+                            .into_iter()
+                            .map(|reading| UsageReading { engine, ..reading }),
+                    );
+                }
+                Err(error) => failures.push(error.to_string()),
+            }
+        }
+        if failures.len() == self.controls.len() {
+            return Err(DataPlaneError::Composite(failures.join("; ")));
+        }
+        if !failures.is_empty() {
+            tracing::warn!(failures = %failures.join("; "), "some data-plane usage is unavailable");
+        }
+        Ok(readings)
     }
 
     async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
@@ -623,6 +744,23 @@ impl DataPlaneControl for HysteriaControl {
         })
     }
 
+    async fn usage(
+        &self,
+        sessions: &[SessionAllocation],
+    ) -> Result<Vec<UsageReading>, DataPlaneError> {
+        let wanted = session_ids(sessions);
+        let traffic = self
+            .get_json::<BTreeMap<String, HysteriaTraffic>>("/traffic")
+            .await?;
+        Ok(traffic
+            .iter()
+            .filter(|(session_id, _)| wanted.contains(session_id.as_str()))
+            .map(|(session_id, counters)| {
+                UsageReading::new(session_id, 0, counters.tx.saturating_add(counters.rx))
+            })
+            .collect())
+    }
+
     async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
         if sessions.is_empty() {
             return Ok(());
@@ -704,6 +842,11 @@ impl ShadowsocksControl {
     }
 
     async fn active_ports(&self) -> Result<BTreeSet<u16>, DataPlaneError> {
+        Ok(self.port_counters().await?.into_keys().collect())
+    }
+
+    /// Bytes each port has moved, both directions, since it was added.
+    async fn port_counters(&self) -> Result<BTreeMap<u16, u64>, DataPlaneError> {
         parse_shadowsocks_ping(&self.request(b"ping\n").await?)
     }
 
@@ -797,6 +940,20 @@ impl DataPlaneControl for ShadowsocksControl {
         Ok(unavailable_traffic())
     }
 
+    async fn usage(
+        &self,
+        sessions: &[SessionAllocation],
+    ) -> Result<Vec<UsageReading>, DataPlaneError> {
+        let counters = self.port_counters().await?;
+        let mut readings = Vec::new();
+        for session in sessions {
+            if let Some(bytes) = counters.get(&self.session_port(session)?) {
+                readings.push(UsageReading::new(&session.id, 0, *bytes));
+            }
+        }
+        Ok(readings)
+    }
+
     async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
         let mut removed = BTreeSet::new();
         for session in sessions {
@@ -828,13 +985,12 @@ fn expect_shadowsocks_ok(response: &str) -> Result<(), DataPlaneError> {
     }
 }
 
-fn parse_shadowsocks_ping(response: &str) -> Result<BTreeSet<u16>, DataPlaneError> {
+fn parse_shadowsocks_ping(response: &str) -> Result<BTreeMap<u16, u64>, DataPlaneError> {
     let response = response.trim();
     let payload = response.strip_prefix("stat:").ok_or_else(|| {
         DataPlaneError::Command("Shadowsocks manager returned an invalid ping response".to_owned())
     })?;
-    let counters: BTreeMap<u16, u64> = serde_json::from_str(payload.trim())?;
-    Ok(counters.into_keys().collect())
+    Ok(serde_json::from_str(payload.trim())?)
 }
 
 struct XrayControl {
@@ -1010,6 +1166,26 @@ impl DataPlaneControl for XrayControl {
         })
     }
 
+    async fn usage(
+        &self,
+        sessions: &[SessionAllocation],
+    ) -> Result<Vec<UsageReading>, DataPlaneError> {
+        if sessions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut arguments = self.api_arguments("statsquery");
+        arguments.push("-pattern=user>>>session-".to_owned());
+        let per_email = parse_xray_user_totals(&self.run(&arguments).await?)?;
+        Ok(sessions
+            .iter()
+            .filter_map(|session| {
+                per_email
+                    .get(&xray::session_email(&session.id))
+                    .map(|bytes| UsageReading::new(&session.id, 0, *bytes))
+            })
+            .collect())
+    }
+
     async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {
         let emails = sessions
             .iter()
@@ -1095,6 +1271,44 @@ fn parse_xray_stats(output: &str) -> Result<(u64, u64), DataPlaneError> {
     Ok((sent, received))
 }
 
+/// Uplink and downlink together for each user in a `statsquery` answer.
+fn parse_xray_user_totals(output: &str) -> Result<HashMap<String, u64>, DataPlaneError> {
+    let value: Value = serde_json::from_str(output)?;
+    let mut totals = HashMap::new();
+    collect_user_totals(&value, &mut totals);
+    Ok(totals)
+}
+
+fn collect_user_totals(value: &Value, totals: &mut HashMap<String, u64>) {
+    match value {
+        Value::Object(object) => {
+            if let (Some(name), Some(bytes)) = (
+                object.get("name").and_then(Value::as_str),
+                object.get("value").and_then(json_u64),
+            ) && let Some(email) = name
+                .strip_prefix("user>>>")
+                .and_then(|rest| rest.strip_suffix(">>>traffic>>>uplink"))
+                .or_else(|| {
+                    name.strip_prefix("user>>>")
+                        .and_then(|rest| rest.strip_suffix(">>>traffic>>>downlink"))
+                })
+            {
+                let total = totals.entry(email.to_owned()).or_insert(0);
+                *total = total.saturating_add(bytes);
+            }
+            for nested in object.values() {
+                collect_user_totals(nested, totals);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                collect_user_totals(nested, totals);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn collect_stats(value: &Value, sent: &mut u64, received: &mut u64) {
     match value {
         Value::Object(object) => {
@@ -1177,6 +1391,17 @@ mod tests {
         )
         .expect("stats should parse");
         assert_eq!((sent, received), (42, 19));
+        let totals = parse_xray_user_totals(
+            r#"{"stat":[{"name":"user>>>session-a@ket.invalid>>>traffic>>>uplink","value":"42"},{"name":"user>>>session-a@ket.invalid>>>traffic>>>downlink","value":19},{"name":"user>>>session-b@ket.invalid>>>traffic>>>downlink","value":7},{"name":"inbound>>>api>>>traffic>>>uplink","value":5}]}"#,
+        )
+        .expect("user totals should parse");
+        assert_eq!(
+            totals,
+            HashMap::from([
+                ("session-a@ket.invalid".to_owned(), 61),
+                ("session-b@ket.invalid".to_owned(), 7)
+            ])
+        );
         assert_eq!(parse_xray_online(r#"{"value":"3"}"#).unwrap(), 3);
         assert_eq!(
             parse_xray_online_result(Err(DataPlaneError::Command(
@@ -1256,7 +1481,7 @@ mod tests {
     fn shadowsocks_ping_parser_accepts_only_the_manager_contract() {
         assert_eq!(
             parse_shadowsocks_ping("stat: {\"20000\":0,\"20001\":42}\n").unwrap(),
-            BTreeSet::from([20_000, 20_001])
+            BTreeMap::from([(20_000, 0), (20_001, 42)])
         );
         assert!(parse_shadowsocks_ping("ok\n").is_err());
         assert!(parse_shadowsocks_ping("stat: {\"70000\":0}\n").is_err());

@@ -119,11 +119,15 @@ function loadSavedEnrollment(): SavedEnrollment {
   return { serverUrl, accessCode, accessExpiresAt: validExpiry, nodeKey, sealedControl };
 }
 
-/** A full or paused invite comes back without any change on this device. */
+/**
+ * A full or paused invite, or one whose data allowance is used up until the
+ * period starts again, comes back without any change on this device.
+ */
 export function shouldRetrySavedEnrollment(issue: ClientIssue): boolean {
   return issue.retryable ||
     issue.code === "grant_capacity_reached" ||
-    issue.code === "grant_paused";
+    issue.code === "grant_paused" ||
+    issue.code === "grant_allowance_used";
 }
 
 /**
@@ -169,6 +173,7 @@ const emptySnapshot: ClientSnapshot = {
   preferred_protocol: null,
   active_transport: null,
   traffic: null,
+  allowance: null,
   handshake_latency_ms: null,
   session_expires_at_epoch_seconds: null,
   access_expires_at_epoch_seconds: null,

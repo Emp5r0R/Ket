@@ -31,6 +31,8 @@ data class TunnelSnapshot(
     val transportName: String = "Auto",
     val reconnectAttempt: Int = 0,
     val accessExpiresAtEpochSeconds: Long? = null,
+    /** The invite's data allowance and this period's use, when the server set one. */
+    val allowance: DataAllowanceStatus? = null,
     /** The server's Ket version, from its last session response. */
     val serverVersion: String? = null,
     /** The server's advice for this app; survives failures so a refusal can show where to update. */

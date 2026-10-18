@@ -213,7 +213,9 @@ make_install "$install_dir" v1.1.0
             {"protocol":"stealth","name":"stealth","display_name":"HTTPS Stealth"}]'
   grant=$(jq -cn --argjson ends "$ends" --argjson created "$((now - 86400))" '{id: "Grant00001",
     label: "Family", max_connections: 3, active_connections: 1, expires_at_epoch_seconds: $ends,
-    created_at_epoch_seconds: $created, paused: false, protocols: "all"}')
+    created_at_epoch_seconds: $created, paused: false, protocols: "all",
+    allowance: {bytes: 53687091200, period: "month", used_bytes: 3328599655,
+      resets_at_epoch_seconds: 1793491200}}')
   details=$(jq -c --argjson since "$((now - 600))" '. + {devices: [{session_id: "Session00001",
     client_name: "Ket Android", connected_at_epoch_seconds: $since, session_expires_at_epoch_seconds: 0,
     traffic: {available: true, bytes_sent: 1048576, bytes_received: 524288, online_connections: 1,
@@ -238,12 +240,14 @@ make_install "$install_dir" v1.1.0
   last_change() { tail -n1 "$admin_log" | sed -n 's/^PATCH [^ ]* //p'; }
   patches() { grep -c '^PATCH' "$admin_log" || true; }
 
-  answers 'Family phones' 3 7 all
+  answers 'Family phones' 3 7 all none
   output=$(cmd_invite)
   contains 'wizard runs create-invite with the answers' "$output" 'create-invite --label Family phones --devices 3 --days 7 --protocols all'
-  answers 'Phones' 1 30 'teleport' 'Stealth'
+  if [[ $output == *--data* ]]; then fail_test 'no allowance still passed --data'; fi
+  answers 'Phones' 1 30 'teleport' 'Stealth' '50XB/month' '50GB/month'
   output=$(cmd_invite)
   contains 'wizard re-asks for unknown protocols' "$output" '--protocols Stealth'
+  contains 'wizard re-asks for an unreadable allowance' "$output" '--data 50GB/month'
   answers 0 abc 9999
   if (ask_number 'Devices' 1 512 >/dev/null 2>&1); then fail_test 'invalid device counts were accepted'; fi
   answers 0 4
@@ -257,17 +261,38 @@ make_install "$install_dir" v1.1.0
   if (protocol_access_json 'wireguard' "$offered_fixture" 2>/dev/null); then fail_test 'an unoffered protocol was accepted'; fi
   equals 'limit printed by name' "$(protocol_names '{"only":["stealth","wire_guard"]}' "$offered_fixture")" 'stealth, wire_guard (not offered)'
 
+  equals 'allowance in gigabytes' "$(allowance_json '50GB/month')" '{"bytes":53687091200,"period":"month"}'
+  equals 'allowance with a fraction, any case, spaces' "$(allowance_json ' 1.5 TB / Week ')" '{"bytes":1649267441664,"period":"week"}'
+  equals 'allowance in megabytes' "$(allowance_json '500MB/day')" '{"bytes":524288000,"period":"day"}'
+  equals 'no allowance' "$(allowance_json None)" 'null'
+  for invalid in '50GB' '50/month' '5XB/month' '0MB/day' '0.5MB/day' '2000TB/month' '1048577GB/day' '-1GB/day' '1e3GB/day'; do
+    if (allowance_json "$invalid" >/dev/null 2>&1); then fail_test "allowance accepted: $invalid"; fi
+  done
+  equals 'allowance in words' "$(allowance_sentence '{"bytes":53687091200,"period":"month"}')" '50 GB a month, shared by its devices'
+
   output=$(cmd_invites)
   contains 'list header' "$output" 'STATUS'
   contains 'list row' "$output" 'Grant00001'
   contains 'list status' "$output" 'active'
   contains 'list use' "$output" '1/3'
+  contains 'list data' "$output" '3.1 GB/50 GB'
+  output=$(grant=$(jq -c '.allowance.used_bytes = .allowance.bytes' <<<"$grant") cmd_invites)
+  contains 'list used-up data' "$output" 'used up'
+  output=$(grant=$(jq -c 'del(.allowance)' <<<"$grant") cmd_invites)
+  contains 'list without an allowance' "$output" ' - '
 
   output=$(cmd_invites show Grant00001)
   contains 'show devices' "$output" 'Devices:    1 of 3 connected'
   contains 'show end' "$output" '(in 5 days)'
   equals 'one hour is singular' "$(details=$(jq -c --argjson end "$((now + 3700))" '.expires_at_epoch_seconds = $end' <<<"$details") cmd_invites show Grant00001 | sed -n 's/^  Ends: .*(\(.*\))$/\1/p')" 'in 1 hour'
   contains 'show protocols' "$output" 'Protocols:  all'
+  contains 'show data' "$output" 'Data:       3.1 GB of 50 GB used this month (50 GB a month, shared by its devices; starts again 2026-11-01 00:00 UTC)'
+  if [[ $output == *'Used up'* ]]; then fail_test 'an allowance in use was shown as used up'; fi
+  output=$(details=$(jq -c '.allowance.used_bytes = .allowance.bytes' <<<"$details") cmd_invites show Grant00001)
+  contains 'show used-up data and the way out' "$output" 'sudo ket invites edit Grant00001 --reset-data'
+  output=$(details=$(jq -c 'del(.allowance)' <<<"$details") cmd_invites show Grant00001)
+  contains 'show no allowance' "$output" 'Data:       none'
+  output=$(cmd_invites show Grant00001)
   contains 'show connected device' "$output" 'Ket Android'
   contains 'show traffic' "$output" '1.5 MB'
   contains 'show device tag' "$output" 'Ket Android #Sess'
@@ -297,25 +322,89 @@ make_install "$install_dir" v1.1.0
   equals 'shorten from the current end' "$(last_change)" "{\"expires_at_epoch_seconds\":$((ends - 36 * 3600))}"
   cmd_invites edit Grant00001 --protocols stealth --label 'Cousins' >/dev/null
   equals 'protocols and label' "$(last_change)" '{"label":"Cousins","protocols":{"only":["stealth"]}}'
+  output=$(cmd_invites edit Grant00001 --data 100GB/month)
+  equals 'new allowance' "$(last_change)" '{"allowance":{"bytes":107374182400,"period":"month"}}'
+  contains 'allowance change reported' "$output" 'Data: '
+  cmd_invites edit Grant00001 --data none >/dev/null
+  equals 'allowance removed' "$(last_change)" '{"allowance":null}'
+  cmd_invites edit Grant00001 --reset-data >/dev/null
+  equals 'count reset' "$(last_change)" '{"reset_usage":true}'
   before=$(patches)
-  output=$(cmd_invites edit Grant00001 --label Family --devices 3 --protocols all)
+  output=$(cmd_invites edit Grant00001 --label Family --devices 3 --protocols all --data 50GB/month)
   contains 'unchanged values send nothing' "$output" 'Nothing changed.'
   equals 'no request for no change' "$(patches)" "$before"
-  for invalid in '--shorten 6d' '--extend 7x' '--ends-in 0d' '--protocols wireguard' '--devices 0' '--bogus'; do
+  for invalid in '--shorten 6d' '--extend 7x' '--ends-in 0d' '--protocols wireguard' '--devices 0' '--data 9XB/day' '--data' '--bogus'; do
     # shellcheck disable=SC2086 # deliberate word splitting of the option pair
     if (cmd_invites edit Grant00001 $invalid >/dev/null 2>&1); then fail_test "edit accepted: $invalid"; fi
   done
   equals 'refused edits reach no server' "$(patches)" "$before"
 
-  answers 'Cousins' 2 '+3d' 'reality,stealth'
+  answers 'Cousins' 2 '+3d' 'reality,stealth' '2GB/day'
   cmd_invites edit Grant00001 >/dev/null
   equals 'interactive edit' "$(last_change)" \
-    "{\"label\":\"Cousins\",\"max_connections\":2,\"expires_at_epoch_seconds\":$((ends + 3 * 86400)),\"protocols\":{\"only\":[\"stealth\",\"vless_xtls_reality\"]}}"
-  answers Family 3 keep all
+    "{\"label\":\"Cousins\",\"max_connections\":2,\"expires_at_epoch_seconds\":$((ends + 3 * 86400)),\"protocols\":{\"only\":[\"stealth\",\"vless_xtls_reality\"]},\"allowance\":{\"bytes\":2147483648,\"period\":\"day\"}}"
+  answers Family 3 keep all 50GB/month
   output=$(cmd_invites edit Grant00001)
   contains 'interactive edit keeping everything' "$output" 'Nothing changed.'
+  equals 'current allowance offered as the default' "$(current_allowance_text "$details")" '50GB/month'
+  equals 'no allowance offered as none' "$(current_allowance_text '{}')" 'none'
+  equals 'odd sizes offered in megabytes' "$(current_allowance_text '{"allowance":{"bytes":1572864000,"period":"week"}}')" '1500MB/week'
 )
 if (cmd_revoke 'bad id!' 2>/dev/null); then fail_test 'an unsafe grant ID was accepted'; fi
+
+# --- fair sharing (CAKE) ---------------------------------------------------------------
+install_dir="$work/shaping-install"
+make_install "$install_dir" v1.1.0
+(
+  # tc and ip stand-ins: one interface, whose root queue tc remembers.
+  qdisc_file="$work/qdisc"
+  : > "$qdisc_file"
+  shaping_ip() { [[ $* == '-o -4 route show default' ]] && printf 'default via 10.0.0.1 dev ens3 proto dhcp src 10.0.0.5 metric 100\n'; }
+  shaping_tc() {
+    printf 'tc %s\n' "$*" >> "$log"
+    case "$1 $2" in
+      'qdisc replace') printf 'qdisc cake 8001: root refcnt 2 bandwidth %s\n' "$8" > "$qdisc_file" ;;
+      'qdisc del') printf 'qdisc fq_codel 0: root\n' > "$qdisc_file" ;;
+      'qdisc show') cat "$qdisc_file" ;;
+    esac
+  }
+
+  output=$(cmd_shaping)
+  contains 'off by default' "$output" 'Fair sharing is off.'
+  shaping_apply
+  equals 'nothing applied without a rate' "$(grep -c '^tc qdisc replace' "$log" || true)" 0
+
+  for invalid in 950 0mbit 950kbit 401gbit 'fast'; do
+    if (cmd_shaping set "$invalid" >/dev/null 2>&1); then fail_test "shaping accepted: $invalid"; fi
+  done
+  equals 'refused rates are not saved' "$(env_value KET_EGRESS_RATE)" ''
+
+  output=$(cmd_shaping set 950Mbit)
+  contains 'set reported' "$output" 'Fair sharing is on at 950mbit on ens3.'
+  equals 'rate saved' "$(env_value KET_EGRESS_RATE)" 950mbit
+  contains 'CAKE shares by destination' "$(grep '^tc qdisc replace' "$log" | tail -n1)" \
+    'tc qdisc replace dev ens3 root cake bandwidth 950mbit besteffort dual-dsthost'
+  contains 'boot unit applies it' "$(cat "$KET_SYSTEMD_DIR/ket-shaping.service")" \
+    "ExecStart=$install_dir/packaging/server/ket.sh shaping apply"
+  contains 'status on' "$(cmd_shaping)" 'Fair sharing is on at 950mbit on ens3.'
+
+  printf 'qdisc fq_codel 0: root\n' > "$qdisc_file"
+  if output=$(cmd_shaping 2>&1); then fail_test 'a stopped CAKE was reported as running'; fi
+  contains 'stopped CAKE explained' "$output" 'not running on ens3'
+  shaping_apply
+  contains 'apply starts it again' "$(cat "$qdisc_file")" 'qdisc cake'
+
+  output=$(cmd_shaping off)
+  contains 'off reported' "$output" 'Fair sharing is off.'
+  equals 'rate cleared' "$(env_value KET_EGRESS_RATE)" ''
+  contains 'CAKE removed' "$(tail -n1 "$log")" 'tc qdisc del dev ens3 root'
+  [[ ! -e $KET_SYSTEMD_DIR/ket-shaping.service ]] || fail_test 'the boot unit was left behind'
+  output=$(cmd_shaping off)
+  contains 'off twice is fine' "$output" 'Fair sharing is off.'
+
+  set_env_value KET_EGRESS_RATE 'nonsense'
+  if (shaping_apply 2>/dev/null); then fail_test 'an invalid saved rate was applied'; fi
+)
 
 # --- node keys (shared vectors with crates/ket-invite) ------------------------------------
 invite_vectors="$root/crates/ket-invite/tests/vectors/invite-v1.json"

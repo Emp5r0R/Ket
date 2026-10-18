@@ -38,6 +38,7 @@ data class SessionTelemetry(
     val online: Int,
     val observedAtEpochSeconds: Long,
     val updates: AndroidUpdateAdvice? = null,
+    val allowance: DataAllowanceStatus? = null,
 )
 
 /**
@@ -250,6 +251,7 @@ object KetControlApi : TunnelSessionApi {
             online = online,
             observedAtEpochSeconds = positiveLong(traffic, "observed_at_epoch_seconds"),
             updates = AndroidUpdateAdviceParser.parseAdvice(json.optJSONObject("updates")),
+            allowance = DataAllowanceParser.parse(json.optJSONObject("allowance")),
         )
     }
 

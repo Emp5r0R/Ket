@@ -111,7 +111,7 @@ Admin endpoints are operational and reachable only on the host-loopback control 
 | `GET` | `/v1/admin/access-grants` | List grants and active lease counts |
 | `POST` | `/v1/admin/access-grants/batch` | Create 1-100 grants in one authenticated request |
 | `GET` | `/v1/admin/access-grants/{id}` | One grant and the devices connected through it |
-| `PATCH` | `/v1/admin/access-grants/{id}` | Pause, resume, rename, change devices, change the end, or limit protocols |
+| `PATCH` | `/v1/admin/access-grants/{id}` | Pause, resume, rename, change devices, change the end, limit protocols, or set a data allowance |
 | `DELETE` | `/v1/admin/access-grants/{id}` | Revoke a grant and all of its sessions |
 | `GET` | `/v1/admin/protocols` | The protocols this server offers, with their short names |
 
@@ -129,7 +129,9 @@ Create a grant:
 
 A grant may be limited to some of the server's protocols with `"protocols": {"only": ["stealth", "vless_xtls_reality"]}`; the default `"all"` also covers protocols the server enables later. Only protocols listed by `GET /v1/admin/protocols` are accepted, and the set may not be empty. Session manifests then carry only the allowed transports, and Hysteria 2 and OpenVPN authentication refuse the grant's scoped token on any other protocol. If the server later stops offering every protocol a grant allows, enrollment answers `409 grant_protocols_unavailable`.
 
-Grant summaries carry `paused` and `protocols`. Change a grant with `PATCH` and only the fields that change:
+A grant may carry a data allowance, shared by all its devices: `"allowance": {"bytes": 53687091200, "period": "month"}`. `bytes` is 1 MiB to 1 PiB; `period` is `day`, `week` (from Monday), or `month`, in UTC. Without it the grant has no limit. See [FAIRNESS.md](FAIRNESS.md#data-allowances) for how it is counted.
+
+Grant summaries carry `paused`, `protocols`, and, for a grant with an allowance, `allowance`: the `bytes` and `period` plus `used_bytes` this period and `resets_at_epoch_seconds`. Change a grant with `PATCH` and only the fields that change:
 
 ```json
 {
@@ -137,20 +139,27 @@ Grant summaries carry `paused` and `protocols`. Change a grant with `PATCH` and 
   "max_connections": 2,
   "expires_at_epoch_seconds": 1795000000,
   "paused": false,
-  "protocols": "all"
+  "protocols": "all",
+  "allowance": {"bytes": 10737418240, "period": "week"},
+  "reset_usage": true
 }
 ```
+
+`"allowance": null` removes the allowance. A different period starts the count again; a different amount keeps it. `"reset_usage": true` starts this period's count again.
 
 The new end must be in the future and at most 365 days away; an empty or unknown field is `422`. The response is `{"grant": <summary>, "disconnected_devices": N}`. A change ends the sessions it no longer admits, and the server kicks them from the data planes:
 
 - pausing ends every session of the grant, and enrollment answers `423 grant_paused` until it is resumed;
 - changing the protocols ends every session, because each holds credentials for the old set;
 - a lower device limit ends the newest sessions above it;
-- a shorter lifetime ends none, but cuts each session to the new end.
+- a shorter lifetime ends none, but cuts each session to the new end;
+- an allowance at or below what the grant has used ends every session.
 
-Apps treat `423` as temporary: they keep the saved invite and connect again once the grant is resumed. Apps follow the end in session responses, so devices that reach the server see a longer or shorter lifetime. The invite text keeps the end it was created with, so a new device cannot add an invite after that date even when the grant was extended.
+When a grant's devices use up its allowance, the server ends every session of the grant, kicks them from the data planes, and refuses enrollment, session renewal, and data-plane sign-in with `423 grant_allowance_used` until the period starts over, the allowance is raised, or the count is reset. The message names the time it works again. Session status (`GET` and `PUT /v1/sessions/current`) carries the same `allowance` object, so apps can show it.
 
-`GET /v1/admin/access-grants/{id}` returns the summary fields plus `devices`: each connected session's `session_id`, `client_name`, `connected_at_epoch_seconds`, `session_expires_at_epoch_seconds`, and `traffic`. It also returns `recent`, newest first: what devices did with the grant since the server started, held in memory only. Each entry has an `event`, the `client_name`, the `session_id` once there is one, the `protocol` for sign-ins, a `count` of repeats, and `first_at_epoch_seconds`/`last_at_epoch_seconds`. The event names are listed in [`grant-activity-events.json`](../crates/ket-core/tests/vectors/grant-activity-events.json): `enrolled`, `checked_in`, `left`, `lease_ended`, `ended_by_change`, the enrollment refusals `refused_wrong_code`, `refused_expired`, `refused_paused`, `refused_device_limit`, `refused_server_full`, `refused_update_required`, `refused_no_protocol`, `refused_server_unavailable`, and the OpenVPN and Hysteria2 sign-ins `signed_in`, `sign_in_refused` (the session had ended), and `sign_in_refused_protocol` (the grant does not allow that protocol). Older servers send no `recent`.
+Apps treat `423` as temporary: they keep the saved invite and connect again once the grant is resumed or its allowance starts over. Apps follow the end in session responses, so devices that reach the server see a longer or shorter lifetime. The invite text keeps the end it was created with, so a new device cannot add an invite after that date even when the grant was extended.
+
+`GET /v1/admin/access-grants/{id}` returns the summary fields plus `devices`: each connected session's `session_id`, `client_name`, `connected_at_epoch_seconds`, `session_expires_at_epoch_seconds`, and `traffic`. It also returns `recent`, newest first: what devices did with the grant since the server started, held in memory only. Each entry has an `event`, the `client_name`, the `session_id` once there is one, the `protocol` for sign-ins, a `count` of repeats, and `first_at_epoch_seconds`/`last_at_epoch_seconds`. The event names are listed in [`grant-activity-events.json`](../crates/ket-core/tests/vectors/grant-activity-events.json): `enrolled`, `checked_in`, `left`, `lease_ended`, `ended_by_change`, `ended_allowance_used`, the enrollment refusals `refused_wrong_code`, `refused_expired`, `refused_paused`, `refused_allowance_used`, `refused_device_limit`, `refused_server_full`, `refused_update_required`, `refused_no_protocol`, `refused_server_unavailable`, and the OpenVPN and Hysteria2 sign-ins `signed_in`, `sign_in_refused` (the session had ended), and `sign_in_refused_protocol` (the grant does not allow that protocol). Older servers send no `recent`.
 
 ## Data-plane endpoint
 
@@ -175,4 +184,4 @@ Errors use a stable machine code and a user-safe message:
 }
 ```
 
-Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_paused` (`423`), `grant_capacity_reached`, `grant_protocols_unavailable` (`409`), `node_capacity_reached`, `server_busy`, `data_plane_unavailable`, `client_update_required` (`426`, with an `update` object), `not_found`, and `internal_error`. Secret verification uses a bounded worker pool and bounded admission queue. When that queue is full, the server returns `429 server_busy` with `Retry-After: 1` instead of accumulating unbounded Argon2 work; clients may retry after that delay.
+Known codes are `unauthorized`, `invalid_request`, `grant_expired`, `grant_paused` (`423`), `grant_allowance_used` (`423`), `grant_capacity_reached`, `grant_protocols_unavailable` (`409`), `node_capacity_reached`, `server_busy`, `data_plane_unavailable`, `client_update_required` (`426`, with an `update` object), `not_found`, and `internal_error`. Secret verification uses a bounded worker pool and bounded admission queue. When that queue is full, the server returns `429 server_busy` with `Retry-After: 1` instead of accumulating unbounded Argon2 work; clients may retry after that delay.

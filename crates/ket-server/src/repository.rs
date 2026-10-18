@@ -222,6 +222,8 @@ mod tests {
                 .expect("state should be JSON");
         assert!(stored["grants"][0].get("paused").is_none());
         assert!(stored["grants"][0].get("protocols").is_none());
+        assert!(stored["grants"][0].get("allowance").is_none());
+        assert!(stored["grants"][0].get("usage").is_none());
 
         state.grants[0].paused = true;
         state.grants[0].protocols =
@@ -230,6 +232,19 @@ mod tests {
         let loaded = load_file(path.path()).expect("controlled grant should load");
         assert!(loaded.grants[0].paused);
         assert_eq!(loaded.grants[0].protocols, state.grants[0].protocols);
+
+        state.grants[0].allowance = Some(ket_core::DataAllowance {
+            bytes: 10 << 30,
+            period: ket_core::AllowancePeriod::Month,
+        });
+        state.grants[0].usage = Some(crate::model::PeriodUsage {
+            period_start_epoch_seconds: 1_790_812_800,
+            used_bytes: 3 << 30,
+        });
+        store_file(path.path(), &state).expect("allowance should be stored");
+        let loaded = load_file(path.path()).expect("allowance should load");
+        assert_eq!(loaded.grants[0].allowance, state.grants[0].allowance);
+        assert_eq!(loaded.grants[0].usage, state.grants[0].usage);
     }
 
     #[test]
@@ -304,6 +319,9 @@ mod tests {
                 created_at_epoch_seconds: 100,
                 paused: false,
                 protocols: Default::default(),
+                allowance: None,
+                allowance_since_epoch_seconds: None,
+                usage: None,
             }],
             sessions: vec![SessionRecord {
                 id: "Session00001".to_owned(),

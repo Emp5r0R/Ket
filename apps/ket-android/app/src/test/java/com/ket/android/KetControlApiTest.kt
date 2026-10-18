@@ -83,6 +83,43 @@ class KetControlApiTest {
     }
 
     @Test
+    fun `session status carries the invite's data allowance when the server sets one`() {
+        val sessionId = testSessionToken('F').take(12)
+        assertEquals(null, KetControlApi.parseStatus(testSessionStatus(sessionId).toString(), sessionId).allowance)
+
+        val allowance = JSONObject()
+            .put("bytes", 53_687_091_200L)
+            .put("period", "month")
+            .put("used_bytes", 13_421_772_800L)
+            .put("resets_at_epoch_seconds", 1_793_491_200L)
+        val telemetry = KetControlApi.parseStatus(
+            testSessionStatus(sessionId).put("allowance", allowance).toString(),
+            expectedSessionId = sessionId,
+        )
+        val parsed = telemetry.allowance!!
+        assertEquals(AllowancePeriod.Month, parsed.period)
+        assertEquals(13_421_772_800L, parsed.usedBytes)
+        assertEquals(0.25f, parsed.fraction)
+        assertFalse(parsed.usedUp)
+        assertTrue(parsed.copy(usedBytes = parsed.bytes * 2).usedUp)
+        assertEquals(1f, parsed.copy(usedBytes = parsed.bytes * 2).fraction)
+        assertEquals("1 Nov 2026, 00:00 UTC", formatAllowanceReset(parsed.resetsAtEpochSeconds))
+
+        // A period this app does not know is left out; nonsense is refused.
+        val future = JSONObject(allowance.toString()).put("period", "year")
+        assertEquals(
+            null,
+            KetControlApi.parseStatus(testSessionStatus(sessionId).put("allowance", future).toString(), sessionId).allowance,
+        )
+        for ((key, value) in listOf("bytes" to 1L, "used_bytes" to -1L, "resets_at_epoch_seconds" to 0L)) {
+            val invalid = JSONObject(allowance.toString()).put(key, value)
+            assertThrows(IllegalArgumentException::class.java) {
+                KetControlApi.parseStatus(testSessionStatus(sessionId).put("allowance", invalid).toString(), sessionId)
+            }
+        }
+    }
+
+    @Test
     fun `session status rejects identity device and lease mismatches`() {
         val token = testSessionToken('C')
         val sessionId = token.take(12)

@@ -274,6 +274,40 @@ describe("desktop telemetry", () => {
     expect(within(metrics).getByText("25%")).toBeInTheDocument();
   });
 
+  it("shows the invite's data allowance only when the server set one", () => {
+    const allowance = {
+      bytes: 53_687_091_200,
+      period: "month" as const,
+      used_bytes: 13_421_772_800,
+      resets_at_epoch_seconds: 1_793_491_200,
+    };
+    const { container, rerender } = render(
+      <MetricsView snapshot={testSnapshot({ allowance })} history={[]} />,
+    );
+    const section = screen.getByLabelText("Data allowance");
+    expect(within(section).getByText("Used this month")).toBeInTheDocument();
+    expect(within(section).getByText("12.5 GB of 50.0 GB")).toBeInTheDocument();
+    expect(
+      within(section).getByText(
+        "50.0 GB a month, shared by every device using this invite. Starts again 1 Nov 2026, 00:00 UTC.",
+      ),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".allowance-section .capacity-track span")).toHaveStyle({ width: "25%" });
+
+    rerender(
+      <MetricsView
+        snapshot={testSnapshot({ allowance: { ...allowance, period: "day", used_bytes: 60_000_000_000 } })}
+        history={[]}
+      />,
+    );
+    expect(screen.getByText("Used today")).toBeInTheDocument();
+    expect(screen.getByText("Used up. Ket can connect again from 1 Nov 2026, 00:00 UTC.")).toBeInTheDocument();
+    expect(container.querySelector(".allowance-used-up span")).toHaveStyle({ width: "100%" });
+
+    rerender(<MetricsView snapshot={testSnapshot({ allowance: null })} history={[]} />);
+    expect(screen.queryByLabelText("Data allowance")).not.toBeInTheDocument();
+  });
+
   it("uses explicit placeholders and clamps invalid visual capacity", () => {
     const snapshot = testSnapshot({
       node: { ...testNode, capacity_percent: 140, cpu_load_percent: null, memory_used_bytes: null, memory_total_bytes: null, uptime_seconds: null },

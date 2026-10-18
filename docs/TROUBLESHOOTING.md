@@ -23,7 +23,7 @@ A protocol that fails at `probe` or `connect` on one network and works on anothe
 sudo ket invites show ID
 ```
 
-Under **Recent activity**, the server lists what devices recently did with that invite: joined, checked in, disconnected, were refused and why (wrong access code, paused, device limit, app too old), and whether their traffic reached the OpenVPN or Hysteria 2 server. A device that joins but never shows **Reached the server over OpenVPN** is on a network that blocks OpenVPN before it gets to you. The list holds no addresses and lives only in the server's memory (see [PRIVACY.md](PRIVACY.md#kept-in-memory-only)).
+Under **Recent activity**, the server lists what devices recently did with that invite: joined, checked in, disconnected, were refused and why (wrong access code, paused, data allowance used up, device limit, app too old), and whether their traffic reached the OpenVPN or Hysteria 2 server. A device that joins but never shows **Reached the server over OpenVPN** is on a network that blocks OpenVPN before it gets to you. The list holds no addresses and lives only in the server's memory (see [PRIVACY.md](PRIVACY.md#kept-in-memory-only)).
 
 ## 3. Test from a network that blocks nothing
 

@@ -58,6 +58,16 @@ export interface SessionTraffic {
   observed_at_epoch_seconds: number;
 }
 
+export type AllowancePeriod = "day" | "week" | "month";
+
+/** The invite's data allowance, shared by all its devices, and this period's use. */
+export interface AllowanceStatus {
+  bytes: number;
+  period: AllowancePeriod;
+  used_bytes: number;
+  resets_at_epoch_seconds: number;
+}
+
 export type ClientUpdateStatus = "current" | "optional" | "recommended" | "security" | "required";
 
 /** The server's advice for this app (see docs/UPDATES.md). */
@@ -103,6 +113,7 @@ export interface ClientSnapshot {
   preferred_protocol: ProtocolId | null;
   active_transport: TransportSummary | null;
   traffic: SessionTraffic | null;
+  allowance: AllowanceStatus | null;
   handshake_latency_ms: number | null;
   session_expires_at_epoch_seconds: number | null;
   access_expires_at_epoch_seconds: number | null;

@@ -81,12 +81,15 @@ utc_time() { date -u -d "@$1" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || printf 'Unix 
 invite_usage() {
   cat <<'USAGE'
 Usage: ket invite [--label TEXT] [--devices N] [--days N | --minutes N]
-                  [--protocols LIST] [--no-qr]
+                  [--protocols LIST] [--data SIZE/PERIOD] [--no-qr]
 
 Without options on a terminal, ket asks who the invite is for, how many
-devices may be connected at once, for how many days, and which protocols it
-may use. LIST is "all" (the default) or names such as "stealth reality";
-"sudo ket invites protocols" lists the names this server offers.
+devices may be connected at once, for how many days, which protocols it may
+use, and how much data its devices may use together. LIST is "all" (the
+default) or names such as "stealth reality"; "sudo ket invites protocols"
+lists the names this server offers. --data takes a size and a period such as
+50GB/month, 2GB/day, or 10GB/week (UTC; weeks start on Monday); without it
+there is no limit.
 USAGE
 }
 
@@ -95,13 +98,15 @@ cmd_invite() {
   require_root
   require_installation
   if (($# == 0)) && has_terminal; then
-    local label devices days protocols
+    local label devices days protocols data
     info 'Create an invite. Press Enter to accept the suggestion in brackets.'
     label=$(ask 'Who is it for (a name you will recognise later)' 'Ket devices')
     devices=$(ask_number 'How many devices may be connected at the same time' 1 512) || return 1
     days=$(ask_number 'For how many days should it work' 30 365) || return 1
     protocols=$(ask_protocols all) || return 1
+    data=$(ask_allowance none) || return 1
     set -- --label "$label" --devices "$devices" --days "$days" --protocols "$protocols"
+    [[ ${data,,} == none ]] || set -- "$@" --data "$data"
   fi
   (cd "$install_dir" && ./packaging/server/create-invite.sh "$@")
 }
@@ -115,6 +120,20 @@ ask_protocols() {
   for attempt in 1 2 3; do
     answer=$(ask 'Which protocols may it use ("all", or names)' "$1")
     if protocol_access_json "$answer" "$offered" >/dev/null 2>> "$(ket_tty)"; then
+      printf '%s' "$answer"
+      return 0
+    fi
+  done
+  fail 'no valid answer given'
+}
+
+# ask_allowance DEFAULT: asks how much data the invite's devices may use
+# together until the answer is a size and a period, or "none".
+ask_allowance() {
+  local answer attempt
+  for attempt in 1 2 3; do
+    answer=$(ask 'How much data may its devices use together (such as 50GB/month, or none)' "$1")
+    if allowance_json "$answer" >/dev/null 2>> "$(ket_tty)"; then
       printf '%s' "$answer"
       return 0
     fi
@@ -137,11 +156,17 @@ Usage: sudo ket invites [COMMAND]
       --shorten 3d       End sooner
       --ends-in 30d      End this long from now
       --protocols LIST   "all", or names such as "stealth reality"
+      --data 50GB/month  Data its devices may use together (or none);
+                         also /day or /week, counted in UTC
+      --reset-data       Start this period's data count again
   revoke ID [--yes]    Delete it for good and disconnect its devices
   protocols            The protocol names this server offers
 
 Each change takes effect at once. Devices disconnected by a change connect
 again with the new settings, or are refused if it no longer lets them in.
+When an invite's devices use up its data allowance they are disconnected
+and refused until the period starts again, the allowance is raised, or the
+count is reset.
 USAGE
 }
 
@@ -181,17 +206,18 @@ invites_list() {
     return 0
   fi
   offered=$(offered_protocols) || return 1
-  jq -r --argjson now "$(date +%s)" --argjson offered "$offered" '
+  jq -r --argjson now "$(date +%s)" --argjson offered "$offered" "$ALLOWANCE_JQ"'
     def names: if . == "all" or . == null then "all"
       else .only | map(. as $p | ($offered | map(select(.protocol == $p)) | first | .name) // $p)
         | join(",") end;
-    ["ID", "FOR", "STATUS", "IN USE", "ENDS", "PROTOCOLS"],
+    ["ID", "FOR", "STATUS", "IN USE", "DATA", "ENDS", "PROTOCOLS"],
     (sort_by(.created_at_epoch_seconds) | reverse | .[]
       | [ .id,
           (.label | gsub("[[:cntrl:]]"; "") | .[0:32]),
           (if .expires_at_epoch_seconds != null and .expires_at_epoch_seconds <= $now then "expired"
            elif .paused then "paused" else "active" end),
           "\(.active_connections)/\(.max_connections)",
+          (.allowance | allowance_short),
           (if .expires_at_epoch_seconds == null then "never"
            else (.expires_at_epoch_seconds | strftime("%Y-%m-%d %H:%M UTC")) end),
           (.protocols | names) ])
@@ -225,15 +251,16 @@ invites_show() {
     "  Devices:    \(.active_connections) of \(.max_connections) connected",
     "  Created:    \(.created_at_epoch_seconds | when)"
   ' <<<"$body"
+  info "  Data:       $(jq -r "$ALLOWANCE_JQ"' .allowance | allowance_line' <<<"$body")"
+  if jq -e '.allowance != null and .allowance.used_bytes >= .allowance.bytes' <<<"$body" >/dev/null; then
+    info "              Used up: its devices are refused until then, or: sudo ket invites edit $1 --reset-data"
+  fi
   info "  Protocols:  $(protocol_names "$(jq -c '.protocols' <<<"$body")" "$offered")"
   info ''
   if [[ $(jq '.devices | length' <<<"$body") == 0 ]]; then
     info 'No device is connected through it right now.'
   else
-    jq -r "$DEVICE_JQ"'
-      def size: if . >= 1073741824 then "\(. / 1073741824 * 10 | floor / 10) GB"
-        elif . >= 1048576 then "\(. / 1048576 * 10 | floor / 10) MB"
-        elif . >= 1024 then "\(. / 1024 | floor) KB" else "\(.) B" end;
+    jq -r "$DEVICE_JQ $ALLOWANCE_JQ"'
       ["DEVICE", "CONNECTED SINCE", "TRAFFIC"],
       (.devices[] | [ device,
                       (.connected_at_epoch_seconds | strftime("%Y-%m-%d %H:%M UTC")),
@@ -260,9 +287,11 @@ ACTIVITY_JQ='def protocol: . as $p | ($offered | map(select(.protocol == $p)) | 
     left: "Disconnected",
     lease_ended: "Stopped checking in, so its session ended",
     ended_by_change: "Disconnected by a change to the invite",
+    ended_allowance_used: "Disconnected: the invite used up its data allowance",
     refused_wrong_code: "Refused: wrong access code",
     refused_expired: "Refused: the invite has ended",
     refused_paused: "Refused: the invite is paused",
+    refused_allowance_used: "Refused: the data allowance is used up",
     refused_device_limit: "Refused: the device limit is reached",
     refused_server_full: "Refused: the server is full",
     refused_update_required: "Refused: the app must be updated",
@@ -320,7 +349,7 @@ invites_edit() {
   require_invite_id "$id"
   shift
   invite_preamble
-  local current now label='' devices='' change='' protocols='' changes end offered
+  local current now label='' devices='' change='' protocols='' data='' reset=false changes end offered
   current=$(admin_call 200 GET "/v1/admin/access-grants/$id") || return 1
   now=$(date +%s)
   while (($#)); do
@@ -331,12 +360,14 @@ invites_edit() {
       --shorten) [[ $# -ge 2 ]] || fail '--shorten needs a duration such as 3d'; change="-$2"; shift 2 ;;
       --ends-in) [[ $# -ge 2 ]] || fail '--ends-in needs a duration such as 30d'; change=$2; shift 2 ;;
       --protocols) [[ $# -ge 2 ]] || fail '--protocols needs "all" or names'; protocols=$2; shift 2 ;;
+      --data) [[ $# -ge 2 ]] || fail '--data needs a size and period such as 50GB/month, or none'; data=$2; shift 2 ;;
+      --reset-data) reset=true; shift ;;
       -h|--help) invites_usage; return 0 ;;
       *) fail "unknown option: $1 (see: sudo ket invites --help)" ;;
     esac
   done
   offered=$(offered_protocols) || return 1
-  if [[ -z $label$devices$change$protocols ]]; then
+  if [[ -z $label$devices$change$protocols$data ]] && ! $reset; then
     has_terminal || fail 'nothing to change; see: sudo ket invites --help'
     {
       invites_show "$id"
@@ -348,6 +379,7 @@ invites_edit() {
     change=$(ask 'When it ends: +7d extends, -3d shortens, 30d is 30 days from now' 'keep')
     [[ $change == keep ]] && change=''
     protocols=$(ask_protocols "$(protocol_names "$(jq -c '.protocols' <<<"$current")" "$offered" | tr -d ' ')") || return 1
+    data=$(ask_allowance "$(current_allowance_text "$current")") || return 1
   fi
 
   changes='{}'
@@ -371,6 +403,14 @@ invites_edit() {
       changes=$(jq -c --argjson access "$access" '.protocols = $access' <<<"$changes")
     fi
   fi
+  if [[ -n $data ]]; then
+    local allowance
+    allowance=$(allowance_json "$data") || fail 'no change made'
+    if [[ $allowance != "$(jq -c '.allowance // null | if . == null then null else {bytes, period} end' <<<"$current")" ]]; then
+      changes=$(jq -c --argjson allowance "$allowance" '.allowance = $allowance' <<<"$changes")
+    fi
+  fi
+  $reset && changes=$(jq -c '.reset_usage = true' <<<"$changes")
   if [[ $changes == '{}' ]]; then
     info 'Nothing changed.'
     return 0
@@ -386,7 +426,19 @@ invites_edit() {
       warn 'it had already ended, so apps had forgotten it; share a new invite with: sudo ket invite'
     fi
   fi
+  if jq -e 'has("allowance") or has("reset_usage")' <<<"$changes" >/dev/null; then
+    info "Data: $(jq -r "$ALLOWANCE_JQ"' .grant.allowance | allowance_line' <<<"$reply")"
+  fi
   report_change "$reply"
+}
+
+# current_allowance_text DETAILS: the invite's allowance as --data takes it,
+# such as 50GB/month, or none.
+current_allowance_text() {
+  jq -r '.allowance // null | if . == null then "none" else
+    (if .bytes % 1099511627776 == 0 then "\(.bytes / 1099511627776)TB"
+     elif .bytes % 1073741824 == 0 then "\(.bytes / 1073741824)GB"
+     else "\(.bytes / 1048576 | floor)MB" end) + "/\(.period)" end' <<<"$1"
 }
 
 invites_protocols() {

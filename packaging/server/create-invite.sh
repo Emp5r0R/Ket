@@ -8,19 +8,23 @@
 # people who should connect. The server never stores their plaintext.
 set -euo pipefail
 
+cli_dir="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/cli"
 # shellcheck source=packaging/server/cli/protocols.sh
-. "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/cli/protocols.sh"
+. "$cli_dir/protocols.sh"
+# shellcheck source=packaging/server/cli/allowance.sh
+. "$cli_dir/allowance.sh"
 
 label="Ket devices"
 devices=1
 minutes=$((30 * 24 * 60))
 protocols=all
+data=none
 show_qr=true
 
 usage() {
   cat <<'EOF'
 Usage: create-invite.sh [--label TEXT] [--devices N] [--days N | --minutes N]
-                        [--protocols LIST] [--no-qr]
+                        [--protocols LIST] [--data SIZE/PERIOD] [--no-qr]
 
   --label TEXT   Name for this grant in the admin list (default: "Ket devices").
   --devices N    How many devices may be connected at the same time (default: 1).
@@ -28,6 +32,8 @@ Usage: create-invite.sh [--label TEXT] [--devices N] [--days N | --minutes N]
   --minutes N    Access lifetime in minutes (1-525600), instead of --days.
   --protocols L  "all" (default), or the protocols it may use, such as
                  "stealth reality" (sudo ket invites protocols lists them).
+  --data D       Data its devices may use together, such as 50GB/month,
+                 2GB/day, or 10GB/week (UTC), or "none" (the default).
   --no-qr        Do not print a terminal QR code.
 EOF
 }
@@ -50,6 +56,7 @@ while (($#)); do
       minutes=$(($2 * 24 * 60)); shift 2 ;;
     --minutes) [[ $# -ge 2 ]] || fail '--minutes needs a value'; minutes=$2; shift 2 ;;
     --protocols) [[ $# -ge 2 ]] || fail '--protocols needs a value'; protocols=$2; shift 2 ;;
+    --data) [[ $# -ge 2 ]] || fail '--data needs a value'; data=$2; shift 2 ;;
     --no-qr) show_qr=false; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; fail "unknown option: $1" ;;
@@ -61,6 +68,7 @@ positive_integer "$devices" || fail '--devices must be a positive whole number'
 if ! positive_integer "$minutes" || ((minutes > 525600)); then
   fail 'access lifetime must be 1-525600 minutes (365 days)'
 fi
+allowance=$(allowance_json "$data") || exit 1
 
 if [[ -z ${KET_ADMIN_TOKEN:-} ]]; then
   [[ -r .env ]] || fail 'run this from the Ket install directory (for example /opt/ket) as root'
@@ -92,9 +100,10 @@ fi
 
 reply=$(
   jq -n --arg label "$label" --argjson max_connections "$devices" --argjson valid_for_minutes "$minutes" \
-    --argjson protocols "$access" \
+    --argjson protocols "$access" --argjson allowance "$allowance" \
     '{label:$label,max_connections:$max_connections,valid_for_minutes:$valid_for_minutes}
-     + (if $protocols == "all" then {} else {protocols:$protocols} end)' \
+     + (if $protocols == "all" then {} else {protocols:$protocols} end)
+     + (if $allowance == null then {} else {allowance:$allowance} end)' \
     | curl --silent --show-error --max-time 30 \
         --request POST \
         --header "Authorization: Bearer $KET_ADMIN_TOKEN" \
@@ -130,4 +139,7 @@ fi
 printf 'Up to %s device(s) at once; access ends %s.\n' "$devices" "$expiry_text"
 if [[ $access != '"all"' ]]; then
   printf 'It may use only: %s\n' "$(protocol_names "$access" "$offered")"
+fi
+if [[ $allowance != null ]]; then
+  printf 'Data: %s (UTC).\n' "$(allowance_sentence "$allowance")"
 fi

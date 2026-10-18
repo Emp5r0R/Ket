@@ -37,9 +37,14 @@ use crate::{
     activity::Activity,
     config::{HysteriaObfuscation, ServerConfig},
     data_plane::{self, DataPlaneControl},
+    meter::UsageMeter,
     service::{AccessService, CreatedSession, ServiceError, SessionAllocation, unix_time},
     shadowsocks, system, updates, xray,
 };
+
+/// How often grants with a data allowance are metered. A device can move at
+/// most this long's worth of data past its allowance.
+const METER_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Default)]
 struct AppMetrics {
@@ -87,6 +92,47 @@ impl AppState {
                 }
             }
         });
+        let state = self.clone();
+        tokio::spawn(async move {
+            let mut meter = UsageMeter::new(unix_time());
+            let mut interval = tokio::time::interval(METER_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                state.meter_allowances(&mut meter).await;
+            }
+        });
+    }
+
+    /// Counts what the sessions of grants with a data allowance moved since
+    /// the last time, and disconnects those whose grant has now used it up.
+    /// Grants without an allowance are never read.
+    async fn meter_allowances(&self, meter: &mut UsageMeter) {
+        let sessions = self.access.metered_sessions().await;
+        if sessions.is_empty() {
+            meter.take(&[], &[]);
+            return;
+        }
+        let allocations = sessions
+            .iter()
+            .map(|session| session.allocation.clone())
+            .collect::<Vec<_>>();
+        let readings = match self.data_plane.usage(&allocations).await {
+            Ok(readings) => readings,
+            Err(error) => {
+                tracing::warn!(%error, "data-plane usage is unavailable");
+                return;
+            }
+        };
+        let moved = meter.take(&sessions, &readings);
+        match self.access.record_usage(&moved, unix_time()).await {
+            Ok(ended) if !ended.is_empty() => {
+                tracing::info!(sessions = ended.len(), "data allowance used up");
+                self.kick_sessions(&ended).await;
+            }
+            Ok(_) => {}
+            Err(error) => tracing::error!(%error, "failed to record data usage"),
+        }
     }
 
     pub async fn reconcile_data_planes(&self) -> anyhow::Result<()> {
@@ -661,6 +707,7 @@ async fn build_session_status(
         node: build_node_status(state).await,
         traffic,
         updates: Some(updates),
+        allowance: session.allowance,
     }
 }
 
@@ -829,6 +876,12 @@ impl From<ServiceError> for ApiError {
             ServiceError::GrantPaused => {
                 Self::new(StatusCode::LOCKED, "grant_paused", error.to_string())
             }
+            // Like a pause: the invite works again when the period resets.
+            ServiceError::AllowanceUsed { .. } => Self::new(
+                StatusCode::LOCKED,
+                "grant_allowance_used",
+                error.to_string(),
+            ),
             ServiceError::GrantCapacity => Self::new(
                 StatusCode::CONFLICT,
                 "grant_capacity_reached",
@@ -956,6 +1009,8 @@ mod tests {
         fail_provision: bool,
         provision_attempts: Mutex<Vec<String>>,
         pub(super) kicked_sessions: Mutex<Vec<String>>,
+        /// The running counters `usage` reports.
+        pub(super) counters: Mutex<Vec<data_plane::UsageReading>>,
     }
 
     #[async_trait]
@@ -991,6 +1046,24 @@ mod tests {
                 online_connections: 0,
                 observed_at_epoch_seconds: unix_time(),
             })
+        }
+
+        async fn usage(
+            &self,
+            sessions: &[SessionAllocation],
+        ) -> Result<Vec<data_plane::UsageReading>, DataPlaneError> {
+            Ok(self
+                .counters
+                .lock()
+                .expect("counters lock")
+                .iter()
+                .filter(|reading| {
+                    sessions
+                        .iter()
+                        .any(|session| session.id == reading.session_id)
+                })
+                .cloned()
+                .collect())
         }
 
         async fn kick(&self, sessions: &[SessionAllocation]) -> Result<(), DataPlaneError> {

@@ -6,8 +6,8 @@ uninstall_usage() {
   cat <<'USAGE'
 Usage: ket uninstall [--purge] [--yes]
 
-Stops Ket and removes its containers, state, timers, the ket command, and the
-installation directory. A final backup of your keys, settings, and grants is
+Stops Ket and removes its containers, state, timers, fair sharing, the ket
+command, and the installation directory. A final backup of your keys, settings, and grants is
 written to /var/backups/ket first, unless --purge is given.
 
   --purge   Also delete the backups, the Let's Encrypt certificate, and the
@@ -40,6 +40,7 @@ cmd_uninstall() {
     info "Final backup: $archive"
   fi
   compose down --volumes --remove-orphans || warn 'Docker Compose could not remove every container; check: sudo docker ps -a'
+  [[ -z $(env_value KET_EGRESS_RATE) ]] || shaping_off >/dev/null || warn 'could not turn fair sharing off; check: sudo tc qdisc'
   remove_host_integration
   if $purge; then
     remove_images

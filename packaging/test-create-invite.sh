@@ -41,7 +41,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        keys = set(body) - {"protocols"}
+        keys = set(body) - {"protocols", "allowance"}
         ok = (self.path == "/v1/admin/access-grants"
               and self.headers["Authorization"] == "Bearer $admin_token"
               and keys == {"label", "max_connections", "valid_for_minutes"})
@@ -125,11 +125,21 @@ grep -Fq 'It may use only' <<<"$output" && fail 'an all-protocol invite reported
 if output=$(run_helper --devices 2 --protocols wireguard 2>&1); then fail 'an unoffered protocol was accepted'; fi
 grep -Fq 'This server offers: reality, stealth' <<<"$output" || fail "unknown protocol not explained: $output"
 
+# A data allowance is sent in bytes and repeated in words; none sends nothing.
+output=$(run_helper --devices 2 --data 50GB/month --no-qr)
+grep -Fq 'Data: 50 GB a month, shared by its devices (UTC).' <<<"$output" || fail "allowance not reported: $output"
+last_request=$(tail -n1 "$work/requests.jsonl")
+[[ $last_request == *'"allowance": {"bytes": 53687091200, "period": "month"}'* ]] \
+  || fail "unexpected allowance: $last_request"
+output=$(run_helper --devices 2 --data none --no-qr)
+grep -Fq 'Data:' <<<"$output" && fail 'an invite without an allowance reported one'
+[[ $(tail -n1 "$work/requests.jsonl") != *allowance* ]] || fail 'no allowance still sent one'
+
 if output=$(run_helper --devices 9 2>&1); then fail 'refused grant reported success'; fi
 grep -Fq 'refused the grant (HTTP 422: max_connections exceeds[31m capacity)' <<<"$output" \
   || fail "refusal reason was not shown safely: $output"
 
-for invalid in '--devices 0' '--devices x' '--days 0' '--minutes 525601' '--label' '--bogus'; do
+for invalid in '--devices 0' '--devices x' '--days 0' '--minutes 525601' '--label' '--data 5XB/day' '--data' '--bogus'; do
   # shellcheck disable=SC2086 # deliberate word splitting of the option pair
   if run_helper $invalid >/dev/null 2>&1; then fail "accepted invalid arguments: $invalid"; fi
 done
@@ -137,6 +147,6 @@ if (cd "$work" && env -i "PATH=$PATH" "$helper" >/dev/null 2>&1); then
   fail 'ran outside an install directory without an admin token'
 fi
 requests=$(wc -l < "$work/requests.jsonl")
-((requests == 7)) || fail "invalid invocations reached the server ($requests requests)"
+((requests == 9)) || fail "invalid invocations reached the server ($requests requests)"
 
 printf 'create-invite contract tests passed.\n'

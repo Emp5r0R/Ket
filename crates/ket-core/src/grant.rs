@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AccessGrantSummary, SessionTraffic, TransportProtocol};
+use crate::{AccessGrantSummary, DataAllowance, SessionTraffic, TransportProtocol, allowance};
 
 /// Which of the server's protocols an access grant may use. `All` also
 /// covers protocols the server enables later.
@@ -74,6 +74,21 @@ pub struct UpdateAccessGrantRequest {
     pub paused: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocols: Option<ProtocolAccess>,
+    /// A new data allowance, or `null` to remove it. A different period
+    /// starts the count again; a different amount keeps it.
+    #[serde(
+        default,
+        deserialize_with = "allowance::present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub allowance: Option<Option<DataAllowance>>,
+    /// Starts this period's count again from zero.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reset_usage: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 impl UpdateAccessGrantRequest {
@@ -143,9 +158,13 @@ pub enum GrantActivityEvent {
     LeaseEnded,
     /// A pause or edit of the invite disconnected the device.
     EndedByChange,
+    /// The invite's devices used up its data allowance for the period.
+    EndedAllowanceUsed,
     RefusedWrongCode,
     RefusedExpired,
     RefusedPaused,
+    /// The invite's data allowance for the period is used up.
+    RefusedAllowanceUsed,
     RefusedDeviceLimit,
     RefusedServerFull,
     RefusedUpdateRequired,
@@ -164,15 +183,17 @@ pub enum GrantActivityEvent {
 impl GrantActivityEvent {
     /// Every event, in the order of `tests/vectors/grant-activity-events.json`,
     /// which the `ket` command's wording is checked against.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 18] = [
         Self::Enrolled,
         Self::CheckedIn,
         Self::Left,
         Self::LeaseEnded,
         Self::EndedByChange,
+        Self::EndedAllowanceUsed,
         Self::RefusedWrongCode,
         Self::RefusedExpired,
         Self::RefusedPaused,
+        Self::RefusedAllowanceUsed,
         Self::RefusedDeviceLimit,
         Self::RefusedServerFull,
         Self::RefusedUpdateRequired,
@@ -269,5 +290,35 @@ mod tests {
             serde_json::to_value(&pause).unwrap(),
             json!({"paused": true})
         );
+    }
+
+    #[test]
+    fn allowance_updates_tell_a_removal_from_no_change() {
+        let unchanged: UpdateAccessGrantRequest =
+            serde_json::from_value(json!({"label": "x"})).unwrap();
+        assert_eq!(unchanged.allowance, None);
+        let removed: UpdateAccessGrantRequest =
+            serde_json::from_value(json!({"allowance": null})).unwrap();
+        assert_eq!(removed.allowance, Some(None));
+        assert!(!removed.is_empty());
+        assert_eq!(
+            serde_json::to_value(&removed).unwrap(),
+            json!({"allowance": null})
+        );
+        let set: UpdateAccessGrantRequest = serde_json::from_value(
+            json!({"allowance": {"bytes": 1_048_576, "period": "week"}, "reset_usage": true}),
+        )
+        .unwrap();
+        assert_eq!(
+            set.allowance,
+            Some(Some(DataAllowance {
+                bytes: 1_048_576,
+                period: crate::AllowancePeriod::Week
+            }))
+        );
+        assert!(set.reset_usage);
+        let reset: UpdateAccessGrantRequest =
+            serde_json::from_value(json!({"reset_usage": true})).unwrap();
+        assert!(!reset.is_empty());
     }
 }

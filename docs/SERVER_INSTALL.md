@@ -113,11 +113,11 @@ The installer adds the `ket` command:
 
 | Command | What it does |
 | --- | --- |
-| `sudo ket invite` | Create an invite. With no options it asks who it is for, how many devices may connect at once, for how many days, and which protocols it may use. Options: `--label`, `--devices`, `--days` or `--minutes`, `--protocols`, `--no-qr` |
-| `sudo ket invites` | List invites: status, devices in use, when they end, and their protocols |
+| `sudo ket invite` | Create an invite. With no options it asks who it is for, how many devices may connect at once, for how many days, which protocols it may use, and how much data its devices may use. Options: `--label`, `--devices`, `--days` or `--minutes`, `--protocols`, `--data 50GB/month`, `--no-qr` |
+| `sudo ket invites` | List invites: status, devices in use, data used, when they end, and their protocols |
 | `sudo ket invites show ID` | One invite and the devices connected through it right now |
 | `sudo ket invites pause ID` | Stop an invite for now and disconnect its devices; `resume ID` turns it back on |
-| `sudo ket invites edit ID` | Change an invite. With no options it asks; options: `--label`, `--devices`, `--extend 7d`, `--shorten 3d`, `--ends-in 30d`, `--protocols` |
+| `sudo ket invites edit ID` | Change an invite. With no options it asks; options: `--label`, `--devices`, `--extend 7d`, `--shorten 3d`, `--ends-in 30d`, `--protocols`, `--data 10GB/week` (or `none`), `--reset-data` |
 | `sudo ket invites protocols` | The protocol names this server offers, for `--protocols` |
 | `sudo ket revoke ID` | Revoke an invite for good and disconnect its devices |
 | `sudo ket status` | Version, services, connected devices, certificate expiry, last update check |
@@ -127,12 +127,13 @@ The installer adds the `ket` command:
 | `sudo ket update` | Update to the latest release (`--check` only reports, `--to vX.Y.Z` picks a release) |
 | `sudo ket rollback` | Go back to the release before the last update (and forward again) |
 | `sudo ket backup` | Save `.env`, `secrets/`, and the grants and sessions to `/var/backups/ket` |
+| `sudo ket shaping` | Fair sharing of a full connection: `set 950mbit` (a little below your plan), `off`, or nothing to see whether it is on ([FAIRNESS.md](FAIRNESS.md)) |
 | `sudo ket keys` | Show the node fingerprint that apps check invites against; `rotate-admin-token`, or `rotate-node-key` after a leak (that invalidates every invite) |
 | `sudo ket uninstall` | Remove Ket (see below) |
 
 Invite changes take effect at once. Apps a change disconnects connect again by themselves with the new settings; while an invite is paused, the apps keep it and wait. Devices see a new end date the next time they reach the server. The invite text itself keeps its original date, so after that date new people need a new invite.
 
-`--protocols` takes `all` or names from `sudo ket invites protocols`, for example `--protocols "stealth reality"`. Ket v1.1.0 and older ignore pauses and protocol limits, so after `sudo ket rollback` to such a release they are off until you update again.
+`--protocols` takes `all` or names from `sudo ket invites protocols`, for example `--protocols "stealth reality"`. `--data` takes a size and a period, such as `50GB/month`, `2GB/day`, or `10GB/week`, shared by all of the invite's devices; [FAIRNESS.md](FAIRNESS.md) explains how it is counted. Ket v1.1.0 and older ignore pauses and protocol limits, so after `sudo ket rollback` to such a release they are off until you update again. The same holds for data allowances and fair sharing with a release from before them: allowances stop counting, and fair sharing is not turned on again after a reboot.
 
 From outside, `https://<your address>/` shows a neutral placeholder page; Ket's API is deliberately invisible. Certificates are checked twice a day by `ket-certificates.timer`.
 

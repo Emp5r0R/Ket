@@ -3,15 +3,18 @@
 //!
 //! A session ends when the grant no longer admits it as it is: the grant was
 //! paused, its protocols changed (the session was issued credentials for the
-//! old set), or it has more devices connected than the new limit (the newest
-//! go first). A shorter lifetime ends no session; each one is cut to the new
-//! end instead. The caller has validated the values themselves.
+//! old set), its allowance is now used up, or it has more devices connected
+//! than the new limit (the newest go first). A shorter lifetime ends no
+//! session; each one is cut to the new end instead. An allowance with a
+//! different period, or none, starts the count again. The caller has
+//! validated the values themselves.
 
 use std::collections::HashSet;
 
 use ket_core::UpdateAccessGrantRequest;
 
 use crate::{
+    allowance,
     model::PersistedState,
     service::{ServiceError, SessionAllocation, session_allocation},
 };
@@ -45,6 +48,17 @@ pub(crate) fn apply(
     if let Some(expires_at) = changes.expires_at_epoch_seconds {
         grant.expires_at_epoch_seconds = Some(expires_at);
     }
+    if let Some(new) = changes.allowance {
+        if new.map(|new| new.period) != grant.allowance.map(|old| old.period) {
+            grant.usage = None;
+            grant.allowance_since_epoch_seconds = new.map(|_| now);
+        }
+        grant.allowance = new;
+    }
+    if changes.reset_usage {
+        grant.usage = None;
+    }
+    end_all |= allowance::used_up_until(grant, now).is_some();
     let max_connections = grant.max_connections as usize;
     let expires_at = grant.expires_at_epoch_seconds;
 
@@ -85,7 +99,7 @@ pub(crate) fn apply(
 mod tests {
     use std::collections::BTreeSet;
 
-    use ket_core::{ProtocolAccess, TransportProtocol};
+    use ket_core::{AllowancePeriod, DataAllowance, ProtocolAccess, TransportProtocol};
 
     use super::*;
     use crate::model::{AccessGrantRecord, CURRENT_STATE_SCHEMA_VERSION, SessionRecord};
@@ -217,6 +231,71 @@ mod tests {
     }
 
     #[test]
+    fn an_allowance_below_what_is_used_ends_the_sessions_and_a_reset_lets_them_back() {
+        let mut state = state_with_sessions(2);
+        let daily = |bytes| DataAllowance {
+            bytes,
+            period: AllowancePeriod::Day,
+        };
+        let set = |allowance| UpdateAccessGrantRequest {
+            allowance: Some(allowance),
+            ..Default::default()
+        };
+        assert!(
+            apply(&mut state, "Grant00001", &set(Some(daily(4 << 20))), NOW)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(state.grants[0].allowance_since_epoch_seconds, Some(NOW));
+        crate::allowance::add(&mut state.grants[0], 3 << 20, NOW);
+
+        // A larger amount keeps the count; a smaller one than is used ends
+        // every session.
+        assert!(
+            apply(&mut state, "Grant00001", &set(Some(daily(8 << 20))), NOW)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(crate::allowance::used(&state.grants[0], NOW), 3 << 20);
+        // Its counting started when the allowance was first set.
+        assert_eq!(state.grants[0].allowance_since_epoch_seconds, Some(NOW));
+        assert_eq!(
+            apply(&mut state, "Grant00001", &set(Some(daily(2 << 20))), NOW)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(state.validate(), Ok(()));
+
+        let reset = UpdateAccessGrantRequest {
+            reset_usage: true,
+            ..Default::default()
+        };
+        apply(&mut state, "Grant00001", &reset, NOW).unwrap();
+        assert_eq!(crate::allowance::used_up_until(&state.grants[0], NOW), None);
+
+        // A new period, or no allowance, starts again from nothing.
+        crate::allowance::add(&mut state.grants[0], 3 << 20, NOW);
+        let weekly = DataAllowance {
+            period: AllowancePeriod::Week,
+            ..daily(2 << 20)
+        };
+        apply(&mut state, "Grant00001", &set(Some(weekly)), NOW).unwrap();
+        assert_eq!(state.grants[0].usage, None);
+        crate::allowance::add(&mut state.grants[0], 1 << 20, NOW);
+        apply(&mut state, "Grant00001", &set(None), NOW).unwrap();
+        assert_eq!(
+            (
+                state.grants[0].allowance,
+                state.grants[0].allowance_since_epoch_seconds,
+                state.grants[0].usage
+            ),
+            (None, None, None)
+        );
+        assert_eq!(state.validate(), Ok(()));
+    }
+
+    #[test]
     fn an_unknown_grant_changes_nothing() {
         let mut state = state_with_sessions(1);
         assert!(matches!(
@@ -245,6 +324,9 @@ mod tests {
             created_at_epoch_seconds: 100,
             paused: false,
             protocols: ProtocolAccess::All,
+            allowance: None,
+            allowance_since_epoch_seconds: None,
+            usage: None,
         };
         let session = |index: u32, grant_id: &str| SessionRecord {
             id: format!("Session{index:05}"),

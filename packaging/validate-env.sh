@@ -101,6 +101,9 @@ case "${KET_AUTO_UPDATE:-security}" in
   off|critical|security|all) ;;
   *) fail 'KET_AUTO_UPDATE must be off, critical, security, or all' ;;
 esac
+# Set by "ket shaping"; empty means fair sharing is off.
+[[ -z ${KET_EGRESS_RATE:-} || $KET_EGRESS_RATE =~ ^[1-9][0-9]{0,5}(mbit|gbit)$ ]] \
+  || fail 'KET_EGRESS_RATE must be empty or a rate such as 950mbit (set it with: sudo ket shaping set RATE)'
 [[ "${KET_NODE_ID:-ket-node-1}" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || fail 'KET_NODE_ID must be a 1-128 character ASCII identifier'
 bounded_text KET_NODE_NAME 'Ket node' 128 || fail 'KET_NODE_NAME must contain 1-128 trimmed printable characters'
 bounded_text KET_COUNTRY_NAME 'Unknown' 128 || fail 'KET_COUNTRY_NAME must contain 1-128 trimmed printable characters'

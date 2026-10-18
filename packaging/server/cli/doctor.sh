@@ -52,6 +52,15 @@ doctor_host() {
       problem 'WireGuard TLS is on, but the kernel has no WireGuard support' 'set KET_WIREGUARD_ENABLED=false in .env, then: sudo ket restart'
     fi
   fi
+  local rate interface
+  rate=$(env_value KET_EGRESS_RATE)
+  if [[ -n $rate ]]; then
+    if interface=$(shaping_interface) && shaping_active "$interface"; then
+      pass "fair sharing is on at $rate on $interface"
+    else
+      attention "fair sharing is set to $rate but is not running" "sudo ket shaping set $rate"
+    fi
+  fi
 }
 
 doctor_configuration() {

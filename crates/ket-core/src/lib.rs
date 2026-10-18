@@ -1,5 +1,6 @@
 //! Shared, platform-neutral Ket contracts and security primitives.
 
+mod allowance;
 mod contract;
 mod grant;
 mod sealed;
@@ -7,6 +8,10 @@ mod secret;
 mod secret_value;
 mod update;
 
+pub use allowance::{
+    AllowancePeriod, AllowanceStatus, DataAllowance, MAX_ALLOWANCE_BYTES, MIN_ALLOWANCE_BYTES,
+    utc_minute,
+};
 pub use contract::*;
 pub use grant::{
     AccessGrantDetails, ConnectedDevice, GrantActivity, GrantActivityEvent, OfferedProtocol,

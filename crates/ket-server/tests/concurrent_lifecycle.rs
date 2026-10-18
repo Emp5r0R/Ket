@@ -92,6 +92,7 @@ async fn concurrent_multi_code_sessions_respect_limits_and_survive_restart() {
             max_connections: 2,
             valid_for_minutes: 60,
             protocols: Default::default(),
+            allowance: None,
         })
         .await
         .expect("personal grant should be created");
@@ -124,6 +125,7 @@ async fn concurrent_multi_code_sessions_respect_limits_and_survive_restart() {
             max_connections: 3,
             valid_for_minutes: 60,
             protocols: Default::default(),
+            allowance: None,
         })
         .await
         .expect("fleet grant should be created");

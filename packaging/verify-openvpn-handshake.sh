@@ -118,6 +118,8 @@ if [[ ${1:-} == --mock-manager-connection ]]; then
 fi
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=packaging/lib/verify-allowance.sh
+. "$repo_root/packaging/lib/verify-allowance.sh"
 server_bin=${KET_E2E_SERVER_BIN:-$repo_root/target/debug/ket-server}
 auth_bin=${KET_E2E_OPENVPN_AUTH_BIN:-$repo_root/target/debug/ket-openvpn-auth}
 openvpn_bin=${KET_E2E_OPENVPN_BIN:-$(command -v openvpn || true)}
@@ -337,6 +339,7 @@ KET_OPENVPN_TLS_CRYPT_KEY_PATH="$work/openvpn/tls-crypt.key" \
 RUST_LOG=ket_server=warn "$server_bin" >"$work/control.log" 2>&1 &
 control_pid=$!
 wait_ready "http://127.0.0.1:$control_port/readyz" 'Ket control plane'
+control_url="http://127.0.0.1:$control_port"
 
 cat > "$work/stunnel-client.conf" <<EOF
 foreground = yes
@@ -358,7 +361,7 @@ wait_port "$carrier_port" 'stunnel client'
 
 grant=$(curl --fail --silent --show-error \
   -H "Authorization: Bearer $admin_token" -H 'Content-Type: application/json' \
-  --data '{"label":"OpenVPN handshake","max_connections":2,"valid_for_minutes":60}' \
+  --data '{"label":"OpenVPN handshake","max_connections":2,"valid_for_minutes":60,"allowance":{"bytes":1048576,"period":"day"}}' \
   "http://127.0.0.1:$control_port/v1/admin/access-grants")
 grant_id=$(jq -er '.id' <<< "$grant")
 access_code=$(jq -er '.access_code' <<< "$grant")
@@ -428,6 +431,9 @@ if ! jq -e --arg username "$username" \
   printf 'OpenVPN status did not report the connected session and counters: %s\n' "$status" >&2
   exit 1
 fi
+# The invite's data allowance counts what OpenVPN's management interface
+# reports for the connection.
+wait_allowance_counted "$grant_id" 1
 curl --fail --silent --show-error -X DELETE \
   -H "Authorization: Bearer $session_token" \
   "http://127.0.0.1:$control_port/v1/sessions/current" >/dev/null
@@ -441,4 +447,4 @@ curl --fail --silent --show-error -X DELETE \
 wait_disconnected "$client_pid" "$work/openvpn-client.log"
 client_pid=
 
-printf 'Verified OpenVPN through certificate-pinned stunnel: scoped auth, handshake counters, release, live kick, and grant revocation.\n'
+printf 'Verified OpenVPN through certificate-pinned stunnel: scoped auth, handshake counters, allowance counting, release, live kick, and grant revocation.\n'

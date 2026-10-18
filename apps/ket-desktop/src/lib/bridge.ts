@@ -75,6 +75,10 @@ const tauriBridge: DesktopBridge = {
 const DEMO_QR = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#fff"/><path d="M1 1h2v2H1zM5 1h2v2H5zM1 5h2v2H1zM4 4h1v1H4z" fill="#000"/></svg>';
 
 const now = () => Math.floor(Date.now() / 1000);
+const nextMonthUtc = () => {
+  const today = new Date();
+  return Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1) / 1000;
+};
 
 const demoTransports: ClientSnapshot["available_transports"] = [
   { id: "xhttp-primary", display_name: "HTTPS Stealth", protocol: "stealth", network: "tcp" },
@@ -127,6 +131,14 @@ function demoSnapshot(
           bytes_received: 287_341_255,
           online_connections: 1,
           observed_at_epoch_seconds: now(),
+        }
+      : null,
+    allowance: connected
+      ? {
+          bytes: 53_687_091_200,
+          period: "month",
+          used_bytes: 13_314_398_618,
+          resets_at_epoch_seconds: nextMonthUtc(),
         }
       : null,
     handshake_latency_ms: connected ? 42 : null,

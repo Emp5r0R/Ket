@@ -1461,6 +1461,10 @@ input:disabled {
   transition: width 260ms ease;
 }
 
+.allowance-used-up span {
+  background: var(--danger-strong);
+}
+
 .settings-view {
   max-width: 820px;
 }

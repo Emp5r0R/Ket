@@ -510,6 +510,150 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_used_up_allowance_disconnects_devices_and_refuses_them_until_reset() {
+        use ket_core::{GrantActivityEvent as Event, SessionStatus};
+
+        use crate::{data_plane::UsageReading, meter::UsageMeter};
+
+        let harness = harness().await;
+        let mut body = grant_body(None);
+        body["allowance"] = json!({"bytes": 1_048_576, "period": "month"});
+        let grant = harness.create(body).await;
+        assert_eq!(
+            grant.allowance.map(|allowance| allowance.bytes),
+            Some(1_048_576)
+        );
+        let manifest: SessionManifest =
+            response_json(harness.enroll(grant.access_code.expose_secret()).await).await;
+        let token = manifest.session_token.expose_secret().to_owned();
+        let session_id = token[..12].to_owned();
+        let hysteria_auth = manifest.transports[0]
+            .credential
+            .as_ref()
+            .expect("Hysteria credential")
+            .auth
+            .clone();
+        let count = |bytes| {
+            *harness.data_plane.counters.lock().unwrap() = vec![UsageReading {
+                session_id: session_id.clone(),
+                engine: 0,
+                since: 0,
+                bytes,
+            }];
+        };
+        let mut meter = UsageMeter::new(unix_now());
+        count(0);
+        harness.state.meter_allowances(&mut meter).await;
+        count(600_000);
+        harness.state.meter_allowances(&mut meter).await;
+
+        // The app sees what the invite has used.
+        let status: SessionStatus = response_json(
+            harness
+                .send(empty_request("GET", "/v1/sessions/current", Some(&token)))
+                .await,
+        )
+        .await;
+        let allowance = status.allowance.expect("the status carries the allowance");
+        assert_eq!(allowance.used_bytes, 600_000);
+        assert!(!allowance.is_used_up());
+        assert!(
+            harness
+                .data_plane
+                .kicked_sessions
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
+
+        count(1_200_000);
+        harness.state.meter_allowances(&mut meter).await;
+        assert!(
+            harness
+                .data_plane
+                .kicked_sessions
+                .lock()
+                .unwrap()
+                .contains(&session_id)
+        );
+        assert!(
+            !harness
+                .hysteria_accepts(hysteria_auth.expose_secret())
+                .await
+        );
+        let refused = harness.enroll(grant.access_code.expose_secret()).await;
+        assert_eq!(refused.status(), StatusCode::LOCKED);
+        let refusal = response_json::<ErrorResponse>(refused).await;
+        assert_eq!(refusal.code, "grant_allowance_used");
+        assert!(
+            refusal.message.contains("works again from"),
+            "{}",
+            refusal.message
+        );
+        assert!(
+            refusal.message.ends_with(" 00:00 UTC"),
+            "{}",
+            refusal.message
+        );
+
+        let path = format!("/v1/admin/access-grants/{}", grant.id);
+        let details: AccessGrantDetails = response_json(
+            harness
+                .send(empty_request("GET", &path, Some(ADMIN_TOKEN)))
+                .await,
+        )
+        .await;
+        let allowance = details
+            .grant
+            .allowance
+            .expect("details carry the allowance");
+        assert_eq!(allowance.used_bytes, 1_200_000);
+        assert!(allowance.is_used_up());
+        let events = details
+            .recent
+            .iter()
+            .map(|entry| entry.event)
+            .collect::<Vec<_>>();
+        // The ended session is gone, so its refused sign-in names nobody.
+        assert_eq!(
+            events[..2],
+            [Event::RefusedAllowanceUsed, Event::EndedAllowanceUsed]
+        );
+
+        // Starting the count again lets the devices back in.
+        let reset = harness
+            .update(&grant.id, json!({"reset_usage": true}))
+            .await;
+        let reset: UpdateAccessGrantResponse = response_json(reset).await;
+        assert_eq!(
+            reset.grant.allowance.map(|allowance| allowance.used_bytes),
+            Some(0)
+        );
+        let enrolled = harness.enroll(grant.access_code.expose_secret()).await;
+        assert_eq!(enrolled.status(), StatusCode::CREATED);
+
+        // Invalid allowances are refused.
+        let mut tiny = grant_body(None);
+        tiny["allowance"] = json!({"bytes": 1, "period": "day"});
+        let refused = harness
+            .send(json_request(
+                "POST",
+                "/v1/admin/access-grants",
+                Some(ADMIN_TOKEN),
+                tiny,
+            ))
+            .await;
+        assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let refused = harness
+            .update(
+                &grant.id,
+                json!({"allowance": {"bytes": 1, "period": "day"}}),
+            )
+            .await;
+        assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
     async fn details_show_connected_devices_and_edits_are_validated() {
         let harness = harness().await;
         let grant = harness.create(grant_body(None)).await;

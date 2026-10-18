@@ -41,6 +41,13 @@ describe("Ket desktop shell", () => {
     };
     expect(shouldRetrySavedEnrollment(paused)).toBe(true);
     expect(savedEnrollmentIsTerminal(paused)).toBe(false);
+    const usedUp = {
+      code: "grant_allowance_used",
+      message: "this invite has used its data allowance; it works again from 2026-11-01 00:00 UTC",
+      retryable: false,
+    };
+    expect(shouldRetrySavedEnrollment(usedUp)).toBe(true);
+    expect(savedEnrollmentIsTerminal(usedUp)).toBe(false);
     expect(shouldRetrySavedEnrollment({
       code: "network_unavailable",
       message: "offline",
@@ -348,6 +355,7 @@ describe("Ket desktop shell", () => {
         network: "tcp",
       },
       traffic: null,
+      allowance: null,
       handshake_latency_ms: 20,
       session_expires_at_epoch_seconds: expiry - 3_000,
       access_expires_at_epoch_seconds: expiry,

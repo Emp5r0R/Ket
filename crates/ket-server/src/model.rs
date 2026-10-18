@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use ket_core::{ProtocolAccess, is_supported_secret_hash};
+use ket_core::{DataAllowance, ProtocolAccess, is_supported_secret_hash};
 use serde::{Deserialize, Serialize};
 
 const ACCESS_GRANT_ID_LENGTH: usize = 10;
@@ -54,6 +54,17 @@ impl PersistedState {
             }
             if !grant.protocols.is_valid() {
                 return Err("access grant allows no protocol");
+            }
+            if grant
+                .allowance
+                .is_some_and(|allowance| !allowance.is_valid())
+            {
+                return Err("access grant allowance is invalid");
+            }
+            if (grant.usage.is_some() || grant.allowance_since_epoch_seconds.is_some())
+                && grant.allowance.is_none()
+            {
+                return Err("access grant counts usage without an allowance");
             }
             if grant
                 .expires_at_epoch_seconds
@@ -137,6 +148,21 @@ pub(crate) struct AccessGrantRecord {
     pub paused: bool,
     #[serde(default, skip_serializing_if = "ProtocolAccess::is_all")]
     pub protocols: ProtocolAccess,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<DataAllowance>,
+    /// When the allowance began to apply: traffic before it is not counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance_since_epoch_seconds: Option<u64>,
+    /// What the grant's devices have moved this period. One running total;
+    /// earlier periods are not kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<PeriodUsage>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PeriodUsage {
+    pub period_start_epoch_seconds: u64,
+    pub used_bytes: u64,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -188,6 +214,23 @@ mod tests {
         let mut state = valid_state();
         state.grants[0].protocols = ProtocolAccess::Only(Default::default());
         assert_eq!(state.validate(), Err("access grant allows no protocol"));
+
+        let mut state = valid_state();
+        state.grants[0].allowance = Some(DataAllowance {
+            bytes: 1,
+            period: ket_core::AllowancePeriod::Day,
+        });
+        assert_eq!(state.validate(), Err("access grant allowance is invalid"));
+
+        let mut state = valid_state();
+        state.grants[0].usage = Some(PeriodUsage {
+            period_start_epoch_seconds: 0,
+            used_bytes: 1,
+        });
+        assert_eq!(
+            state.validate(),
+            Err("access grant counts usage without an allowance")
+        );
 
         let mut state = valid_state();
         state.sessions[0].id = "short".to_owned();
@@ -260,6 +303,9 @@ mod tests {
                 created_at_epoch_seconds: 100,
                 paused: false,
                 protocols: ProtocolAccess::All,
+                allowance: None,
+                allowance_since_epoch_seconds: None,
+                usage: None,
             }],
             sessions: vec![SessionRecord {
                 id: "Session00001".to_owned(),

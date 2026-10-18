@@ -162,6 +162,11 @@ for url in http://mirror.example.com/ 'https://user:pw@mirror.example.com/' 'htt
   expect_fail "download page $url" 'KET_CLIENT_DOWNLOAD_URL must be an https:// URL' "KET_CLIENT_DOWNLOAD_URL=$url"
 done
 expect_fail 'unknown automatic update policy' 'KET_AUTO_UPDATE must be off, critical, security, or all' KET_AUTO_UPDATE=yes
+expect_pass 'fair sharing rate' KET_EGRESS_RATE=950mbit
+expect_pass 'fair sharing off' KET_EGRESS_RATE=
+for rate in 950 950Mbit 0mbit '1 gbit' 950mbps; do
+  expect_fail "fair sharing rate $rate" 'KET_EGRESS_RATE must be empty or a rate' "KET_EGRESS_RATE=$rate"
+done
 
 expect_fail 'missing admin token' 'KET_ADMIN_TOKEN is required' KET_ADMIN_TOKEN=
 expect_fail 'remote plaintext control URL' 'KET_PUBLIC_URL must use HTTPS' KET_PUBLIC_URL=http://ket.example.test

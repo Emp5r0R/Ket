@@ -9,6 +9,11 @@ http_origin_connection() {
     line=${line%$'\r'}
     [[ -n "$line" ]] || break
   done
+  if [[ "$request_line" == "GET /ket-shadowsocks-e2e-large HTTP/"* ]]; then
+    printf 'HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 1572864\r\nConnection: close\r\n\r\n'
+    head -c 1572864 /dev/zero
+    return
+  fi
   if [[ "$request_line" != "GET /ket-shadowsocks-e2e HTTP/"* ]]; then
     printf 'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
     return
@@ -23,6 +28,8 @@ if [[ ${1:-} == --http-origin-connection ]]; then
 fi
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=packaging/lib/verify-allowance.sh
+. "$repo_root/packaging/lib/verify-allowance.sh"
 server_bin=${KET_E2E_SERVER_BIN:-$repo_root/target/debug/ket-server}
 if [[ -z ${KET_E2E_SERVER_BIN:-} ]]; then
   cargo build --locked --package ket-server --bin ket-server
@@ -220,6 +227,13 @@ assert_origin_reachable() {
   }
 }
 
+# 1.5 MB through the tunnel, more than a whole allowance.
+request_large() {
+  curl --fail --silent --show-error --max-time 10 --noproxy '' --output /dev/null \
+    --socks5-hostname "127.0.0.1:$socks_port" \
+    "http://127.0.0.1:$origin_port/ket-shadowsocks-e2e-large"
+}
+
 assert_origin_blocked() {
   if request_origin >/dev/null 2>&1; then
     printf 'Revoked Shadowsocks credentials still carried traffic.\n' >&2
@@ -271,6 +285,7 @@ KET_SHADOWSOCKS_CREDENTIAL_KEY="$credential_key" \
 RUST_LOG=ket_server=warn "$server_bin" >"$work/control.log" 2>&1 &
 control_pid=$!
 wait_ready "http://127.0.0.1:$control_port/readyz" 'Ket control plane'
+control_url="http://127.0.0.1:$control_port"
 
 grant=$(curl --fail --silent --show-error \
   -H "Authorization: Bearer $admin_token" -H 'Content-Type: application/json' \
@@ -318,6 +333,21 @@ wait_port_removed "$relay_port"
 assert_origin_blocked
 stop_client
 
+# A data allowance: Ket counts what ssmanager reports, disconnects the device
+# once its grant has used the allowance, and refuses it until the count is
+# reset.
+release_code=$access_code
+access_code=$(allowance_grant 'Shadowsocks allowance' | jq -er '.access_code')
+start_session 'Shadowsocks allowance test'
+start_client "$password" allowance
+assert_origin_reachable
+use_up_allowance "${access_code:0:10}" request_large
+wait_port_removed "$relay_port"
+assert_origin_blocked
+stop_client
+assert_allowance_refused "$access_code"
+access_code=$release_code
+
 start_session 'Shadowsocks revocation test'
 start_client "$password" revocation
 assert_origin_reachable
@@ -328,4 +358,4 @@ wait_port_removed "$relay_port"
 assert_origin_blocked
 stop_client
 
-printf 'Verified Shadowsocks 2022 TCP traffic: scoped key enforcement, counters, truthful telemetry, release, and grant revocation.\n'
+printf 'Verified Shadowsocks 2022 TCP traffic: scoped key enforcement, counters, truthful telemetry, a data allowance, release, and grant revocation.\n'

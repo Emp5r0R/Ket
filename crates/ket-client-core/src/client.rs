@@ -423,6 +423,7 @@ impl KetClient {
                 snapshot.available_transports.clear();
                 snapshot.preferred_protocol = None;
                 snapshot.traffic = None;
+                snapshot.allowance = None;
                 snapshot.session_expires_at_epoch_seconds = None;
                 snapshot.access_expires_at_epoch_seconds = None;
                 snapshot.issue = None;
@@ -479,6 +480,7 @@ impl KetClient {
             snapshot.available_transports.clear();
             snapshot.preferred_protocol = None;
             snapshot.traffic = None;
+            snapshot.allowance = None;
             snapshot.session_expires_at_epoch_seconds = None;
             snapshot.access_expires_at_epoch_seconds = None;
             snapshot.connected_at_epoch_seconds = None;
@@ -908,6 +910,7 @@ impl KetClient {
                     snapshot.available_transports.clear();
                     snapshot.preferred_protocol = None;
                     snapshot.traffic = None;
+                    snapshot.allowance = None;
                     snapshot.session_expires_at_epoch_seconds = None;
                     snapshot.access_expires_at_epoch_seconds = None;
                     snapshot.connected_at_epoch_seconds = None;
@@ -950,6 +953,7 @@ impl KetClient {
         self.update_snapshot(|snapshot| {
             snapshot.node = Some(status.node);
             snapshot.traffic = Some(status.traffic);
+            snapshot.allowance = status.allowance;
             snapshot.session_expires_at_epoch_seconds = Some(status.expires_at_epoch_seconds);
             snapshot.access_expires_at_epoch_seconds = status.access_expires_at_epoch_seconds;
             snapshot.issue = None;
@@ -1200,6 +1204,7 @@ mod tests {
 
         let refreshed = client.refresh().await.unwrap();
         assert_eq!(refreshed.traffic.as_ref().unwrap().bytes_received, 2048);
+        assert_eq!(refreshed.allowance.unwrap().used_bytes, 3 << 30);
         let stopped_snapshot = client.stop_tunnel().await.unwrap();
         assert_eq!(stopped_snapshot.phase, ClientPhase::Enrolled);
         assert!(stopped.load(Ordering::SeqCst));
@@ -2593,6 +2598,14 @@ mod tests {
                 observed_at_epoch_seconds: unix_time(),
             },
             updates: None,
+            allowance: Some(ket_core::AllowanceStatus {
+                allowance: ket_core::DataAllowance {
+                    bytes: 50 << 30,
+                    period: ket_core::AllowancePeriod::Month,
+                },
+                used_bytes: 3 << 30,
+                resets_at_epoch_seconds: unix_time() + 86_400,
+            }),
         }
     }
 

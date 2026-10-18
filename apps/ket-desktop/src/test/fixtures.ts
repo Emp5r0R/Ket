@@ -50,6 +50,7 @@ export function testSnapshot(overrides: Partial<ClientSnapshot> = {}): ClientSna
     preferred_protocol: null,
     active_transport: null,
     traffic: null,
+    allowance: null,
     handshake_latency_ms: null,
     session_expires_at_epoch_seconds: 2_000,
     access_expires_at_epoch_seconds: 3_600,
