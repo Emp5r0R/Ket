@@ -33,7 +33,7 @@ The app has four tabs: Connect, Metrics, Protocols, and Settings. Each screen li
 - **Connect**: the server's location, the map, the connect button, a route card (protocol, why Ket left another protocol), and a protocol row. The row opens a bottom sheet that lists Automatic and only the protocols the server offers; it is disabled while connecting or connected.
 - **Metrics**: traffic, protocol, setup time, and access left for this connection, then the server's health, load, processor, memory, and uptime.
 - **Protocols**: one card per protocol, the server's own first. A card opens to when to use it, how it works, how to connect, and its limits, with a button to choose it.
-- **Settings**: theme (System, Light, Dark), apps that use Ket, connection options, the saved server with a confirmed **Forget**, help links, and the app version.
+- **Settings**: theme (System, Light, Dark), apps that use Ket, connection options (including the protocols Automatic tries), the saved server with a confirmed **Forget**, help links, and the app version.
 
 ### Status island
 

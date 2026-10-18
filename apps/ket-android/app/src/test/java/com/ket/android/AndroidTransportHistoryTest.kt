@@ -54,6 +54,55 @@ class AndroidTransportHistoryTest {
     }
 
     @Test
+    fun `a transport that worked here goes before an untried one of higher priority`() {
+        val history = AndroidTransportHistory()
+        val untried = TestTransport("untried", priority = 1)
+        val worked = TestTransport("worked", priority = 9)
+        history.recordSuccess(worked.id, latencyMillis = 80)
+        assertEquals(listOf("worked", "untried"), history.rank(listOf(untried, worked), 0).map { it.id })
+    }
+
+    @Test
+    fun `automatic leaves out unchecked protocols unless nothing would remain`() {
+        val history = AndroidTransportHistory()
+        val reality = TestTransport("reality", priority = 1, protocol = KetProtocol.Reality)
+        val hysteria = TestTransport("hysteria", priority = 2, protocol = KetProtocol.Hysteria2)
+        val transports = listOf(reality, hysteria)
+        assertEquals(
+            listOf("hysteria"),
+            history.rank(transports, 0, automaticExcluded = setOf(KetProtocol.Reality)).map { it.id },
+        )
+        assertEquals(
+            listOf("reality"),
+            history.rank(transports, 0, KetProtocol.Reality, setOf(KetProtocol.Reality)).map { it.id },
+        )
+        assertEquals(
+            listOf("reality", "hysteria"),
+            history.rank(transports, 0, automaticExcluded = setOf(KetProtocol.Reality, KetProtocol.Hysteria2))
+                .map { it.id },
+        )
+    }
+
+    @Test
+    fun `saved outcomes come back without uptime-based cooldowns`() {
+        val history = AndroidTransportHistory(baseCooldownMillis = 1_000, maximumCooldownMillis = 8_000)
+        history.recordSuccess("worked", latencyMillis = 40)
+        history.recordFailure("failed", nowMillis = 0)
+        val restored = AndroidTransportHistory(baseCooldownMillis = 1_000, maximumCooldownMillis = 8_000)
+        restored.restore(org.json.JSONObject(history.export().toString()))
+        val worked = TestTransport("worked", priority = 9)
+        val failed = TestTransport("failed", priority = 1)
+        val untried = TestTransport("untried", priority = 5)
+        assertEquals(
+            "the failure is remembered but its cooldown is not",
+            listOf("worked", "untried", "failed"),
+            restored.rank(listOf(failed, untried, worked), 0).map { it.id },
+        )
+        restored.restore(null)
+        assertEquals(listOf("failed", "untried", "worked"), restored.rank(listOf(failed, untried, worked), 0).map { it.id })
+    }
+
+    @Test
     fun `explicit unavailable protocol returns no candidates`() {
         val history = AndroidTransportHistory()
         val reality = TestTransport("reality", priority = 1, protocol = KetProtocol.Reality)

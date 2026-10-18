@@ -1581,6 +1581,52 @@ input:disabled {
   cursor: pointer;
 }
 
+.settings-checklist {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 20px 16px;
+  border: 0;
+  font-size: 12px;
+}
+
+.settings-checklist legend {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.settings-checklist legend strong {
+  display: block;
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.settings-checklist legend small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-checklist label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 30px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.settings-checklist input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--green-dark);
+}
+
 .settings-toggle strong {
   display: block;
   color: var(--ink);

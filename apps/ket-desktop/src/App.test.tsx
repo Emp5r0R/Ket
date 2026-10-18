@@ -407,7 +407,9 @@ describe("Ket desktop shell", () => {
     });
 
     await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(connect).toHaveBeenCalledWith("stealth", { splitTlsHello: true }));
+    await waitFor(() =>
+      expect(connect).toHaveBeenCalledWith("stealth", { splitTlsHello: true, automaticExcluded: [] }),
+    );
     expect(localStorage.getItem("ket.access-code")).toBe("U".repeat(32));
   });
 

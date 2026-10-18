@@ -41,6 +41,7 @@ const tauriBridge: DesktopBridge = {
     invoke<ClientSnapshot>("connect", {
       preferredProtocol,
       splitTlsHello: options.splitTlsHello,
+      automaticExcluded: options.automaticExcluded,
     }),
   stop: () => invoke<ClientSnapshot>("stop_tunnel"),
   refresh: () => invoke<ClientSnapshot>("refresh"),

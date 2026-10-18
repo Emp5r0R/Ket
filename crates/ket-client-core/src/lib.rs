@@ -18,6 +18,7 @@ mod state;
 mod strategy;
 mod system_dns;
 mod transport;
+mod transport_memory;
 mod validation;
 mod wireguard;
 mod xray;
@@ -35,5 +36,6 @@ pub use state::{ClientPhase, ClientSnapshot, TransportFallback, TransportSummary
 pub use strategy::{SelectionPolicy, TransportHistory, TransportSelector};
 pub use system_dns::recover_system_dns;
 pub use transport::{ActiveTunnel, ProbeReport, StartedTunnel, TransportAdapter, TunnelStatus};
+pub use transport_memory::{NetworkTransportMemory, TransportMemory};
 pub use wireguard::WireGuardTlsAdapter;
 pub use xray::XrayAdapter;

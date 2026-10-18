@@ -49,6 +49,7 @@ class KetVpnService : VpnService() {
     private val reconnecting = AtomicBoolean()
     private val leaseRefreshGate = AndroidLeaseRefreshGate()
     private val transportHistory = AndroidTransportHistory()
+    private val transportMemory by lazy { NetworkTransportMemory.forContext(this) }
     private val recoveryPolicy = AndroidRecoveryPolicy()
     private val underlyingNetworks = UnderlyingNetworkTracker<Network>()
     private val networkChangeVerifier = NetworkChangeVerifier(
@@ -187,6 +188,7 @@ class KetVpnService : VpnService() {
                 protocol = spec.preferredProtocol,
             )
             transportAddresses = resolveTransportAddresses(spec.transports)
+            restoreHistoryForCurrentNetwork()
             val selected = startLocalRoute(spec, reconnectAttempt = 0)
             if (lifecycle.isStopping()) return
             publishConnected(spec, selected)
@@ -223,6 +225,7 @@ class KetVpnService : VpnService() {
             spec.transports,
             SystemClock.elapsedRealtime(),
             spec.preferredProtocol,
+            options.automaticExcluded,
         )
         for (transport in candidates) {
             if (lifecycle.isStopping()) throw IllegalStateException("Tunnel stop was requested")
@@ -248,6 +251,7 @@ class KetVpnService : VpnService() {
             val candidate = engineFor(spec, transport, options)
             if (candidate == null) {
                 transportHistory.recordFailure(transport.id, SystemClock.elapsedRealtime())
+                rememberHistory()
                 failures += "${transport.displayName}: endpoint did not resolve before VPN routing"
                 noteFallback(transport.displayName, "endpoint did not resolve before VPN routing")
                 AndroidConnectionDiagnostics.record(
@@ -267,6 +271,7 @@ class KetVpnService : VpnService() {
                 activeTransportId = transport.id
                 establishVpnRoute(spec, candidate, started)
                 transportHistory.recordSuccess(transport.id, started.handshakeLatencyMs)
+                rememberHistory()
                 AndroidConnectionDiagnostics.record(
                     stage = if (reconnectAttempt > 0) "transport_recovery" else "transport_start",
                     outcome = DiagnosticOutcome.Succeeded,
@@ -283,6 +288,7 @@ class KetVpnService : VpnService() {
                 }
                 if (lifecycle.isStopping()) throw IllegalStateException("Tunnel stop was requested")
                 transportHistory.recordFailure(transport.id, SystemClock.elapsedRealtime())
+                rememberHistory()
                 failures += "${transport.displayName}: ${error.message ?: "startup failed"}"
                 noteFallback(transport.displayName, error.message ?: "startup failed")
                 AndroidConnectionDiagnostics.record(
@@ -455,6 +461,7 @@ class KetVpnService : VpnService() {
         // again first instead of being cooled down.
         if (failedTransportId != null && blameTransport) {
             transportHistory.recordFailure(failedTransportId, SystemClock.elapsedRealtime())
+            rememberHistory()
             spec.transports.firstOrNull { it.id == failedTransportId }?.let {
                 noteFallback(it.displayName, failureReason)
             }
@@ -506,6 +513,22 @@ class KetVpnService : VpnService() {
             message = lastFailure,
         )
         reconnecting.set(false)
+    }
+
+    /** The physical network under the VPN, described for [NetworkTransportMemory]. */
+    private fun currentNetwork(): String? = runCatching {
+        NetworkTransportMemory.describe(
+            connectivityManager,
+            underlyingNetworks.newest() ?: connectivityManager.activeNetwork,
+        )
+    }.getOrNull()
+
+    private fun restoreHistoryForCurrentNetwork() {
+        transportHistory.restore(runCatching { transportMemory.load(currentNetwork()) }.getOrNull())
+    }
+
+    private fun rememberHistory() {
+        runCatching { transportMemory.save(currentNetwork(), transportHistory.export()) }
     }
 
     private fun noteFallback(transportName: String, reason: String) {
@@ -628,6 +651,8 @@ class KetVpnService : VpnService() {
                     code = if (survived) "route_kept" else "route_lost",
                 )
                 if (!survived) {
+                    // A new network starts from what worked there last time.
+                    restoreHistoryForCurrentNetwork()
                     requestRecovery("The route stopped working after the network changed", blameTransport = false)
                 }
             }

@@ -37,6 +37,10 @@ internal class UnderlyingNetworkTracker<T> {
     @Synchronized
     fun isConnected(): Boolean = connectedBaseline != null
 
+    /** The network that became available most recently, or null without one. */
+    @Synchronized
+    fun newest(): T? = available.lastOrNull()
+
     @Synchronized
     fun consumeRecoveryRequired(): Boolean {
         val baseline = connectedBaseline ?: return false

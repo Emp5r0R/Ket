@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.ket.android.KetThemeMode
+import com.ket.android.KetProtocol
 import com.ket.android.connection.ConnectionOptions
 import com.ket.android.connection.ConnectionOptionsSection
 import com.ket.android.formatDuration
@@ -55,6 +56,7 @@ internal fun SettingsScreen(
     loadInstalledApps: () -> List<InstalledApp>,
     connectionOptions: ConnectionOptions,
     onConnectionOptionsChange: (ConnectionOptions) -> Unit,
+    offeredProtocols: List<KetProtocol>,
     savedServerUrl: String?,
     accessRemainingSeconds: Long?,
     onForgetServer: () -> Unit,
@@ -90,7 +92,7 @@ internal fun SettingsScreen(
             )
         }
         SectionCard(title = "Connection", subtitle = "Applies from the next connection.") {
-            ConnectionOptionsSection(connectionOptions, onConnectionOptionsChange)
+            ConnectionOptionsSection(connectionOptions, onConnectionOptionsChange, offeredProtocols)
         }
         if (savedServerUrl != null) {
             SectionCard(title = "Your server") {

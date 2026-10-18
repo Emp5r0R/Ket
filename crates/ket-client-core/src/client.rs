@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use ket_core::{
     ACCESS_CODE_LENGTH, SecretString, SessionManifest, SessionStatus, TransportProtocol,
@@ -14,7 +18,8 @@ use crate::validation::{validate_manifest, validate_status};
 use crate::{
     ActiveTunnel, ClientError, ClientIssue, ClientPhase, ClientSnapshot, ConnectOptions,
     ControlEndpoint, ControlPlane, ProbeReport, SelectionPolicy, TransportAdapter,
-    TransportFallback, TransportHistory, TransportSelector, TransportSummary, TunnelStatus,
+    TransportFallback, TransportHistory, TransportMemory, TransportSelector, TransportSummary,
+    TunnelStatus,
 };
 
 /// How many fallback reasons a snapshot keeps while a reconnect loop runs.
@@ -62,6 +67,10 @@ struct RuntimeState {
     probes: BTreeMap<String, CachedProbe>,
     /// The network generation the current tunnel was last checked on.
     network_generation: u64,
+    /// Keeps `history` per network between connections, when set.
+    memory: Option<Arc<dyn TransportMemory>>,
+    /// Protocols the user left out of Automatic.
+    automatic_excluded: BTreeSet<TransportProtocol>,
 }
 
 pub struct KetClient {
@@ -132,6 +141,8 @@ impl KetClient {
                 history: TransportHistory::default(),
                 probes: BTreeMap::new(),
                 network_generation: 0,
+                memory: None,
+                automatic_excluded: BTreeSet::new(),
             }),
             route_health,
             connect_cancellation,
@@ -224,6 +235,18 @@ impl KetClient {
     /// Settings for every later connection, including automatic reconnects.
     pub async fn set_connect_options(&self, options: ConnectOptions) {
         self.runtime.lock().await.connect_options = options;
+    }
+
+    /// Remembers which transports worked on each network, so Automatic
+    /// starts with the last one that worked where the device is now.
+    pub async fn set_transport_memory(&self, memory: Arc<dyn TransportMemory>) {
+        self.runtime.lock().await.memory = Some(memory);
+    }
+
+    /// Protocols Automatic never tries, unless that would leave none. An
+    /// explicitly chosen protocol is always tried.
+    pub async fn set_automatic_exclusions(&self, excluded: BTreeSet<TransportProtocol>) {
+        self.runtime.lock().await.automatic_excluded = excluded;
     }
 
     pub async fn connect_with_protocol(
@@ -610,16 +633,20 @@ impl KetClient {
             self.stop_and_retain_on_failure(tunnel).await?;
         }
         let (candidates, options, missing_preference) = {
-            let runtime = self.runtime.lock().await;
+            let mut runtime = self.runtime.lock().await;
+            if let Some(memory) = runtime.memory.clone() {
+                runtime.history = memory.load();
+            }
             let session = runtime.session.as_ref().ok_or(ClientError::NotEnrolled)?;
             let candidates = self
                 .selector
-                .rank_with_preference(
+                .rank_for(
                     &session.transports,
                     &self.adapters,
                     &runtime.history,
                     unix_time(),
                     runtime.preferred_protocol.as_ref(),
+                    &runtime.automatic_excluded,
                 )
                 .into_iter()
                 .cloned()
@@ -716,6 +743,9 @@ impl KetClient {
                         runtime
                             .history
                             .record_success(&transport.profile.id, latency);
+                        if let Some(memory) = &runtime.memory {
+                            memory.save(&runtime.history);
+                        }
                         runtime.network_generation = started.tunnel.network().generation;
                         runtime.tunnel = Some(started.tunnel);
                     }
@@ -941,11 +971,15 @@ impl KetClient {
     }
 
     async fn cool_down(&self, transport_id: &str) {
-        self.runtime.lock().await.history.record_failure(
+        let mut runtime = self.runtime.lock().await;
+        runtime.history.record_failure(
             transport_id,
             unix_time(),
             self.selector.policy().failure_cooldown_seconds,
         );
+        if let Some(memory) = &runtime.memory {
+            memory.save(&runtime.history);
+        }
     }
 
     fn note_fallback(&self, transport: TransportSummary, issue: ClientIssue) {
@@ -1776,6 +1810,94 @@ mod tests {
         assert!(
             snapshot.fallbacks.is_empty(),
             "the network, not the transport, was to blame"
+        );
+    }
+
+    #[derive(Default)]
+    struct FakeMemory {
+        history: StdMutex<TransportHistory>,
+        saves: AtomicUsize,
+    }
+
+    impl TransportMemory for FakeMemory {
+        fn load(&self) -> TransportHistory {
+            self.history.lock().unwrap().clone()
+        }
+        fn save(&self, history: &TransportHistory) {
+            *self.history.lock().unwrap() = history.clone();
+            self.saves.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn automatic_starts_with_what_worked_on_this_network_and_remembers_it() {
+        let api = Arc::new(MockApi::new(test_manifest()));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new_with_route_health(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+            Arc::new(MockRouteHealth::new(true)),
+        )
+        .unwrap();
+        let memory = Arc::new(FakeMemory::default());
+        memory
+            .history
+            .lock()
+            .unwrap()
+            .record_success("hy2-working", 30);
+        client.set_transport_memory(memory.clone()).await;
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+
+        let connected = client.connect().await.unwrap();
+        assert_eq!(
+            connected
+                .active_transport
+                .map(|transport| transport.id)
+                .as_deref(),
+            Some("hy2-working"),
+            "the transport that worked here goes before a higher-priority one"
+        );
+        assert_eq!(adapter.probe_attempts.load(Ordering::SeqCst), 1);
+        assert!(memory.saves.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    async fn automatic_skips_unchecked_protocols() {
+        let mut manifest = test_manifest();
+        manifest
+            .transports
+            .push(test_reality_transport("reality", 3));
+        let api = Arc::new(MockApi::new(manifest));
+        let adapter = Arc::new(RecoveryAdapter::new());
+        let client = KetClient::new_with_route_health(
+            ControlEndpoint::parse("http://127.0.0.1:8787").unwrap(),
+            "Linux workstation",
+            api,
+            vec![adapter.clone()],
+            SelectionPolicy::default(),
+            Arc::new(MockRouteHealth::new(true)),
+        )
+        .unwrap();
+        client
+            .set_automatic_exclusions(BTreeSet::from([TransportProtocol::Hysteria2]))
+            .await;
+        client
+            .enroll("A2345678901234567890123456789012")
+            .await
+            .unwrap();
+        let connected = client.connect().await.unwrap();
+        assert_eq!(
+            connected
+                .active_transport
+                .map(|transport| transport.id)
+                .as_deref(),
+            Some("reality")
         );
     }
 

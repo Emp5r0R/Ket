@@ -51,14 +51,35 @@ impl LinuxRoutes {
     }
 }
 
+/// The default routes in the system table; reading needs no privileges.
+pub(crate) fn read_default_routes() -> io::Result<Vec<DefaultRoute>> {
+    let mut routes = parse_ipv4_routes(&fs::read_to_string("/proc/net/route")?);
+    // Absent when IPv6 is disabled.
+    if let Ok(table) = fs::read_to_string("/proc/net/ipv6_route") {
+        routes.extend(parse_ipv6_routes(&table));
+    }
+    Ok(routes)
+}
+
+/// The hardware address of an IPv4 neighbour, such as the gateway, from
+/// `/proc/net/arp`, which tells apart networks that share a gateway address.
+pub(crate) fn neighbour_hardware(address: IpAddr) -> Option<String> {
+    parse_neighbour(&fs::read_to_string("/proc/net/arp").ok()?, address)
+}
+
+fn parse_neighbour(table: &str, address: IpAddr) -> Option<String> {
+    let wanted = address.to_string();
+    table.lines().skip(1).find_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        (fields.first() == Some(&wanted.as_str()) && fields.get(3) != Some(&"00:00:00:00:00:00"))
+            .then(|| fields.get(3).map(|hardware| (*hardware).to_owned()))
+            .flatten()
+    })
+}
+
 impl RouteSystem for LinuxRoutes {
     fn default_routes(&mut self) -> io::Result<Vec<DefaultRoute>> {
-        let mut routes = parse_ipv4_routes(&fs::read_to_string("/proc/net/route")?);
-        // Absent when IPv6 is disabled.
-        if let Ok(table) = fs::read_to_string("/proc/net/ipv6_route") {
-            routes.extend(parse_ipv6_routes(&table));
-        }
-        Ok(routes)
+        read_default_routes()
     }
 
     fn apply(&mut self, action: &RouteAction) -> io::Result<()> {
@@ -203,6 +224,21 @@ fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000
             ],
             "the tunnel's half routes and subnet routes are not defaults"
         );
+    }
+
+    #[test]
+    fn neighbours_are_found_by_address_and_incomplete_entries_skipped() {
+        let table = "\
+IP address       HW type     Flags       HW address            Mask     Device
+192.168.1.1      0x1         0x2         aa:bb:cc:dd:ee:ff     *        wlan0
+10.0.0.1         0x1         0x0         00:00:00:00:00:00     *        eth0
+";
+        assert_eq!(
+            parse_neighbour(table, "192.168.1.1".parse().unwrap()).as_deref(),
+            Some("aa:bb:cc:dd:ee:ff")
+        );
+        assert_eq!(parse_neighbour(table, "10.0.0.1".parse().unwrap()), None);
+        assert_eq!(parse_neighbour(table, "10.0.0.2".parse().unwrap()), None);
     }
 
     #[test]

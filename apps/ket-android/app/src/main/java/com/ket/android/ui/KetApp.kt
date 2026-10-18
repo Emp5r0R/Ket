@@ -344,6 +344,7 @@ internal fun KetApp(
                             loadInstalledApps = loadInstalledApps,
                             connectionOptions = connectionOptions,
                             onConnectionOptionsChange = onConnectionOptionsChange,
+                            offeredProtocols = lastOffered,
                             savedServerUrl = serverUrl.takeIf { profileSaved },
                             accessRemainingSeconds = accessRemainingSeconds,
                             onForgetServer = forgetProfile,

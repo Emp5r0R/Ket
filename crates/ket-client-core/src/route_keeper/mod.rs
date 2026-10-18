@@ -171,6 +171,47 @@ fn release(state: &mut KeeperState) {
     state.applied.clear();
 }
 
+/// The physical network the device is on, as the default route's interface,
+/// gateway, and (on Linux) the gateway's hardware address, so per-network
+/// memory can tell networks apart. Callers hash it; it is never stored as is.
+/// `None` without a physical network, or in unit tests.
+pub(crate) fn physical_network(tunnel_interface: &str) -> Option<String> {
+    let routes = physical_routes()?;
+    let route = plan::best_default(&routes, Family::V4, tunnel_interface)
+        .or_else(|| plan::best_default(&routes, Family::V6, tunnel_interface))?;
+    let gateway = route
+        .gateway
+        .map(|gateway| gateway.to_string())
+        .unwrap_or_default();
+    let hardware = route.gateway.and_then(gateway_hardware).unwrap_or_default();
+    Some(format!("{}\n{gateway}\n{hardware}", route.interface))
+}
+
+#[cfg(all(target_os = "linux", not(test)))]
+fn physical_routes() -> Option<Vec<DefaultRoute>> {
+    linux::read_default_routes().ok()
+}
+
+#[cfg(all(target_os = "linux", not(test)))]
+fn gateway_hardware(gateway: IpAddr) -> Option<String> {
+    linux::neighbour_hardware(gateway)
+}
+
+#[cfg(all(windows, not(test)))]
+fn physical_routes() -> Option<Vec<DefaultRoute>> {
+    windows::WindowsRoutes.default_routes().ok()
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+fn gateway_hardware(_gateway: IpAddr) -> Option<String> {
+    None
+}
+
+#[cfg(any(not(any(target_os = "linux", windows)), test))]
+fn physical_routes() -> Option<Vec<DefaultRoute>> {
+    None
+}
+
 #[cfg(all(target_os = "linux", not(test)))]
 fn platform_system() -> Box<dyn RouteSystem> {
     Box::new(linux::LinuxRoutes::new())

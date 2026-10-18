@@ -1,6 +1,7 @@
 import {
   Binary,
   KeyRound,
+  ListChecks,
   Laptop,
   Monitor,
   Moon,
@@ -13,6 +14,7 @@ import {
 import { endpointHost } from "../lib/format";
 import { compareVersions } from "../lib/updates";
 import type { ThemePreference } from "../App";
+import { protocolInfo, type ProtocolId } from "../lib/protocols";
 import type { DesktopState } from "../types";
 
 interface SettingsViewProps {
@@ -24,6 +26,8 @@ interface SettingsViewProps {
   onThemeChange: (preference: ThemePreference) => void;
   splitTlsHello: boolean;
   onSplitTlsHelloChange: (enabled: boolean) => void;
+  automaticExcluded: ProtocolId[];
+  onAutomaticProtocolChange: (protocol: ProtocolId, included: boolean) => void;
   onForget: () => Promise<void>;
 }
 
@@ -42,8 +46,13 @@ export function SettingsView({
   onThemeChange,
   splitTlsHello,
   onSplitTlsHelloChange,
+  automaticExcluded,
+  onAutomaticProtocolChange,
   onForget,
 }: SettingsViewProps) {
+  const offered = [
+    ...new Set(state.snapshot.available_transports.map((transport) => transport.protocol)),
+  ];
   const tunnelStatus = state.engine.broker_available
     ? "Ready"
     : state.engine.status === "not_installed"
@@ -138,6 +147,30 @@ export function SettingsView({
             onChange={(event) => onSplitTlsHelloChange(event.target.checked)}
           />
         </label>
+        {offered.length > 1 ? (
+          <fieldset className="settings-checklist">
+            <legend>
+              <span className="settings-row-icon"><ListChecks size={18} aria-hidden="true" /></span>
+              <span>
+                <strong>Protocols Automatic tries</strong>
+                <small>
+                  Leave out ones that never work for you. Choosing a protocol by hand still
+                  uses it, and if you leave out every one, Automatic tries them all.
+                </small>
+              </span>
+            </legend>
+            {offered.map((protocol) => (
+              <label key={protocol}>
+                <input
+                  type="checkbox"
+                  checked={!automaticExcluded.includes(protocol)}
+                  onChange={(event) => onAutomaticProtocolChange(protocol, event.target.checked)}
+                />
+                {protocolInfo(protocol).label}
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
       </section>
 
       <section className="settings-section danger-section" aria-labelledby="access-heading">

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -6,7 +7,7 @@ use std::{
 use ket_client_core::{
     BrokerConfig, BrokerTransportAdapter, ClientIssue, ClientSnapshot, ConnectOptions,
     ControlEndpoint, HttpControlPlane, InviteEnrollment, KetClient, MaintenanceTask,
-    SelectionPolicy,
+    NetworkTransportMemory, SelectionPolicy,
 };
 use ket_core::TransportProtocol;
 use serde::Serialize;
@@ -240,6 +241,13 @@ async fn enroll(
         SelectionPolicy::default(),
     )
     .map_err(issue)?;
+    if let Ok(directory) = app.path().app_data_dir() {
+        client
+            .set_transport_memory(Arc::new(NetworkTransportMemory::new(
+                directory.join("transport-history.json"),
+            )))
+            .await;
+    }
     let snapshot = match client.enroll(access_code).await {
         Ok(snapshot) => snapshot,
         Err(error) => {
@@ -277,6 +285,7 @@ async fn connect(
     controller: State<'_, DesktopController>,
     preferred_protocol: Option<String>,
     split_tls_hello: Option<bool>,
+    automatic_excluded: Option<Vec<String>>,
 ) -> Result<ClientSnapshot, ClientIssue> {
     let client = controller
         .session
@@ -289,11 +298,17 @@ async fn connect(
         .as_deref()
         .map(parse_protocol)
         .transpose()?;
+    let automatic_excluded = automatic_excluded
+        .unwrap_or_default()
+        .iter()
+        .map(|protocol| parse_protocol(protocol))
+        .collect::<Result<BTreeSet<_>, _>>()?;
     client
         .set_connect_options(ConnectOptions {
             split_tls_hello: split_tls_hello.unwrap_or(false),
         })
         .await;
+    client.set_automatic_exclusions(automatic_excluded).await;
     client
         .connect_with_protocol(preferred_protocol)
         .await

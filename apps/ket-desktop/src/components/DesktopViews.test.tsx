@@ -65,6 +65,8 @@ describe("desktop settings", () => {
         onThemeChange={onThemeChange}
         splitTlsHello={false}
         onSplitTlsHelloChange={onSplitTlsHelloChange}
+        automaticExcluded={[]}
+        onAutomaticProtocolChange={vi.fn()}
         onForget={vi.fn(async () => undefined)}
       />,
     );
@@ -81,6 +83,33 @@ describe("desktop settings", () => {
     expect(onSplitTlsHelloChange).toHaveBeenCalledWith(true);
   });
 
+  it("lets the user leave protocols out of Automatic", () => {
+    const onAutomaticProtocolChange = vi.fn();
+    render(
+      <SettingsView
+        state={testDesktopState()}
+        serverUrl="https://ket.example.test"
+        deviceName="Workstation"
+        busy={false}
+        themePreference="system"
+        onThemeChange={vi.fn()}
+        splitTlsHello={false}
+        onSplitTlsHelloChange={vi.fn()}
+        automaticExcluded={["vless_xtls_reality"]}
+        onAutomaticProtocolChange={onAutomaticProtocolChange}
+        onForget={vi.fn(async () => undefined)}
+      />,
+    );
+    const stealth = screen.getByRole("checkbox", { name: "HTTPS Stealth" });
+    const reality = screen.getByRole("checkbox", { name: "VLESS + REALITY" });
+    expect(stealth).toBeChecked();
+    expect(reality).not.toBeChecked();
+    fireEvent.click(stealth);
+    expect(onAutomaticProtocolChange).toHaveBeenCalledWith("stealth", false);
+    fireEvent.click(reality);
+    expect(onAutomaticProtocolChange).toHaveBeenCalledWith("vless_xtls_reality", true);
+  });
+
   it("shows the server version and flags a server older than the app", () => {
     const view = (serverVersion: string | null) =>
       render(
@@ -93,6 +122,8 @@ describe("desktop settings", () => {
           onThemeChange={vi.fn()}
           splitTlsHello={false}
           onSplitTlsHelloChange={vi.fn()}
+          automaticExcluded={[]}
+          onAutomaticProtocolChange={vi.fn()}
           onForget={vi.fn(async () => undefined)}
         />,
       );
@@ -132,6 +163,8 @@ describe("desktop settings", () => {
           onThemeChange={vi.fn()}
           splitTlsHello={false}
           onSplitTlsHelloChange={vi.fn()}
+          automaticExcluded={[]}
+          onAutomaticProtocolChange={vi.fn()}
           onForget={vi.fn(async () => undefined)}
         />,
       );
@@ -155,6 +188,8 @@ describe("desktop settings", () => {
         onThemeChange={vi.fn()}
         splitTlsHello={false}
         onSplitTlsHelloChange={vi.fn()}
+        automaticExcluded={[]}
+        onAutomaticProtocolChange={vi.fn()}
         onForget={onForget}
       />,
     );

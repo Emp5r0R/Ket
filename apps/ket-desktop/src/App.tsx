@@ -40,6 +40,18 @@ const ACCESS_CODE_KEY = "ket.access-code";
 const DEVICE_KEY = "ket.device-name";
 const PROTOCOL_KEY = "ket.protocol-preference";
 const SPLIT_TLS_HELLO_KEY = "ket.split-tls-hello";
+const AUTOMATIC_EXCLUDED_KEY = "ket.automatic-excluded";
+
+function loadAutomaticExcluded(): ProtocolId[] {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(AUTOMATIC_EXCLUDED_KEY) ?? "[]");
+    return Array.isArray(saved)
+      ? saved.filter((value): value is ProtocolId => typeof value === "string" && isProtocolId(value))
+      : [];
+  } catch {
+    return [];
+  }
+}
 const ACCESS_EXPIRY_KEY = "ket.access-expires-at";
 const NODE_KEY_KEY = "ket.node-key";
 const SEALED_CONTROL_KEY = "ket.sealed-control";
@@ -205,6 +217,8 @@ export default function App() {
     () => localStorage.getItem(SPLIT_TLS_HELLO_KEY) === "on",
   );
   const splitTlsHelloRef = useRef(splitTlsHello);
+  const [automaticExcluded, setAutomaticExcluded] = useState<ProtocolId[]>(loadAutomaticExcluded);
+  const automaticExcludedRef = useRef(automaticExcluded);
   const [protocolPreference, setProtocolPreference] = useState<ProtocolPreference>(() => {
     const saved = localStorage.getItem(PROTOCOL_KEY);
     return saved === "auto" || (saved !== null && isProtocolId(saved)) ? saved : "auto";
@@ -677,7 +691,21 @@ export default function App() {
   const connectWith = (preference: ProtocolPreference) =>
     bridge.connect(preference === "auto" ? null : preference, {
       splitTlsHello: splitTlsHelloRef.current,
+      automaticExcluded: automaticExcludedRef.current,
     });
+
+  const chooseAutomaticProtocol = (protocol: ProtocolId, included: boolean) => {
+    const next = included
+      ? automaticExcludedRef.current.filter((excluded) => excluded !== protocol)
+      : [...new Set([...automaticExcludedRef.current, protocol])];
+    automaticExcludedRef.current = next;
+    setAutomaticExcluded(next);
+    if (next.length === 0) {
+      localStorage.removeItem(AUTOMATIC_EXCLUDED_KEY);
+    } else {
+      localStorage.setItem(AUTOMATIC_EXCLUDED_KEY, JSON.stringify(next));
+    }
+  };
 
   const chooseSplitTlsHello = (enabled: boolean) => {
     splitTlsHelloRef.current = enabled;
@@ -865,6 +893,8 @@ export default function App() {
             onThemeChange={chooseTheme}
             splitTlsHello={splitTlsHello}
             onSplitTlsHelloChange={chooseSplitTlsHello}
+            automaticExcluded={automaticExcluded}
+            onAutomaticProtocolChange={chooseAutomaticProtocol}
             onForget={forget}
           />
         ) : null}

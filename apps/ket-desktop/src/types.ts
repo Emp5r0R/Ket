@@ -77,6 +77,8 @@ export interface TransportFallback {
 /** Connection settings chosen in Settings, applied to every connection. */
 export interface ConnectOptions {
   splitTlsHello: boolean;
+  /** Protocols Automatic leaves out; an explicit choice still uses them. */
+  automaticExcluded: ProtocolId[];
 }
 
 export interface ClientSnapshot {
