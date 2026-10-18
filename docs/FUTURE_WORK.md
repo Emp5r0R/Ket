@@ -38,3 +38,7 @@ These checks require hardware or network conditions. They are release-confidence
 ### Additional stealth transports
 
 Ket's HTTPS Stealth and WireGuard TLS are independent self-hosted designs. They do not claim Proton Stealth wire compatibility because Proton's production server contract is not a public self-hostable interoperability target. Future transports should be added only when a maintained engine, reproducible package supply chain, server-side revocation, and all-client lifecycle behavior can be delivered together.
+
+## Bypass by name
+
+The bypass list takes addresses and networks. Bypassing a site by name would need the engine to send that site's connections out directly, which loops back into the tunnel unless the engine's socket is tied to the physical network. Xray can do that on Linux (`sockopt.mark` with a policy route the route keeper would keep) and on Windows (`sockopt.interface`, fixed to one interface, so the engine would restart on every network change); Hysteria2, Shadowsocks, and OpenVPN cannot route by name; and on Android the engines run as separate processes that cannot use `VpnService.protect`. Name bypass would therefore cover three of seven protocols on computers and none on Android, so it is left out until it can work everywhere.

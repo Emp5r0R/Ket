@@ -28,7 +28,11 @@ use windows_sys::Win32::{
     },
 };
 
-use super::{DefaultRoute, Family, NetworkKind, RouteAction, RouteSystem, ServerPath};
+use ket_tunnel_protocol::IpPrefix;
+
+use super::{
+    DefaultRoute, Family, NetworkKind, OnLinkNetwork, RouteAction, RouteSystem, ServerPath,
+};
 
 const ROUTE_METRIC: u32 = 23;
 
@@ -54,28 +58,46 @@ impl RouteSystem for WindowsRoutes {
             .collect())
     }
 
+    fn on_link_networks(&mut self) -> io::Result<Vec<OnLinkNetwork>> {
+        let loopback = loopback_index().ok();
+        Ok(forward_rows()?
+            .iter()
+            .filter(|row| {
+                row.DestinationPrefix.PrefixLength > 0
+                    && !is_ket_route(row)
+                    && Some(row.InterfaceIndex) != loopback
+                    && address_of(&row.NextHop).is_some_and(|hop| hop.is_unspecified())
+            })
+            .filter_map(|row| {
+                Some(OnLinkNetwork {
+                    prefix: IpPrefix::new(
+                        address_of(&row.DestinationPrefix.Prefix)?,
+                        row.DestinationPrefix.PrefixLength,
+                    )?,
+                    interface: alias(&row.InterfaceLuid).unwrap_or_default(),
+                })
+            })
+            .collect())
+    }
+
     fn apply(&mut self, action: &RouteAction) -> io::Result<()> {
         match action {
             RouteAction::Install {
-                server,
+                destination,
                 path,
                 replacing,
             } => {
                 if let Some(previous) = replacing {
-                    delete(&row_for(*server, previous)?)?;
+                    delete(&row_for(*destination, previous)?)?;
                 }
-                check(unsafe { CreateIpForwardEntry2(&row_for(*server, path)?) })
+                check(unsafe { CreateIpForwardEntry2(&row_for(*destination, path)?) })
             }
-            RouteAction::Remove { server, path } => delete(&row_for(*server, path)?),
+            RouteAction::Remove { destination, path } => delete(&row_for(*destination, path)?),
         }
     }
 
     fn clear_stale(&mut self) -> io::Result<()> {
-        for row in forward_rows()?.iter().filter(|row| {
-            matches!(row.DestinationPrefix.PrefixLength, 32 | 128)
-                && row.Metric == ROUTE_METRIC
-                && row.Protocol == MIB_IPPROTO_NETMGMT
-        }) {
+        for row in forward_rows()?.iter().filter(|row| is_ket_route(row)) {
             delete(row)?;
         }
         Ok(())
@@ -93,14 +115,19 @@ fn forward_rows() -> io::Result<Vec<MIB_IPFORWARD_ROW2>> {
     Ok(rows)
 }
 
-fn row_for(server: IpAddr, path: &ServerPath) -> io::Result<MIB_IPFORWARD_ROW2> {
+/// A route Ket installed: its metric and protocol mark it.
+fn is_ket_route(row: &MIB_IPFORWARD_ROW2) -> bool {
+    row.Metric == ROUTE_METRIC && row.Protocol == MIB_IPPROTO_NETMGMT
+}
+
+fn row_for(destination: IpPrefix, path: &ServerPath) -> io::Result<MIB_IPFORWARD_ROW2> {
     let mut row = MIB_IPFORWARD_ROW2::default();
     unsafe { InitializeIpForwardEntry(&mut row) };
-    row.DestinationPrefix.Prefix = socket_address(server);
-    row.DestinationPrefix.PrefixLength = if server.is_ipv4() { 32 } else { 128 };
+    row.DestinationPrefix.Prefix = socket_address(destination.address());
+    row.DestinationPrefix.PrefixLength = destination.length();
     row.Metric = ROUTE_METRIC;
     row.Protocol = MIB_IPPROTO_NETMGMT;
-    let unspecified = if server.is_ipv4() {
+    let unspecified = if destination.is_ipv4() {
         IpAddr::V4(Ipv4Addr::UNSPECIFIED)
     } else {
         IpAddr::V6(Ipv6Addr::UNSPECIFIED)

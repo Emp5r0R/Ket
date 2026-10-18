@@ -657,7 +657,11 @@ impl KetClient {
                     .iter()
                     .any(|transport| &transport.profile.protocol == protocol)
             });
-            (candidates, runtime.connect_options, missing_preference)
+            (
+                candidates,
+                runtime.connect_options.clone(),
+                missing_preference,
+            )
         };
         if !reconnecting {
             // A reconnect keeps the reason the previous tunnel was left.
@@ -1956,8 +1960,9 @@ mod tests {
             .unwrap();
         let split = ConnectOptions {
             split_tls_hello: true,
+            ..ConnectOptions::default()
         };
-        client.set_connect_options(split).await;
+        client.set_connect_options(split.clone()).await;
 
         let connected = client.connect().await.unwrap();
         assert_eq!(connected.fallbacks.len(), 1);
@@ -2386,7 +2391,7 @@ mod tests {
             self.connect_options
                 .lock()
                 .expect("connect options lock")
-                .push(*options);
+                .push(options.clone());
             let (status, _) = watch::channel(TunnelStatus::Connected);
             self.tunnels
                 .lock()

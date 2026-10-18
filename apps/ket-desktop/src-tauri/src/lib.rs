@@ -7,9 +7,9 @@ use std::{
 };
 
 use ket_client_core::{
-    BrokerConfig, BrokerTransportAdapter, ClientIssue, ClientSnapshot, ConnectOptions,
-    ControlEndpoint, HttpControlPlane, InviteEnrollment, KetClient, MaintenanceTask,
-    NetworkTransportMemory, SelectionPolicy,
+    BrokerConfig, BrokerTransportAdapter, BypassList, ClientIssue, ClientSnapshot, ConnectOptions,
+    ControlEndpoint, HttpControlPlane, InviteEnrollment, IpPrefix, KetClient, MaintenanceTask,
+    NetworkTransportMemory, PrefixError, SelectionPolicy,
 };
 use ket_core::TransportProtocol;
 use serde::Serialize;
@@ -294,6 +294,7 @@ async fn connect(
     preferred_protocol: Option<String>,
     split_tls_hello: Option<bool>,
     automatic_excluded: Option<Vec<String>>,
+    bypass: Option<Vec<String>>,
 ) -> Result<ClientSnapshot, ClientIssue> {
     let client = controller
         .session
@@ -311,9 +312,11 @@ async fn connect(
         .iter()
         .map(|protocol| parse_protocol(protocol))
         .collect::<Result<BTreeSet<_>, _>>()?;
+    let bypass = bypass_list(&bypass.unwrap_or_default())?;
     client
         .set_connect_options(ConnectOptions {
             split_tls_hello: split_tls_hello.unwrap_or(false),
+            bypass,
         })
         .await;
     client.set_automatic_exclusions(automatic_excluded).await;
@@ -321,6 +324,32 @@ async fn connect(
         .connect_with_protocol(preferred_protocol)
         .await
         .map_err(issue)
+}
+
+/// Checks one entry a person typed for the bypass list and returns the form
+/// it is kept in, such as `203.0.113.0/24` for `203.0.113.9/24`.
+#[tauri::command]
+fn check_bypass_entry(entry: String) -> Result<String, ClientIssue> {
+    IpPrefix::parse_bypass(&entry)
+        .map(|prefix| prefix.to_string())
+        .map_err(bypass_issue)
+}
+
+fn bypass_list(entries: &[String]) -> Result<BypassList, ClientIssue> {
+    let prefixes = entries
+        .iter()
+        .map(|entry| IpPrefix::parse_bypass(entry))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(bypass_issue)?;
+    BypassList::new(prefixes).map_err(bypass_issue)
+}
+
+fn bypass_issue(error: PrefixError) -> ClientIssue {
+    ClientIssue {
+        code: format!("bypass_{}", error.code()),
+        message: error.to_string(),
+        retryable: false,
+    }
 }
 
 fn parse_protocol(value: &str) -> Result<TransportProtocol, ClientIssue> {
@@ -443,6 +472,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             desktop_state,
             diagnostic_context,
+            check_bypass_entry,
             inspect_invite,
             decode_invite_qr,
             enroll,
@@ -463,6 +493,31 @@ pub fn run() {
 #[cfg(test)]
 mod command_contract_tests {
     use super::*;
+
+    #[test]
+    fn bypass_entries_are_normalized_and_refusals_named() {
+        assert_eq!(
+            check_bypass_entry(" 203.0.113.9/24 ".to_owned()).unwrap(),
+            "203.0.113.0/24"
+        );
+        assert_eq!(
+            check_bypass_entry("0.0.0.0/0".to_owned()).unwrap_err().code,
+            "bypass_too_wide"
+        );
+        assert_eq!(
+            bypass_list(&["10.0.0.0/8".to_owned(), "example.com".to_owned()])
+                .unwrap_err()
+                .code,
+            "bypass_invalid"
+        );
+        assert_eq!(
+            bypass_list(&["10.0.0.0/8".to_owned(), "10.0.0.0/8".to_owned()])
+                .unwrap()
+                .entries()
+                .len(),
+            1
+        );
+    }
 
     #[test]
     fn desktop_protocol_parser_covers_every_implemented_wire_name() {

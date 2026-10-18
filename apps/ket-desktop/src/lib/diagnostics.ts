@@ -37,6 +37,8 @@ export interface DiagnosticContext {
   control: "sealed" | "sealed_if_offered" | "plain";
   protocolPreference: ProtocolPreference;
   automaticExcluded: readonly string[];
+  /** How many entries the bypass list holds; the entries are never reported. */
+  bypassEntries: number;
   activeTransport: TransportSummary | null;
   handshakeLatencyMs: number | null;
   reconnectAttempt: number;
@@ -92,6 +94,7 @@ export function formatDiagnosticReport(
     `control=${context.control}`,
     `protocol_preference=${context.protocolPreference}`,
     `automatic_skips=${context.automaticExcluded.length === 0 ? "none" : context.automaticExcluded.map(field).join(",")}`,
+    `bypass_entries=${context.bypassEntries}`,
     `current_phase=${context.currentPhase}`,
     `active_transport=${context.activeTransport ? field(context.activeTransport.id) : "none"}`,
     `reconnect_attempt=${context.reconnectAttempt}`,

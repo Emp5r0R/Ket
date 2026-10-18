@@ -26,14 +26,16 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import hev.htproxy.TProxyService
 import java.io.File
-import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import com.ket.android.connection.BypassEntries
+import com.ket.android.connection.BypassPrefix
 import com.ket.android.connection.ConnectionOptions
 import com.ket.android.connection.ConnectionOptionsStore
+import com.ket.android.connection.inetAddressOf
 import com.ket.android.connection.TransportFallbackNote
 import com.ket.android.connection.TransportFallbacks
 import com.ket.android.splittunnel.InstalledApps
@@ -965,30 +967,36 @@ class KetVpnService : VpnService() {
         )
     }
 
-    private fun addVpnRoutes(builder: Builder, bypassAddresses: Collection<InetAddress>) {
+    /**
+     * Routes everything into the VPN except the servers the engines reach directly and the
+     * addresses and networks the user keeps outside the tunnel (Settings, bypass list).
+     */
+    private fun addVpnRoutes(builder: Builder, serverAddresses: Collection<InetAddress>) {
+        val bypass = BypassEntries.valid(ConnectionOptionsStore(this).load().bypass)
+        val excluded = (serverAddresses.map(BypassPrefix::host) + bypass).distinct()
+        AndroidConnectionDiagnostics.record(
+            stage = "bypass_list",
+            outcome = DiagnosticOutcome.Observed,
+            phase = TunnelPhase.Connecting,
+            message = "${bypass.size} entr${if (bypass.size == 1) "y" else "ies"}",
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             builder.addRoute("0.0.0.0", 0)
             builder.addRoute("::", 0)
-            bypassAddresses.forEach { address ->
-                builder.excludeRoute(IpPrefix(address, if (address is Inet4Address) 32 else 128))
+            excluded.forEach { prefix ->
+                builder.excludeRoute(IpPrefix(prefix.inetAddress(), prefix.length))
             }
             return
         }
 
-        val ipv4 = bypassAddresses.filterIsInstance<Inet4Address>()
-        if (ipv4.isEmpty()) {
-            builder.addRoute("0.0.0.0", 0)
-        } else {
-            routesExcluding(ipv4).forEach {
-                builder.addRoute(requireNotNull(it.address.hostAddress), it.prefixLength)
-            }
-        }
-        val ipv6 = bypassAddresses.filterNot { it is Inet4Address }
-        if (ipv6.isEmpty()) {
-            builder.addRoute("::", 0)
-        } else {
-            routesExcluding(ipv6).forEach {
-                builder.addRoute(requireNotNull(it.address.hostAddress), it.prefixLength)
+        for ((family, everything) in listOf(true to "0.0.0.0", false to "::")) {
+            val ofFamily = excluded.filter { it.isIpv4 == family }
+            if (ofFamily.isEmpty()) {
+                builder.addRoute(everything, 0)
+            } else {
+                routesExcludingPrefixes(ofFamily).forEach {
+                    builder.addRoute(requireNotNull(it.address.hostAddress), it.prefixLength)
+                }
             }
         }
     }
@@ -1070,31 +1078,34 @@ internal data class RoutePrefix(val address: InetAddress, val prefixLength: Int)
 
 internal fun routesExcluding(address: InetAddress): List<RoutePrefix> = routesExcluding(listOf(address))
 
-internal fun routesExcluding(addresses: Collection<InetAddress>): List<RoutePrefix> {
-    require(addresses.isNotEmpty()) { "At least one excluded address is required" }
-    val excluded = addresses.distinct().map(InetAddress::getAddress)
-    val addressSize = excluded.first().size
-    require(excluded.all { it.size == addressSize }) { "Excluded addresses must use one IP family" }
-    val routes = mutableListOf<RoutePrefix>()
+internal fun routesExcluding(addresses: Collection<InetAddress>): List<RoutePrefix> =
+    routesExcludingPrefixes(addresses.map(BypassPrefix::host))
 
-    fun visit(prefix: ByteArray, prefixLength: Int, matches: List<ByteArray>) {
-        if (prefixLength == addressSize * 8) return
-        val byteIndex = prefixLength / 8
-        val bitMask = 1 shl (7 - prefixLength % 8)
+/**
+ * Routes that cover every address of one family except the [excluded] addresses and networks,
+ * for Android versions without `excludeRoute`.
+ */
+internal fun routesExcludingPrefixes(excluded: Collection<BypassPrefix>): List<RoutePrefix> {
+    require(excluded.isNotEmpty()) { "At least one excluded prefix is required" }
+    val addressSize = excluded.first().address.size
+    require(excluded.all { it.address.size == addressSize }) { "Excluded prefixes must use one IP family" }
+    val routes = mutableListOf<RoutePrefix>()
+    fun bit(bytes: ByteArray, index: Int) = (bytes[index / 8].toInt() shr (7 - index % 8)) and 1 == 1
+
+    fun visit(prefix: ByteArray, prefixLength: Int, matches: List<BypassPrefix>) {
+        // A network that holds this whole branch leaves nothing to route here.
+        if (matches.any { it.length <= prefixLength }) return
+        if (matches.isEmpty()) {
+            routes += RoutePrefix(inetAddressOf(prefix), prefixLength)
+            return
+        }
         for (setBit in listOf(false, true)) {
             val child = prefix.copyOf()
-            if (setBit) child[byteIndex] = (child[byteIndex].toInt() or bitMask).toByte()
-            val childMatches = matches.filter { address ->
-                ((address[byteIndex].toInt() and bitMask) != 0) == setBit
-            }
-            if (childMatches.isEmpty()) {
-                routes += RoutePrefix(InetAddress.getByAddress(child), prefixLength + 1)
-            } else {
-                visit(child, prefixLength + 1, childMatches)
-            }
+            if (setBit) child[prefixLength / 8] = (child[prefixLength / 8].toInt() or (0x80 ushr (prefixLength % 8))).toByte()
+            visit(child, prefixLength + 1, matches.filter { bit(it.address, prefixLength) == setBit })
         }
     }
 
-    visit(ByteArray(addressSize), 0, excluded)
+    visit(ByteArray(addressSize), 0, excluded.distinct())
     return routes
 }

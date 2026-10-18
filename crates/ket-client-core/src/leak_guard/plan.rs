@@ -6,9 +6,13 @@
 //! the Ket server directly; every other DNS, DNS-over-TLS, LLMNR, or NetBIOS
 //! name lookup is blocked, which defeats Windows' parallel lookups on every
 //! adapter (Smart Multi-Homed Name Resolution) and link-local IPv6 resolvers;
-//! IPv6 beyond the local link is blocked because the bridge only routes IPv4.
+//! IPv6 beyond the local link is blocked because the bridge only routes IPv4,
+//! except to IPv6 networks the user keeps outside the tunnel. Name lookups
+//! stay blocked even to those, so DNS never leaves outside the tunnel.
 
 use std::net::{IpAddr, Ipv6Addr};
+
+use ket_tunnel_protocol::IpPrefix;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Family {
@@ -55,7 +59,7 @@ const FAMILIES: [Family; 2] = [Family::V4, Family::V6];
 
 /// Rules that apply before the tunnel interface exists: name lookups and
 /// IPv6 are already blocked, so nothing leaks while the bridge starts.
-pub(crate) fn base_rules(servers: &[IpAddr]) -> Vec<Rule> {
+pub(crate) fn base_rules(servers: &[IpAddr], bypass: &[IpPrefix]) -> Vec<Rule> {
     let mut rules = Vec::new();
     for family in FAMILIES {
         rules.push(rule(
@@ -85,10 +89,17 @@ pub(crate) fn base_rules(servers: &[IpAddr]) -> Vec<Rule> {
             SERVER_WEIGHT,
         ));
     }
+    let bypassed = bypass.iter().filter_map(|prefix| match prefix.address() {
+        IpAddr::V6(address) => Some((address, prefix.length())),
+        IpAddr::V4(_) => None,
+    });
     for (prefix, length) in [
         (Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0), 10),
         (Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 0), 8),
-    ] {
+    ]
+    .into_iter()
+    .chain(bypassed)
+    {
         rules.push(rule(
             Family::V6,
             Action::Permit,
@@ -184,7 +195,7 @@ mod tests {
     }
 
     fn all_rules(servers: &[IpAddr]) -> Vec<Rule> {
-        let mut rules = base_rules(servers);
+        let mut rules = base_rules(servers, &[]);
         rules.extend(tunnel_rules());
         rules
     }
@@ -244,7 +255,7 @@ mod tests {
 
     #[test]
     fn lookups_are_blocked_before_the_tunnel_interface_exists() {
-        let rules = base_rules(&[SERVER]);
+        let rules = base_rules(&[SERVER], &[]);
         assert_eq!(decide(&rules, &outside(LAN_RESOLVER, 53)), Action::Block);
         assert_eq!(decide(&rules, &outside(PUBLIC_V6, 443)), Action::Block);
         assert!(
@@ -256,7 +267,7 @@ mod tests {
 
     #[test]
     fn the_tunnel_outranks_every_block() {
-        let highest_block = base_rules(&[SERVER])
+        let highest_block = base_rules(&[SERVER], &[])
             .iter()
             .filter(|rule| rule.action == Action::Block)
             .map(|rule| rule.weight)
@@ -268,5 +279,18 @@ mod tests {
                 .all(|rule| rule.weight > highest_block)
         );
         assert_eq!(tunnel_rules().len(), 2);
+    }
+
+    #[test]
+    fn bypassed_ipv6_networks_are_reached_directly_but_never_for_lookups() {
+        let bypass = ["2606:4700::/32".parse().unwrap()];
+        let mut rules = base_rules(&[SERVER], &bypass);
+        rules.extend(tunnel_rules());
+        assert_eq!(decide(&rules, &outside(PUBLIC_V6, 443)), Action::Permit);
+        for port in NAME_LOOKUP_PORTS {
+            assert_eq!(decide(&rules, &outside(PUBLIC_V6, port)), Action::Block);
+        }
+        let elsewhere = IpAddr::V6(Ipv6Addr::new(0x2a00, 0x1450, 0, 0, 0, 0, 0, 1));
+        assert_eq!(decide(&rules, &outside(elsewhere, 443)), Action::Block);
     }
 }

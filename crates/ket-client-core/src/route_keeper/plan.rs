@@ -1,17 +1,23 @@
-//! Which way each Ket server address should leave the device, as plain data
-//! so the policy is tested on every platform. The platform modules only read
-//! the routing table and install what this decides.
+//! Which way each destination kept outside the tunnel should leave the
+//! device, as plain data so the policy is tested on every platform. The
+//! platform modules only read the routing table and install what this
+//! decides.
 //!
 //! The full-route bridge sends everything into the tunnel interface. The
-//! engines must still reach the Ket server directly, so each server address
-//! gets a host route through the current physical default route. When the
-//! device changes networks (Wi-Fi to Ethernet, a new hotspot), that default
-//! route changes and the host routes follow it, so the tunnel stays up and
-//! only the engine's connections are redialled. With no physical network at
-//! all, a server address is made unreachable instead: falling back into the
-//! tunnel would loop the engine's traffic through itself.
+//! engines must still reach the Ket server directly, and the user's bypass
+//! list must not use the tunnel, so each such destination gets a route
+//! through the current physical default route. When the device changes
+//! networks (Wi-Fi to Ethernet, a new hotspot), that default route changes
+//! and these routes follow it, so the tunnel stays up and only the engine's
+//! connections are redialled. With no physical network at all, a destination
+//! is made unreachable instead: falling back into the tunnel would loop the
+//! engine's traffic through itself, or send bypassed traffic through the
+//! tunnel. A destination inside a network the device is directly attached to
+//! (the home network, say) is left to that network's own route.
 
 use std::{collections::BTreeMap, net::IpAddr};
+
+use ket_tunnel_protocol::IpPrefix;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum Family {
@@ -40,7 +46,14 @@ pub(crate) struct DefaultRoute {
     pub metric: u32,
 }
 
-/// Where one server address is sent.
+/// A network the device is directly attached to, without a gateway.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OnLinkNetwork {
+    pub prefix: IpPrefix,
+    pub interface: String,
+}
+
+/// Where one destination is sent.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ServerPath {
     Via(DefaultRoute),
@@ -49,14 +62,14 @@ pub(crate) enum ServerPath {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RouteAction {
-    /// Installs `path` for `server`, taking the place of `replacing`.
+    /// Installs `path` for `destination`, taking the place of `replacing`.
     Install {
-        server: IpAddr,
+        destination: IpPrefix,
         path: ServerPath,
         replacing: Option<ServerPath>,
     },
     Remove {
-        server: IpAddr,
+        destination: IpPrefix,
         path: ServerPath,
     },
 }
@@ -74,22 +87,36 @@ pub(crate) fn best_default<'a>(
         .min_by_key(|route| (route.metric, route.interface_index))
 }
 
-/// What to change so every server follows the current default route.
+/// What to change so every destination follows the current default route,
+/// or is left to the directly attached network that holds it.
 pub(crate) fn plan(
     routes: &[DefaultRoute],
-    servers: &[IpAddr],
-    applied: &BTreeMap<IpAddr, ServerPath>,
+    on_link: &[OnLinkNetwork],
+    destinations: &[IpPrefix],
+    applied: &BTreeMap<IpPrefix, ServerPath>,
     tunnel_interface: &str,
 ) -> Vec<RouteAction> {
-    servers
+    destinations
         .iter()
-        .filter_map(|server| {
-            let desired = best_default(routes, Family::of(server), tunnel_interface)
-                .cloned()
-                .map_or(ServerPath::Unreachable, ServerPath::Via);
-            let current = applied.get(server);
+        .filter_map(|destination| {
+            let current = applied.get(destination);
+            let attached = on_link.iter().any(|network| {
+                network.interface != tunnel_interface
+                    && network.prefix.length() > 0
+                    && network.prefix.contains(destination)
+            });
+            if attached {
+                return current.map(|path| RouteAction::Remove {
+                    destination: *destination,
+                    path: path.clone(),
+                });
+            }
+            let desired =
+                best_default(routes, Family::of(&destination.address()), tunnel_interface)
+                    .cloned()
+                    .map_or(ServerPath::Unreachable, ServerPath::Via);
             (current != Some(&desired)).then(|| RouteAction::Install {
-                server: *server,
+                destination: *destination,
                 path: desired,
                 replacing: current.cloned(),
             })
@@ -98,11 +125,11 @@ pub(crate) fn plan(
 }
 
 /// Removes every route Ket installed.
-pub(crate) fn release(applied: &BTreeMap<IpAddr, ServerPath>) -> Vec<RouteAction> {
+pub(crate) fn release(applied: &BTreeMap<IpPrefix, ServerPath>) -> Vec<RouteAction> {
     applied
         .iter()
-        .map(|(server, path)| RouteAction::Remove {
-            server: *server,
+        .map(|(destination, path)| RouteAction::Remove {
+            destination: *destination,
             path: path.clone(),
         })
         .collect()
@@ -122,7 +149,7 @@ mod tests {
         }
     }
 
-    fn ip(value: &str) -> IpAddr {
+    fn ip(value: &str) -> IpPrefix {
         value.parse().unwrap()
     }
 
@@ -147,18 +174,22 @@ mod tests {
         let servers = [ip("203.0.113.5"), ip("198.51.100.7")];
         let mut applied = BTreeMap::new();
 
-        let first = plan(std::slice::from_ref(&wifi), &servers, &applied, "ket0");
+        let first = plan(std::slice::from_ref(&wifi), &[], &servers, &applied, "ket0");
         assert_eq!(first.len(), 2);
         for action in &first {
-            let RouteAction::Install { server, path, .. } = action else {
+            let RouteAction::Install {
+                destination, path, ..
+            } = action
+            else {
                 panic!("expected an install");
             };
-            applied.insert(*server, path.clone());
+            applied.insert(*destination, path.clone());
         }
-        assert!(plan(std::slice::from_ref(&wifi), &servers, &applied, "ket0").is_empty());
+        assert!(plan(std::slice::from_ref(&wifi), &[], &servers, &applied, "ket0").is_empty());
 
         let moved = plan(
             &[wifi.clone(), ethernet.clone()],
+            &[],
             &servers,
             &applied,
             "ket0",
@@ -166,7 +197,7 @@ mod tests {
         assert_eq!(
             moved[0],
             RouteAction::Install {
-                server: ip("203.0.113.5"),
+                destination: ip("203.0.113.5"),
                 path: ServerPath::Via(ethernet),
                 replacing: Some(ServerPath::Via(wifi)),
             }
@@ -179,17 +210,23 @@ mod tests {
         let tunnel = route(Family::V4, "ket0", "198.18.0.1", 0);
         let v6 = route(Family::V6, "eth0", "fe80::1", 100);
         let servers = [ip("203.0.113.5"), ip("2001:db8::5")];
-        let actions = plan(&[tunnel, v6.clone()], &servers, &BTreeMap::new(), "ket0");
+        let actions = plan(
+            &[tunnel, v6.clone()],
+            &[],
+            &servers,
+            &BTreeMap::new(),
+            "ket0",
+        );
         assert_eq!(
             actions,
             [
                 RouteAction::Install {
-                    server: ip("203.0.113.5"),
+                    destination: ip("203.0.113.5"),
                     path: ServerPath::Unreachable,
                     replacing: None,
                 },
                 RouteAction::Install {
-                    server: ip("2001:db8::5"),
+                    destination: ip("2001:db8::5"),
                     path: ServerPath::Via(v6),
                     replacing: None,
                 },
@@ -208,15 +245,67 @@ mod tests {
             release(&applied),
             [
                 RouteAction::Remove {
-                    server: ip("198.51.100.7"),
+                    destination: ip("198.51.100.7"),
                     path: ServerPath::Unreachable,
                 },
                 RouteAction::Remove {
-                    server: ip("203.0.113.5"),
+                    destination: ip("203.0.113.5"),
                     path: ServerPath::Via(wifi),
                 },
             ]
         );
         assert!(release(&BTreeMap::new()).is_empty());
+    }
+
+    #[test]
+    fn networks_follow_the_default_route_unless_the_device_is_attached_to_them() {
+        let wifi = route(Family::V4, "wlan0", "192.168.1.1", 600);
+        let on_link = [
+            OnLinkNetwork {
+                prefix: ip("192.168.1.0/24"),
+                interface: "wlan0".to_owned(),
+            },
+            // The tunnel's own network never counts.
+            OnLinkNetwork {
+                prefix: ip("198.18.0.0/15"),
+                interface: "ket0".to_owned(),
+            },
+        ];
+        let destinations = [ip("192.168.1.20"), ip("198.18.5.0/24"), ip("10.20.0.0/16")];
+        let actions = plan(
+            std::slice::from_ref(&wifi),
+            &on_link,
+            &destinations,
+            &BTreeMap::new(),
+            "ket0",
+        );
+        let installed = actions
+            .iter()
+            .map(|action| match action {
+                RouteAction::Install { destination, .. } => destination.to_string(),
+                RouteAction::Remove { .. } => panic!("nothing to remove"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(installed, ["198.18.5.0/24", "10.20.0.0/16"]);
+
+        // Joining the network that holds a destination hands it back.
+        let applied = BTreeMap::from([(ip("10.20.0.0/16"), ServerPath::Via(wifi.clone()))]);
+        let office = OnLinkNetwork {
+            prefix: ip("10.20.0.0/16"),
+            interface: "eth0".to_owned(),
+        };
+        assert_eq!(
+            plan(
+                std::slice::from_ref(&wifi),
+                std::slice::from_ref(&office),
+                &[ip("10.20.0.0/16")],
+                &applied,
+                "ket0"
+            ),
+            [RouteAction::Remove {
+                destination: ip("10.20.0.0/16"),
+                path: ServerPath::Via(wifi),
+            }]
+        );
     }
 }

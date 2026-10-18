@@ -14,4 +14,6 @@ data class ConnectionOptions(
     val splitTlsHello: Boolean = false,
     /** Protocols Automatic leaves out; choosing one by hand still uses it. */
     val automaticExcluded: Set<KetProtocol> = emptySet(),
+    /** Addresses and networks reached directly, outside the tunnel, in their stored form. */
+    val bypass: List<String> = emptyList(),
 )

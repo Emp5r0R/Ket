@@ -189,9 +189,12 @@ impl TransportAdapter for XrayAdapter {
             return Err(error);
         }
 
-        let mut bridge =
-            self.bridge
-                .start(socks_port, &probe.resolved_addresses, &transport.profile.id)?;
+        let mut bridge = self.bridge.start(
+            socks_port,
+            &probe.resolved_addresses,
+            &options.bypass,
+            &transport.profile.id,
+        )?;
         if let Err(error) = wait_until_stable(
             &mut xray,
             "Xray",
@@ -781,6 +784,7 @@ mod tests {
     fn splitting_the_tls_greeting_adds_a_fragment_dialer_only_when_asked() {
         let split = ConnectOptions {
             split_tls_hello: true,
+            ..ConnectOptions::default()
         };
         for transport in [test_transport(), test_xhttp_transport()] {
             let address = "203.0.113.9".parse().expect("test IP");
@@ -841,7 +845,10 @@ mod tests {
                     &transport,
                     "203.0.113.9".parse().expect("test IP"),
                     10808,
-                    &ConnectOptions { split_tls_hello },
+                    &ConnectOptions {
+                        split_tls_hello,
+                        ..ConnectOptions::default()
+                    },
                 )
                 .expect("render config");
                 let path = std::env::temp_dir().join(format!(
@@ -909,7 +916,10 @@ mod tests {
             &transport,
             "127.0.0.1".parse().expect("loopback"),
             socks_port,
-            &ConnectOptions { split_tls_hello },
+            &ConnectOptions {
+                split_tls_hello,
+                ..ConnectOptions::default()
+            },
         )
         .expect("render config");
         let path = std::env::temp_dir().join(format!(

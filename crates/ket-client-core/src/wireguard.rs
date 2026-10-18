@@ -118,7 +118,7 @@ impl TransportAdapter for WireGuardTlsAdapter {
         &self,
         transport: &SessionTransport,
         probe: &ProbeReport,
-        _options: &ConnectOptions,
+        options: &ConnectOptions,
     ) -> Result<StartedTunnel, ClientError> {
         validate_transport(transport)?;
         let server = probe.resolved_addresses.first().ok_or_else(|| {
@@ -225,9 +225,12 @@ impl TransportAdapter for WireGuardTlsAdapter {
             return Err(error);
         }
 
-        let mut bridge =
-            self.bridge
-                .start(socks_port, &probe.resolved_addresses, &transport.profile.id)?;
+        let mut bridge = self.bridge.start(
+            socks_port,
+            &probe.resolved_addresses,
+            &options.bypass,
+            &transport.profile.id,
+        )?;
         if let Err(error) = wait_until_three_stable(
             &mut xray,
             "Xray WireGuard",

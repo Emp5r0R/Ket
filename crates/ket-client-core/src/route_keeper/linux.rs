@@ -8,7 +8,11 @@ use std::{
     process::{Command, Stdio},
 };
 
-use super::{DefaultRoute, Family, NetworkKind, RouteAction, RouteSystem, ServerPath};
+use ket_tunnel_protocol::IpPrefix;
+
+use super::{
+    DefaultRoute, Family, NetworkKind, OnLinkNetwork, RouteAction, RouteSystem, ServerPath,
+};
 
 /// Marks Ket's routes (`proto 75`) so leftovers can be found and removed.
 const ROUTE_PROTOCOL: &str = "75";
@@ -105,6 +109,14 @@ impl RouteSystem for LinuxRoutes {
         read_default_routes()
     }
 
+    fn on_link_networks(&mut self) -> io::Result<Vec<OnLinkNetwork>> {
+        let mut networks = parse_ipv4_on_link(&fs::read_to_string("/proc/net/route")?);
+        if let Ok(table) = fs::read_to_string("/proc/net/ipv6_route") {
+            networks.extend(parse_ipv6_on_link(&table));
+        }
+        Ok(networks)
+    }
+
     fn apply(&mut self, action: &RouteAction) -> io::Result<()> {
         self.ip(&arguments(action))
     }
@@ -123,19 +135,22 @@ fn strings(values: &[&str]) -> Vec<String> {
 
 /// The `ip` arguments for one action.
 fn arguments(action: &RouteAction) -> Vec<String> {
-    let (verb, server, path) = match action {
-        RouteAction::Install { server, path, .. } => ("replace", server, path),
-        RouteAction::Remove { server, path } => ("del", server, path),
+    let (verb, destination, path) = match action {
+        RouteAction::Install {
+            destination, path, ..
+        } => ("replace", destination, path),
+        RouteAction::Remove { destination, path } => ("del", destination, path),
     };
-    let (family, prefix) = match server {
-        IpAddr::V4(_) => ("-4", 32),
-        IpAddr::V6(_) => ("-6", 128),
-    };
+    let family = if destination.is_ipv4() { "-4" } else { "-6" };
     let mut arguments = strings(&[family, "route", verb]);
     if matches!(path, ServerPath::Unreachable) {
         arguments.push("unreachable".to_owned());
     }
-    arguments.push(format!("{server}/{prefix}"));
+    arguments.push(format!(
+        "{}/{}",
+        destination.address(),
+        destination.length()
+    ));
     if let (ServerPath::Via(route), "replace") = (path, verb) {
         if let Some(gateway) = route.gateway {
             arguments.extend(["via".to_owned(), gateway.to_string()]);
@@ -166,6 +181,66 @@ fn parse_ipv4_routes(table: &str) -> Vec<DefaultRoute> {
                 gateway: (flags & RTF_GATEWAY != 0)
                     .then(|| IpAddr::V4(Ipv4Addr::from(gateway.swap_bytes()))),
                 metric: fields.get(6)?.parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+/// Directly attached IPv4 networks in `/proc/net/route`: up, no gateway, not
+/// a default, and not one of Ket's own routes.
+fn parse_ipv4_on_link(table: &str) -> Vec<OnLinkNetwork> {
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let hex = |index: usize| u32::from_str_radix(fields.get(index)?, 16).ok();
+            let (destination, flags, mask) = (hex(1)?, hex(3)?, hex(7)?);
+            if mask == 0
+                || flags & RTF_UP == 0
+                || flags & (RTF_GATEWAY | RTF_REJECT) != 0
+                || *fields.get(6)? == ROUTE_METRIC
+            {
+                return None;
+            }
+            Some(OnLinkNetwork {
+                prefix: IpPrefix::new(
+                    IpAddr::V4(Ipv4Addr::from(destination.swap_bytes())),
+                    mask.count_ones() as u8,
+                )?,
+                interface: (*fields.first()?).to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// Directly attached IPv6 networks in `/proc/net/ipv6_route`.
+fn parse_ipv6_on_link(table: &str) -> Vec<OnLinkNetwork> {
+    table
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() < 10 {
+                return None;
+            }
+            let destination = u128::from_str_radix(fields[0], 16).ok()?;
+            let prefix = u8::from_str_radix(fields[1], 16).ok()?;
+            let next_hop = u128::from_str_radix(fields[4], 16).ok()?;
+            let metric = u32::from_str_radix(fields[5], 16).ok()?;
+            let flags = u32::from_str_radix(fields[8], 16).ok()?;
+            let interface = fields[9];
+            if prefix == 0
+                || next_hop != 0
+                || flags & RTF_UP == 0
+                || flags & (RTF_GATEWAY | RTF_REJECT) != 0
+                || interface == "lo"
+                || metric.to_string() == ROUTE_METRIC
+            {
+                return None;
+            }
+            Some(OnLinkNetwork {
+                prefix: IpPrefix::new(IpAddr::V6(Ipv6Addr::from(destination)), prefix)?,
+                interface: interface.to_owned(),
             })
         })
         .collect()
@@ -287,10 +362,10 @@ IP address       HW type     Flags       HW address            Mask     Device
             gateway: Some("192.168.1.1".parse().unwrap()),
             metric: 600,
         };
-        let server: IpAddr = "203.0.113.5".parse().unwrap();
+        let server: IpPrefix = "203.0.113.5".parse().unwrap();
         assert_eq!(
             arguments(&RouteAction::Install {
-                server,
+                destination: server,
                 path: ServerPath::Via(wifi.clone()),
                 replacing: None,
             })
@@ -299,7 +374,7 @@ IP address       HW type     Flags       HW address            Mask     Device
         );
         assert_eq!(
             arguments(&RouteAction::Install {
-                server: "2001:db8::5".parse().unwrap(),
+                destination: "2001:db8::5".parse().unwrap(),
                 path: ServerPath::Unreachable,
                 replacing: Some(ServerPath::Via(wifi.clone())),
             })
@@ -308,11 +383,20 @@ IP address       HW type     Flags       HW address            Mask     Device
         );
         assert_eq!(
             arguments(&RouteAction::Remove {
-                server,
-                path: ServerPath::Via(wifi),
+                destination: server,
+                path: ServerPath::Via(wifi.clone()),
             })
             .join(" "),
             "-4 route del 203.0.113.5/32 metric 23 proto 75"
+        );
+        assert_eq!(
+            arguments(&RouteAction::Install {
+                destination: "10.20.0.0/16".parse().unwrap(),
+                path: ServerPath::Via(wifi),
+                replacing: None,
+            })
+            .join(" "),
+            "-4 route replace 10.20.0.0/16 via 192.168.1.1 dev wlan0 metric 23 proto 75"
         );
     }
 
@@ -322,5 +406,35 @@ IP address       HW type     Flags       HW address            Mask     Device
         assert_eq!(kind_from("wwan0", false, true), NetworkKind::Cellular);
         assert_eq!(kind_from("enp3s0", false, true), NetworkKind::Ethernet);
         assert_eq!(kind_from("docker0", false, false), NetworkKind::Other);
+    }
+
+    #[test]
+    fn attached_networks_are_read_without_defaults_gateways_or_ket_routes() {
+        let table = format!(
+            "{IPV4}wlan0\t050071CB\t0101A8C0\t0003\t0\t0\t23\tFFFFFFFF\t0\t0\t0\n\
+             wlan0\t000014AC\t00000000\t0001\t0\t0\t23\t0000FFFF\t0\t0\t0\n"
+        );
+        let networks = parse_ipv4_on_link(&table);
+        assert_eq!(
+            networks,
+            [
+                OnLinkNetwork {
+                    prefix: "0.0.0.0/1".parse().unwrap(),
+                    interface: "ket0".to_owned(),
+                },
+                OnLinkNetwork {
+                    prefix: "192.168.1.0/24".parse().unwrap(),
+                    interface: "eth0".to_owned(),
+                },
+            ]
+        );
+        let networks = parse_ipv6_on_link(IPV6);
+        assert_eq!(
+            networks,
+            [OnLinkNetwork {
+                prefix: "fe80::/64".parse().unwrap(),
+                interface: "wlan0".to_owned(),
+            }]
+        );
     }
 }

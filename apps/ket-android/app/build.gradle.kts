@@ -82,6 +82,8 @@ android { namespace = "com.ket.android"; compileSdk = 36
             resources.srcDir(rootProject.layout.projectDirectory.dir("../../crates/ket-invite/tests/vectors"))
             // Diagnostic redaction vectors are shared with the desktop app.
             resources.srcDir(rootProject.layout.projectDirectory.dir("../vectors"))
+            // Bypass entry rules are owned by the Rust tunnel contract.
+            resources.srcDir(rootProject.layout.projectDirectory.dir("../../crates/ket-tunnel-protocol/tests/vectors"))
         }
     }
     packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libsslocal.so", "**/libxray.so", "**/libwstunnel.so", "**/libopenvpn.so", "**/libovpnexec.so") } }

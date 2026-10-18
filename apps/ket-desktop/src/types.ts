@@ -92,6 +92,8 @@ export interface ConnectOptions {
   splitTlsHello: boolean;
   /** Protocols Automatic leaves out; an explicit choice still uses them. */
   automaticExcluded: ProtocolId[];
+  /** Addresses and networks reached directly, outside the tunnel. */
+  bypass: string[];
 }
 
 export interface ClientSnapshot {

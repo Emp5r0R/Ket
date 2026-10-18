@@ -18,12 +18,17 @@ class ConnectionOptionsStore(context: Context) {
             .orEmpty()
             .mapNotNull(KetProtocol::fromWireName)
             .toSet(),
+        bypass = BypassEntries.valid(
+            preferences.getString(BYPASS_KEY, null).orEmpty().lines().filter(String::isNotBlank),
+        ).map(BypassPrefix::toString),
     )
 
     fun save(options: ConnectionOptions) {
         preferences.edit {
             putBoolean(SPLIT_TLS_HELLO_KEY, options.splitTlsHello)
             putStringSet(AUTOMATIC_EXCLUDED_KEY, options.automaticExcluded.map { it.wireName }.toSet())
+            // One entry per line keeps the order the person built the list in.
+            if (options.bypass.isEmpty()) remove(BYPASS_KEY) else putString(BYPASS_KEY, options.bypass.joinToString("\n"))
         }
     }
 
@@ -31,5 +36,6 @@ class ConnectionOptionsStore(context: Context) {
         const val PREFERENCES = "ket_connection_options"
         const val SPLIT_TLS_HELLO_KEY = "split_tls_hello"
         const val AUTOMATIC_EXCLUDED_KEY = "automatic_excluded"
+        const val BYPASS_KEY = "bypass"
     }
 }

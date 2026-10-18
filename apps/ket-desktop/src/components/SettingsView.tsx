@@ -16,6 +16,7 @@ import { compareVersions } from "../lib/updates";
 import type { ThemePreference } from "../App";
 import { protocolInfo, type ProtocolId } from "../lib/protocols";
 import type { DesktopState } from "../types";
+import { BypassListEditor } from "./BypassListEditor";
 
 interface SettingsViewProps {
   state: DesktopState;
@@ -28,6 +29,9 @@ interface SettingsViewProps {
   onSplitTlsHelloChange: (enabled: boolean) => void;
   automaticExcluded: ProtocolId[];
   onAutomaticProtocolChange: (protocol: ProtocolId, included: boolean) => void;
+  bypass: string[];
+  checkBypassEntry: (entry: string) => Promise<string>;
+  onBypassChange: (entries: string[]) => void;
   onForget: () => Promise<void>;
 }
 
@@ -48,6 +52,9 @@ export function SettingsView({
   onSplitTlsHelloChange,
   automaticExcluded,
   onAutomaticProtocolChange,
+  bypass,
+  checkBypassEntry,
+  onBypassChange,
   onForget,
 }: SettingsViewProps) {
   const offered = [
@@ -171,6 +178,7 @@ export function SettingsView({
             ))}
           </fieldset>
         ) : null}
+        <BypassListEditor entries={bypass} check={checkBypassEntry} onChange={onBypassChange} />
       </section>
 
       <section className="settings-section danger-section" aria-labelledby="access-heading">

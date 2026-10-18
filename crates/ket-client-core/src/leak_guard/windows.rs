@@ -29,6 +29,8 @@ use windows_sys::{
     core::GUID,
 };
 
+use ket_tunnel_protocol::IpPrefix;
+
 use super::plan::{Action, Condition, Family, Rule, base_rules, tunnel_rules};
 
 /// The sublayer holding Ket's filters; dynamic, so it leaves with the session.
@@ -43,7 +45,7 @@ unsafe impl Send for PlatformGuard {}
 unsafe impl Sync for PlatformGuard {}
 
 impl PlatformGuard {
-    pub(crate) fn engage(servers: &[IpAddr]) -> io::Result<Self> {
+    pub(crate) fn engage(servers: &[IpAddr], bypass: &[IpPrefix]) -> io::Result<Self> {
         let mut session = FWPM_SESSION0 {
             flags: FWPM_SESSION_FLAG_DYNAMIC,
             ..Default::default()
@@ -70,7 +72,7 @@ impl PlatformGuard {
             let mut name = wide("Ket leak guard");
             sublayer.displayData.name = name.as_mut_ptr();
             check(unsafe { FwpmSubLayerAdd0(engine, &sublayer, ptr::null_mut()) })?;
-            for rule in base_rules(servers) {
+            for rule in base_rules(servers, bypass) {
                 add_filter(engine, &rule, None)?;
             }
             Ok(())
@@ -268,7 +270,7 @@ mod tests {
         assert!(system_lookup_answers(), "precondition: Windows resolves");
         let ipv6 = connect(PUBLIC_V6).is_ok();
 
-        let mut guard = PlatformGuard::engage(&[]).expect("engage the guard");
+        let mut guard = PlatformGuard::engage(&[], &[]).expect("engage the guard");
         assert!(!direct_udp_lookup_answers(), "UDP DNS left the computer");
         assert_eq!(
             connect(PUBLIC_RESOLVER).unwrap_err().kind(),
@@ -308,7 +310,7 @@ mod tests {
     #[test]
     #[ignore = "needs Administrator; run by Windows CI"]
     fn a_server_address_stays_reachable_under_the_guard() {
-        let guard = PlatformGuard::engage(&["1.1.1.1".parse().unwrap()]).expect("engage");
+        let guard = PlatformGuard::engage(&["1.1.1.1".parse().unwrap()], &[]).expect("engage");
         assert!(connect(PUBLIC_RESOLVER).is_ok(), "the server was blocked");
         drop(guard);
     }

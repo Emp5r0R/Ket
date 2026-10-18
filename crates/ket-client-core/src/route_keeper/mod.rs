@@ -1,5 +1,6 @@
-//! Keeps the engines' direct routes to the Ket server on the current
-//! physical network while a full-route tunnel is up (see [`plan`]).
+//! Keeps the engines' direct routes to the Ket server, and the user's bypass
+//! list, on the current physical network while a full-route tunnel is up
+//! (see [`plan`]).
 //!
 //! The keeper installs the routes before the bridge starts, checks the
 //! routing table every [`REFRESH_INTERVAL`], and removes what it installed
@@ -22,11 +23,12 @@ use std::{
     time::Duration,
 };
 
+use ket_tunnel_protocol::IpPrefix;
 use tokio::{sync::watch, task::JoinHandle};
 
 use crate::NetworkReport;
 
-pub(crate) use plan::{DefaultRoute, Family, RouteAction, ServerPath};
+pub(crate) use plan::{DefaultRoute, Family, OnLinkNetwork, RouteAction, ServerPath};
 
 /// How often the routing table is checked for a network change.
 pub(crate) const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -34,6 +36,9 @@ pub(crate) const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 /// The routing table, as the keeper needs it.
 pub(crate) trait RouteSystem: Send + 'static {
     fn default_routes(&mut self) -> io::Result<Vec<DefaultRoute>>;
+    /// Networks the device is directly attached to, leaving out Ket's own
+    /// routes.
+    fn on_link_networks(&mut self) -> io::Result<Vec<OnLinkNetwork>>;
     fn apply(&mut self, action: &RouteAction) -> io::Result<()>;
     /// Removes routes a previous Ket process left behind.
     fn clear_stale(&mut self) -> io::Result<()>;
@@ -41,32 +46,39 @@ pub(crate) trait RouteSystem: Send + 'static {
 
 struct KeeperState {
     system: Box<dyn RouteSystem>,
-    servers: Vec<IpAddr>,
+    destinations: Vec<IpPrefix>,
     tunnel_interface: String,
-    applied: BTreeMap<IpAddr, ServerPath>,
+    applied: BTreeMap<IpPrefix, ServerPath>,
     report: watch::Sender<NetworkReport>,
 }
 
 impl KeeperState {
     fn refresh(&mut self) -> io::Result<()> {
         let routes = self.system.default_routes()?;
+        let on_link = self.system.on_link_networks()?;
         let actions = plan::plan(
             &routes,
-            &self.servers,
+            &on_link,
+            &self.destinations,
             &self.applied,
             &self.tunnel_interface,
         );
         let mut moved = false;
         for action in actions {
             self.system.apply(&action)?;
-            if let RouteAction::Install {
-                server,
-                path,
-                replacing,
-            } = action
-            {
-                moved |= replacing.is_some();
-                self.applied.insert(server, path);
+            match action {
+                RouteAction::Install {
+                    destination,
+                    path,
+                    replacing,
+                } => {
+                    moved |= replacing.is_some();
+                    self.applied.insert(destination, path);
+                }
+                RouteAction::Remove { destination, .. } => {
+                    moved = true;
+                    self.applied.remove(&destination);
+                }
             }
         }
         let offline = !self.applied.is_empty()
@@ -92,12 +104,17 @@ pub(crate) struct RouteKeeper {
 }
 
 impl RouteKeeper {
-    /// Installs a direct route for every server through the current physical
-    /// network and keeps it there. Fails when the routes cannot be installed.
-    pub(crate) fn engage(servers: &[IpAddr], tunnel_interface: &str) -> io::Result<Self> {
+    /// Installs a direct route for every server and every bypassed network
+    /// through the current physical network and keeps them there. Fails when
+    /// the routes cannot be installed.
+    pub(crate) fn engage(
+        servers: &[IpAddr],
+        bypass: &[IpPrefix],
+        tunnel_interface: &str,
+    ) -> io::Result<Self> {
         Self::engage_with(
             platform_system(),
-            servers,
+            &destinations(servers, bypass),
             tunnel_interface,
             REFRESH_INTERVAL,
         )
@@ -105,7 +122,7 @@ impl RouteKeeper {
 
     fn engage_with(
         mut system: Box<dyn RouteSystem>,
-        servers: &[IpAddr],
+        destinations: &[IpPrefix],
         tunnel_interface: &str,
         interval: Duration,
     ) -> io::Result<Self> {
@@ -113,7 +130,7 @@ impl RouteKeeper {
         let (report, report_rx) = watch::channel(NetworkReport::default());
         let mut state = KeeperState {
             system,
-            servers: servers.to_vec(),
+            destinations: destinations.to_vec(),
             tunnel_interface: tunnel_interface.to_owned(),
             applied: BTreeMap::new(),
             report,
@@ -123,7 +140,7 @@ impl RouteKeeper {
             return Err(error);
         }
         let state = Arc::new(Mutex::new(state));
-        let task = (!servers.is_empty()).then(|| {
+        let task = (!destinations.is_empty()).then(|| {
             let state = Arc::clone(&state);
             tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
@@ -160,6 +177,21 @@ impl Drop for RouteKeeper {
             release(&mut state);
         }
     }
+}
+
+/// Servers as host routes, then the bypass list, each once.
+fn destinations(servers: &[IpAddr], bypass: &[IpPrefix]) -> Vec<IpPrefix> {
+    let mut destinations = servers
+        .iter()
+        .copied()
+        .map(IpPrefix::host)
+        .collect::<Vec<_>>();
+    for prefix in bypass {
+        if !destinations.contains(prefix) {
+            destinations.push(*prefix);
+        }
+    }
+    destinations
 }
 
 fn release(state: &mut KeeperState) {
@@ -272,6 +304,9 @@ fn platform_system() -> Box<dyn RouteSystem> {
         fn default_routes(&mut self) -> io::Result<Vec<DefaultRoute>> {
             Ok(Vec::new())
         }
+        fn on_link_networks(&mut self) -> io::Result<Vec<OnLinkNetwork>> {
+            Ok(Vec::new())
+        }
         fn apply(&mut self, _action: &RouteAction) -> io::Result<()> {
             Ok(())
         }
@@ -289,7 +324,8 @@ mod tests {
     #[derive(Default)]
     struct Table {
         routes: Vec<DefaultRoute>,
-        installed: BTreeMap<IpAddr, ServerPath>,
+        on_link: Vec<OnLinkNetwork>,
+        installed: BTreeMap<IpPrefix, ServerPath>,
         log: Vec<String>,
         fail_installs: bool,
     }
@@ -301,19 +337,24 @@ mod tests {
         fn default_routes(&mut self) -> io::Result<Vec<DefaultRoute>> {
             Ok(self.0.lock().unwrap().routes.clone())
         }
+        fn on_link_networks(&mut self) -> io::Result<Vec<OnLinkNetwork>> {
+            Ok(self.0.lock().unwrap().on_link.clone())
+        }
         fn apply(&mut self, action: &RouteAction) -> io::Result<()> {
             let mut table = self.0.lock().unwrap();
             match action {
-                RouteAction::Install { server, path, .. } => {
+                RouteAction::Install {
+                    destination, path, ..
+                } => {
                     if table.fail_installs {
                         return Err(io::Error::other("refused"));
                     }
-                    table.installed.insert(*server, path.clone());
-                    table.log.push(format!("install {server}"));
+                    table.installed.insert(*destination, path.clone());
+                    table.log.push(format!("install {destination}"));
                 }
-                RouteAction::Remove { server, .. } => {
-                    table.installed.remove(server);
-                    table.log.push(format!("remove {server}"));
+                RouteAction::Remove { destination, .. } => {
+                    table.installed.remove(destination);
+                    table.log.push(format!("remove {destination}"));
                 }
             }
             Ok(())
@@ -338,7 +379,7 @@ mod tests {
     async fn the_keeper_follows_network_changes_and_cleans_up_when_dropped() {
         let system = FakeSystem::default();
         system.0.lock().unwrap().routes = vec![route("wlan0", 600)];
-        let server: IpAddr = "203.0.113.5".parse().unwrap();
+        let server: IpPrefix = "203.0.113.5".parse().unwrap();
         let keeper = RouteKeeper::engage_with(
             Box::new(system.clone()),
             &[server],
@@ -408,5 +449,22 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(system.0.lock().unwrap().installed.is_empty());
+    }
+
+    #[test]
+    fn servers_and_the_bypass_list_are_kept_once_each() {
+        let servers = [
+            "203.0.113.5".parse().unwrap(),
+            "2001:db8::5".parse().unwrap(),
+        ];
+        let bypass = [
+            "203.0.113.5".parse().unwrap(),
+            "10.20.0.0/16".parse().unwrap(),
+        ];
+        let kept = destinations(&servers, &bypass)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(kept, ["203.0.113.5", "2001:db8::5", "10.20.0.0/16"]);
     }
 }

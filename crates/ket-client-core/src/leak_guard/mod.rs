@@ -16,6 +16,8 @@ mod windows;
 
 use std::{io, net::IpAddr};
 
+use ket_tunnel_protocol::IpPrefix;
+
 pub(crate) struct LeakGuard {
     #[cfg(windows)]
     platform: windows::PlatformGuard,
@@ -24,13 +26,14 @@ pub(crate) struct LeakGuard {
 
 impl LeakGuard {
     /// Blocks lookups outside the tunnel before the tunnel exists; `servers`
-    /// are the addresses the engines must still reach directly.
-    pub(crate) fn engage(servers: &[IpAddr]) -> io::Result<Self> {
+    /// are the addresses the engines must still reach directly, and `bypass`
+    /// the networks the user keeps outside the tunnel.
+    pub(crate) fn engage(servers: &[IpAddr], bypass: &[IpPrefix]) -> io::Result<Self> {
         #[cfg(not(windows))]
-        let _ = servers;
+        let _ = (servers, bypass);
         Ok(Self {
             #[cfg(windows)]
-            platform: windows::PlatformGuard::engage(servers)?,
+            platform: windows::PlatformGuard::engage(servers, bypass)?,
             admitted: false,
         })
     }

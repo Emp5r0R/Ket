@@ -1,5 +1,7 @@
 package com.ket.android
 
+import com.ket.android.connection.BypassEntries
+import com.ket.android.connection.BypassCheck
 import java.net.InetAddress
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,6 +37,31 @@ class VpnRouteTest {
         )
 
         assertEquals(31, routes.size)
+    }
+
+    @Test
+    fun `bypassed networks stay outside the route alongside the servers`() {
+        val excluded = listOf("192.168.1.0/24", "203.0.113.9").map {
+            (BypassEntries.check(it) as BypassCheck.Accepted).prefix
+        }
+        val routes = routesExcludingPrefixes(excluded)
+
+        listOf("192.168.1.0", "192.168.1.77", "192.168.1.255", "203.0.113.9")
+            .map(InetAddress::getByName)
+            .forEach { address -> assertFalse("$address was routed", routes.any { it.contains(address) }) }
+        listOf("0.0.0.0", "192.168.0.255", "192.168.2.0", "203.0.113.8", "255.255.255.255")
+            .map(InetAddress::getByName)
+            .forEach { sample -> assertTrue("$sample was not routed", routes.any { it.contains(sample) }) }
+        // One route beside each level of the two paths: four shared levels, then 19 more to
+        // the /24 and 27 more to the host after they part at the fifth.
+        assertEquals(4 + 19 + 27, routes.size)
+    }
+
+    @Test
+    fun `an ipv6 complement stays ipv6 where it looks like ipv4`() {
+        val routes = routesExcludingPrefixes(listOf((BypassEntries.check("2001:db8::/32") as BypassCheck.Accepted).prefix))
+        assertEquals(32, routes.size)
+        assertTrue(routes.all { it.address.address.size == 16 })
     }
 
     private fun assertComplement(server: String, samples: List<String>, expectedPrefixes: Int) {

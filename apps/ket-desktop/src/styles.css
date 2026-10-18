@@ -1627,6 +1627,89 @@ input:disabled {
   accent-color: var(--green-dark);
 }
 
+.settings-bypass {
+  display: grid;
+  gap: 10px;
+  padding: 4px 20px 16px;
+  font-size: 12px;
+}
+
+.settings-bypass-intro {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.settings-bypass-intro strong {
+  display: block;
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.settings-bypass-intro small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-bypass-add {
+  display: flex;
+  gap: 8px;
+  padding-left: 30px;
+}
+
+.settings-bypass-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: var(--input);
+  color: var(--ink);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.settings-bypass-add input::placeholder {
+  color: var(--placeholder);
+}
+
+.settings-bypass-add input[aria-invalid="true"] {
+  border-color: var(--coral);
+}
+
+.settings-bypass-refusal {
+  margin: 0;
+  padding-left: 30px;
+  color: var(--danger-ink);
+  font-size: 11px;
+}
+
+.settings-bypass-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 0 30px;
+  list-style: none;
+}
+
+.settings-bypass-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 4px 3px 10px;
+  border-radius: 6px;
+  background: var(--hover);
+}
+
+.settings-bypass-list code {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 12px;
+}
+
 .settings-toggle strong {
   display: block;
   color: var(--ink);

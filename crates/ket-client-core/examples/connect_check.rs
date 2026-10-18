@@ -3,13 +3,14 @@
 //! broker runs, then holds it until Ctrl-C or SIGTERM and disconnects.
 //!
 //!   connect_check --engines DIR --runtime DIR [--protocol NAME] [--split-tls-hello]
-//!                 [--maintain]
+//!                 [--bypass PREFIX]... [--maintain]
 //!
 //! `--engines` holds the engine binaries under their installed names
 //! (`xray`, `hysteria`, `sslocal`, `tun2proxy`, `wstunnel`, `openvpn`,
 //! `stunnel`); missing engines simply drop their transports. `--protocol`
 //! takes a contract name such as `vless_xtls_reality`; `--split-tls-hello`
-//! turns on the setting of that name; `--maintain` runs the apps' maintenance
+//! turns on the setting of that name; `--bypass` keeps an address or network
+//! outside the tunnel, as the bypass list does; `--maintain` runs the apps' maintenance
 //! loop (renewal and automatic recovery) and prints `phase=…` on every change,
 //! so a test can tell a seamless network change from a reconnect. Needs root on Linux,
 //! like the broker (Administrator on Windows). Prints `connected protocol=…` once the route is up and
@@ -21,8 +22,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ket_client_core::{
-    ConnectOptions, HttpControlPlane, Hysteria2Adapter, InviteEnrollment, KetClient,
-    OpenVpnStunnelAdapter, SelectionPolicy, Shadowsocks2022Adapter, TransportAdapter,
+    BypassList, ConnectOptions, HttpControlPlane, Hysteria2Adapter, InviteEnrollment, IpPrefix,
+    KetClient, OpenVpnStunnelAdapter, SelectionPolicy, Shadowsocks2022Adapter, TransportAdapter,
     WireGuardTlsAdapter, XrayAdapter,
 };
 use ket_core::TransportProtocol;
@@ -52,6 +53,7 @@ fn parse_options() -> Result<Options, String> {
     let mut protocol = None;
     let mut connect = ConnectOptions::default();
     let mut maintain = false;
+    let mut bypass = Vec::new();
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         let mut value = || {
@@ -70,10 +72,18 @@ fn parse_options() -> Result<Options, String> {
                 );
             }
             "--split-tls-hello" => connect.split_tls_hello = true,
+            "--bypass" => {
+                let entry = value()?;
+                bypass.push(
+                    IpPrefix::parse_bypass(&entry)
+                        .map_err(|error| format!("--bypass {entry}: {error}"))?,
+                );
+            }
             "--maintain" => maintain = true,
             other => return Err(format!("unknown option: {other}")),
         }
     }
+    connect.bypass = BypassList::new(bypass).map_err(|error| format!("--bypass: {error}"))?;
     Ok(Options {
         engines: engines.ok_or("--engines is required")?,
         runtime: runtime.ok_or("--runtime is required")?,

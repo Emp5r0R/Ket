@@ -17,6 +17,8 @@ export interface DesktopBridge {
   state(): Promise<DesktopState>;
   /** The operating system and network kind, for a diagnostic report. */
   diagnosticEnvironment(): Promise<DiagnosticEnvironment>;
+  /** Checks a bypass entry; resolves to the form it is kept in. */
+  checkBypassEntry(entry: string): Promise<string>;
   inspectInvite(invite: string): Promise<InviteDetails>;
   /** Decodes and verifies an invite QR image natively; bytes travel as a raw IPC body. */
   decodeInviteQr(image: Uint8Array): Promise<InviteDetails>;
@@ -31,6 +33,7 @@ export interface DesktopBridge {
 const tauriBridge: DesktopBridge = {
   state: () => invoke<DesktopState>("desktop_state"),
   diagnosticEnvironment: () => invoke<DiagnosticEnvironment>("diagnostic_context"),
+  checkBypassEntry: (entry) => invoke<string>("check_bypass_entry", { entry }),
   inspectInvite: (invite) => invoke<InviteDetails>("inspect_invite", { invite }),
   decodeInviteQr: (image) => invoke<InviteDetails>("decode_invite_qr", image),
   enroll: (input) =>
@@ -46,6 +49,7 @@ const tauriBridge: DesktopBridge = {
       preferredProtocol,
       splitTlsHello: options.splitTlsHello,
       automaticExcluded: options.automaticExcluded,
+      bypass: options.bypass,
     }),
   stop: () => invoke<ClientSnapshot>("stop_tunnel"),
   refresh: () => invoke<ClientSnapshot>("refresh"),
@@ -168,6 +172,14 @@ function mockBridge(): DesktopBridge {
       version: "1.2.0",
     }),
     diagnosticEnvironment: async () => ({ network: "wifi", system: "Demo" }),
+    checkBypassEntry: async (entry) => {
+      const trimmed = entry.trim();
+      // The demo accepts plain-looking entries; the app checks them in Rust.
+      if (!/^[0-9a-fA-F.:]+(\/\d{1,3})?$/.test(trimmed)) {
+        throw { code: "bypass_invalid", message: "not an IP address or network", retryable: false } satisfies ClientIssue;
+      }
+      return trimmed;
+    },
     inspectInvite: async (invite) => {
       if (!invite.startsWith("ket:invite:")) {
         throw {

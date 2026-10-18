@@ -9,6 +9,7 @@ use std::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ket_core::{Network, SessionTransport, TransportProtocol};
+use ket_tunnel_protocol::BypassList;
 use rand::{Rng, distributions::Alphanumeric};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -121,7 +122,7 @@ impl TransportAdapter for OpenVpnStunnelAdapter {
         &self,
         transport: &SessionTransport,
         probe: &ProbeReport,
-        _options: &ConnectOptions,
+        options: &ConnectOptions,
     ) -> Result<StartedTunnel, ClientError> {
         validate_transport(transport)?;
         let server = probe.resolved_addresses.first().ok_or_else(|| {
@@ -213,6 +214,7 @@ impl TransportAdapter for OpenVpnStunnelAdapter {
             management_port,
             management_password_file.path(),
             &probe.resolved_addresses,
+            &options.bypass,
         )?;
         let openvpn_config =
             EphemeralConfig::create(&self.runtime_dir, "openvpn-client", openvpn_document)
@@ -487,6 +489,7 @@ fn render_openvpn_config(
     management_port: u16,
     management_password_path: &Path,
     server_addresses: &[SocketAddr],
+    bypass: &BypassList,
 ) -> Result<Vec<u8>, ClientError> {
     validate_transport(transport)?;
     let credential = transport.credential.as_ref().expect("validated credential");
@@ -527,6 +530,19 @@ fn render_openvpn_config(
             IpAddr::V6(address) => {
                 document.push_str(&format!("route-ipv6 {address}/128 net_gateway\n"));
             }
+        }
+    }
+    // OpenVPN sends these to the gateway of the network it started on.
+    for prefix in bypass.entries() {
+        match prefix.ipv4_netmask() {
+            Some(mask) => {
+                document.push_str(&format!("route {} {mask} net_gateway\n", prefix.address()))
+            }
+            None => document.push_str(&format!(
+                "route-ipv6 {}/{} net_gateway\n",
+                prefix.address(),
+                prefix.length()
+            )),
         }
     }
     document.push_str("<ca>\n");
@@ -879,6 +895,8 @@ mod tests {
                 17500,
                 Path::new("/run/ket/management-password"),
                 &["203.0.113.9:443".parse().unwrap()],
+                &serde_json::from_value(serde_json::json!(["10.20.0.0/16", "2001:db8::/32"]))
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -895,6 +913,8 @@ mod tests {
             "redirect-gateway local def1 bypass-dhcp",
             "block-ipv6",
             "route 203.0.113.9 255.255.255.255 net_gateway",
+            "route 10.20.0.0 255.255.0.0 net_gateway",
+            "route-ipv6 2001:db8::/32 net_gateway",
             "<tls-crypt>",
             "<auth-user-pass>",
         ] {

@@ -55,6 +55,16 @@ redact() {
     | tr '\n' ' ' | cut -c1-300
 }
 
+# not_offered PROTOCOL: why a protocol the server does not offer was skipped.
+# A server runs Hysteria 2 either plain or with XOR obfuscation, never both.
+not_offered() {
+  case $1 in
+    hysteria2) printf 'not offered (this server runs Hysteria 2 with XOR obfuscation, or not at all)' ;;
+    xor_scrambled) printf 'not offered (this server runs plain Hysteria 2, or not at all)' ;;
+    *) printf 'not offered by the server' ;;
+  esac
+}
+
 record() { results+=("$(printf '%-20s %-9s %s' "$1" "$2" "$3")"); }
 
 # run_protocol PROTOCOL INVITE
@@ -83,8 +93,8 @@ run_protocol() {
       failures=$((failures + 1))
     fi
   elif grep -q 'is not available for this invite' "$client_log"; then
-    printf '  skipped: the server does not offer it\n'
-    record "$protocol" skipped 'not offered by the server'
+    printf '  skipped: %s\n' "$(not_offered "$protocol")"
+    record "$protocol" skipped "$(not_offered "$protocol")"
   else
     reason=$(grep -m 1 '^connect_check:' "$client_log" | sed 's/^connect_check: //' | redact)
     [[ -n $reason ]] || reason="no connection within $CONNECT_SECONDS s"

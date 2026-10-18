@@ -100,6 +100,7 @@ internal object AndroidConnectionDiagnostics {
                 "automatic_skips=" +
                     environment.automaticSkips.map(::sanitizeField).ifEmpty { listOf("none") }.joinToString(","),
             )
+            appendLine("bypass_entries=${environment.bypassEntries}")
             appendLine("current_phase=${snapshot.phase.name.lowercase(Locale.ROOT)}")
             appendLine("active_transport=${sanitizeField(snapshot.transportName).ifBlank { "none" }}")
             appendLine("reconnect_attempt=${snapshot.reconnectAttempt}")

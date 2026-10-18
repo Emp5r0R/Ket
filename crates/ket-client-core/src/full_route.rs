@@ -8,6 +8,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use ket_tunnel_protocol::BypassList;
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     net::TcpListener,
@@ -75,10 +76,13 @@ impl FullRouteBridge {
         }
     }
 
+    /// Starts the bridge. `bypass` networks are reached directly, outside
+    /// the tunnel, like the servers.
     pub(crate) fn start(
         &self,
         socks_port: u16,
         server_addresses: &[SocketAddr],
+        bypass: &BypassList,
         transport_id: &str,
     ) -> Result<FullRouteProcess, ClientError> {
         let dns_lease = self.dns.acquire().map_err(|_| {
@@ -94,7 +98,7 @@ impl FullRouteBridge {
             .collect::<BTreeSet<IpAddr>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let leak_guard = LeakGuard::engage(&servers).map_err(|_| {
+        let leak_guard = LeakGuard::engage(&servers, bypass.entries()).map_err(|_| {
             ClientError::transport(
                 transport_id,
                 "failed to block DNS outside the protected tunnel",
@@ -103,13 +107,14 @@ impl FullRouteBridge {
         })?;
         // Installed before the bridge routes everything into the tunnel, so
         // the engines never lose their direct path to the server.
-        let route_keeper = RouteKeeper::engage(&servers, TUNNEL_INTERFACE).map_err(|_| {
-            ClientError::transport(
-                transport_id,
-                "failed to keep the server reachable outside the protected tunnel",
-                false,
-            )
-        })?;
+        let route_keeper = RouteKeeper::engage(&servers, bypass.entries(), TUNNEL_INTERFACE)
+            .map_err(|_| {
+                ClientError::transport(
+                    transport_id,
+                    "failed to keep the server reachable outside the protected tunnel",
+                    false,
+                )
+            })?;
         let mut child = Command::new(&self.binary_path)
             .args(arguments(socks_port, server_addresses))
             .stdin(Stdio::null())
@@ -1108,7 +1113,7 @@ mod tests {
         // Ket's bridge engages the leak guard around the same tunnel.
         let state = std::env::temp_dir().join(format!("ket-leak-test-{}", std::process::id()));
         let mut bridge = FullRouteBridge::new(&binary, &state)
-            .start(proxy_port, &[], "leak-test")
+            .start(proxy_port, &[], &BypassList::default(), "leak-test")
             .unwrap();
         let started = tokio::time::Instant::now();
         while !bridge_settle_step(&mut bridge, started, "leak-test")

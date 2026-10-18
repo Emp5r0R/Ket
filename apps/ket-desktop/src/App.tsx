@@ -19,6 +19,7 @@ import { ProtocolsView } from "./components/ProtocolsView";
 import { StatStrip } from "./components/StatStrip";
 import { WorldMap } from "./components/WorldMap";
 import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
+import { loadBypass, saveBypass } from "./lib/bypass";
 import { UpdateBanner } from "./components/UpdateBanner";
 import {
   appendDiagnostic,
@@ -220,6 +221,8 @@ export default function App() {
   const splitTlsHelloRef = useRef(splitTlsHello);
   const [automaticExcluded, setAutomaticExcluded] = useState<ProtocolId[]>(loadAutomaticExcluded);
   const automaticExcludedRef = useRef(automaticExcluded);
+  const [bypass, setBypass] = useState<string[]>(loadBypass);
+  const bypassRef = useRef(bypass);
   const [protocolPreference, setProtocolPreference] = useState<ProtocolPreference>(() => {
     const saved = localStorage.getItem(PROTOCOL_KEY);
     return saved === "auto" || (saved !== null && isProtocolId(saved)) ? saved : "auto";
@@ -711,7 +714,14 @@ export default function App() {
     bridge.connect(preference === "auto" ? null : preference, {
       splitTlsHello: splitTlsHelloRef.current,
       automaticExcluded: automaticExcludedRef.current,
+      bypass: bypassRef.current,
     });
+
+  const chooseBypass = (entries: string[]) => {
+    bypassRef.current = entries;
+    setBypass(entries);
+    saveBypass(entries);
+  };
 
   const chooseAutomaticProtocol = (protocol: ProtocolId, included: boolean) => {
     const next = included
@@ -784,12 +794,14 @@ export default function App() {
     control: savedSealedControl ? "sealed" : savedNodeKey !== null ? "sealed_if_offered" : "plain",
     protocolPreference,
     automaticExcluded,
+    bypassEntries: bypass.length,
     activeTransport: state.snapshot.active_transport,
     handshakeLatencyMs: state.snapshot.handshake_latency_ms,
     reconnectAttempt: state.snapshot.reconnect_attempt,
     fallbacks: state.snapshot.fallbacks,
   }, diagnostics), [
     automaticExcluded,
+    bypass.length,
     diagnosticEnvironment,
     diagnostics,
     protocolPreference,
@@ -929,6 +941,9 @@ export default function App() {
             onSplitTlsHelloChange={chooseSplitTlsHello}
             automaticExcluded={automaticExcluded}
             onAutomaticProtocolChange={chooseAutomaticProtocol}
+            bypass={bypass}
+            checkBypassEntry={bridge.checkBypassEntry}
+            onBypassChange={chooseBypass}
             onForget={forget}
           />
         ) : null}

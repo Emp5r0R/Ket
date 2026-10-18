@@ -14,6 +14,10 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use zeroize::{Zeroize, Zeroizing};
 
+mod bypass;
+
+pub use bypass::{BypassList, IpPrefix, MAX_BYPASS_ENTRIES, PrefixError};
+
 pub const BROKER_PROTOCOL_VERSION: u16 = 1;
 pub const DEFAULT_BROKER_ADDRESS: &str = "127.0.0.1:39731";
 pub const MAX_FRAME_BYTES: usize = 128 * 1024;
@@ -48,13 +52,17 @@ pub struct HandshakeResult {
 
 /// Connection settings chosen on this device. An engine that cannot apply a
 /// setting ignores it.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ConnectOptions {
     /// Split the TLS ClientHello across several packets, so a filter that
     /// reads the server name from a single packet does not see it. Applies
     /// to the Xray transports (VLESS + REALITY and HTTPS Stealth).
     #[serde(default)]
     pub split_tls_hello: bool,
+    /// Addresses and networks reached directly, outside the tunnel, with
+    /// every transport. Older services ignore it.
+    #[serde(default, skip_serializing_if = "BypassList::is_empty")]
+    pub bypass: BypassList,
 }
 
 /// What a full-route tunnel knows about the physical network under it.
@@ -518,19 +526,36 @@ mod tests {
 
         let split = ConnectOptions {
             split_tls_hello: true,
+            ..ConnectOptions::default()
         };
         let request = serde_json::to_value(BrokerRequest::Connect {
-            transport: serde_json::from_value(transport).unwrap(),
+            transport: serde_json::from_value(transport.clone()).unwrap(),
             resolved_addresses: vec!["203.0.113.9:443".parse().unwrap()],
-            options: split,
+            options: split.clone(),
         })
         .unwrap();
+        // Without a bypass list the request is what older services read.
         assert_eq!(
             request["options"],
             serde_json::json!({"split_tls_hello": true})
         );
         match serde_json::from_value::<BrokerRequest>(request).unwrap() {
             BrokerRequest::Connect { options, .. } => assert_eq!(options, split),
+            _ => panic!("a connect request"),
+        }
+
+        // A bypass list the app could not have sent is refused outright.
+        let mut forged = serde_json::to_value(BrokerRequest::Connect {
+            transport: serde_json::from_value(transport).unwrap(),
+            resolved_addresses: vec!["203.0.113.9:443".parse().unwrap()],
+            options: ConnectOptions::default(),
+        })
+        .unwrap();
+        forged["options"]["bypass"] = serde_json::json!(["0.0.0.0/1"]);
+        assert!(serde_json::from_value::<BrokerRequest>(forged.clone()).is_err());
+        forged["options"]["bypass"] = serde_json::json!(["192.168.0.0/16", "2001:db8::/32"]);
+        match serde_json::from_value::<BrokerRequest>(forged).unwrap() {
+            BrokerRequest::Connect { options, .. } => assert_eq!(options.bypass.entries().len(), 2),
             _ => panic!("a connect request"),
         }
     }

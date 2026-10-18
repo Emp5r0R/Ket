@@ -19,6 +19,7 @@ const context: DiagnosticContext = {
   control: "sealed",
   protocolPreference: "stealth",
   automaticExcluded: [],
+  bypassEntries: 2,
   activeTransport: null,
   handshakeLatencyMs: null,
   reconnectAttempt: 0,
@@ -86,6 +87,7 @@ describe("connection diagnostics", () => {
     expect(report).toContain("server_version=1.2.0");
     expect(report).toContain("control=sealed");
     expect(report).toContain("automatic_skips=none");
+    expect(report).toContain("bypass_entries=2");
     expect(report).toContain("attempts:\nnone");
     expect(formatDiagnosticReport({ ...context, environment: null }, [])).toContain("network=unknown");
   });

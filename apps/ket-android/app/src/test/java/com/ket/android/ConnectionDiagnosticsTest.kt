@@ -67,6 +67,7 @@ class ConnectionDiagnosticsTest {
                 network = "cellular",
                 control = DiagnosticEnvironment.controlMode(null),
                 automaticSkips = listOf("open_vpn_stunnel", "wire_guard"),
+                bypassEntries = 3,
             ),
         )
         assertTrue(report.contains("format=2"))
@@ -76,6 +77,7 @@ class ConnectionDiagnosticsTest {
         assertTrue(report.contains("server_version=1.2.0"))
         assertTrue(report.contains("control=plain"))
         assertTrue(report.contains("automatic_skips=open_vpn_stunnel,wire_guard"))
+        assertTrue(report.contains("bypass_entries=3"))
         assertTrue(report.contains("attempts:\nnone"))
     }
 

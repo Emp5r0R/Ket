@@ -29,7 +29,9 @@ pub use client::{KetClient, MaintenanceTask};
 pub use error::{ClientError, ClientIssue};
 pub use hysteria::Hysteria2Adapter;
 pub use invite::InviteEnrollment;
-pub use ket_tunnel_protocol::{ConnectOptions, NetworkReport};
+pub use ket_tunnel_protocol::{
+    BypassList, ConnectOptions, IpPrefix, MAX_BYPASS_ENTRIES, NetworkReport, PrefixError,
+};
 pub use openvpn::OpenVpnStunnelAdapter;
 pub use route_keeper::{NetworkKind, network_kind};
 pub use shadowsocks::Shadowsocks2022Adapter;

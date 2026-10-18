@@ -67,6 +67,9 @@ describe("desktop settings", () => {
         onSplitTlsHelloChange={onSplitTlsHelloChange}
         automaticExcluded={[]}
         onAutomaticProtocolChange={vi.fn()}
+        bypass={[]}
+        checkBypassEntry={vi.fn(async (entry: string) => entry)}
+        onBypassChange={vi.fn()}
         onForget={vi.fn(async () => undefined)}
       />,
     );
@@ -97,6 +100,9 @@ describe("desktop settings", () => {
         onSplitTlsHelloChange={vi.fn()}
         automaticExcluded={["vless_xtls_reality"]}
         onAutomaticProtocolChange={onAutomaticProtocolChange}
+        bypass={[]}
+        checkBypassEntry={vi.fn(async (entry: string) => entry)}
+        onBypassChange={vi.fn()}
         onForget={vi.fn(async () => undefined)}
       />,
     );
@@ -124,6 +130,9 @@ describe("desktop settings", () => {
           onSplitTlsHelloChange={vi.fn()}
           automaticExcluded={[]}
           onAutomaticProtocolChange={vi.fn()}
+          bypass={[]}
+          checkBypassEntry={vi.fn(async (entry: string) => entry)}
+          onBypassChange={vi.fn()}
           onForget={vi.fn(async () => undefined)}
         />,
       );
@@ -165,6 +174,9 @@ describe("desktop settings", () => {
           onSplitTlsHelloChange={vi.fn()}
           automaticExcluded={[]}
           onAutomaticProtocolChange={vi.fn()}
+          bypass={[]}
+          checkBypassEntry={vi.fn(async (entry: string) => entry)}
+          onBypassChange={vi.fn()}
           onForget={vi.fn(async () => undefined)}
         />,
       );
@@ -190,6 +202,9 @@ describe("desktop settings", () => {
         onSplitTlsHelloChange={vi.fn()}
         automaticExcluded={[]}
         onAutomaticProtocolChange={vi.fn()}
+        bypass={[]}
+        checkBypassEntry={vi.fn(async (entry: string) => entry)}
+        onBypassChange={vi.fn()}
         onForget={onForget}
       />,
     );

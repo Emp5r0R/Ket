@@ -16,6 +16,8 @@ internal data class DiagnosticEnvironment(
     /** `sealed`, `sealed_if_offered`, or `plain`; see [controlMode]. */
     val control: String = "unknown",
     val automaticSkips: List<String> = emptyList(),
+    /** How many entries the bypass list holds; the entries are never reported. */
+    val bypassEntries: Int = 0,
 ) {
     companion object {
         fun current(context: Context, options: ConnectionOptions): DiagnosticEnvironment {
@@ -26,6 +28,7 @@ internal data class DiagnosticEnvironment(
                 network = connectivity?.let(AndroidNetworkKind::current) ?: "unknown",
                 control = profile?.let { controlMode(it.nodeKey) } ?: "unknown",
                 automaticSkips = options.automaticExcluded.map(KetProtocol::wireName).sorted(),
+                bypassEntries = options.bypass.size,
             )
         }
 

@@ -29,6 +29,7 @@ fun ConnectionOptionsSection(
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SplitTlsHelloRow(options, onChange)
         if (offered.size > 1) AutomaticProtocolsList(options, onChange, offered)
+        BypassListSection(options, onChange)
     }
 }
 

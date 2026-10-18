@@ -59,6 +59,12 @@ Settings, "Apps that use Ket", chooses between all apps (the default), only chos
 
 Apps outside the VPN reach the network directly, with no Ket protection and their own DNS. Under Android's "Block connections without VPN" (lockdown), apps outside the VPN have no network at all.
 
+## Keeping addresses outside the tunnel
+
+Settings, "Keep outside the tunnel", lists addresses (`203.0.113.5`) and networks (`192.168.1.0/24`, `2001:db8::/32`) that every protocol reaches directly, such as the home network's printer, a work network, or a site that refuses VPN traffic. `BypassEntries` checks each entry with the same rules as the desktop app and the tunnel service (no network wider than a /8 or /16, no loopback, multicast, or broadcast, at most 64 entries) and stores it in the same form; both replay [`bypass-entries.json`](../crates/ket-tunnel-protocol/tests/vectors/bypass-entries.json). Entries are parsed by Ket, never resolved, so typing one sends no DNS query.
+
+The VPN leaves them out of its routes alongside the servers: with `excludeRoute` on Android 13 and later, and on older versions by routing the complement of the excluded networks (`routesExcludingPrefixes`). Unlike on a computer, Android sends the home network through the VPN unless it is listed here. Traffic to a listed address, and the address itself, are visible to the local network; the diagnostic report only counts the entries.
+
 ## Connection settings and fallback reasons
 
 Settings, "Split the TLS greeting" (off by default), makes Xray send the ClientHello of VLESS + REALITY and HTTPS Stealth as 100-200 byte TLS records 10-20 ms apart, through a fragmenting dialer, so a filter that reads the server name from one packet misses it. It is read from ordinary app preferences each time a transport starts, so it also applies to always-on starts.

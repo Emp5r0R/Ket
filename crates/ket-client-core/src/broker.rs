@@ -142,7 +142,7 @@ impl TransportAdapter for BrokerTransportAdapter {
             BrokerRequest::Connect {
                 transport: transport.clone(),
                 resolved_addresses: probe.resolved_addresses.clone(),
-                options: *options,
+                options: options.clone(),
             },
             &transport.profile.id,
         )
