@@ -18,15 +18,15 @@
     },
     {
       "version": "1.2.0",
-      "published": "2026-10-16",
+      "published": "2026-10-18",
       "client": "security",
       "server": "recommended",
       "apps": {
-        "android": "optional",
+        "android": "recommended",
         "linux": "security",
         "windows": "security"
       },
-      "summary": "Fixes DNS leaks on Windows and on Linux desktops with systemd-resolved. Adds invite control in the ket command, app split tunneling and a new design on Android, and an optional split TLS greeting."
+      "summary": "Fixes DNS leaks on Windows and Linux, and WireGuard TLS lookups. Adds encrypted enrollment, data allowances, fair sharing, bypass lists, sharing with nearby devices, smoother roaming, and live speed."
     }
   ]
 }
