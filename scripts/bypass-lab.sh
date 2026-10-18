@@ -75,7 +75,9 @@ run_protocol() {
   servers=$(awk '$1 != "'"$BYPASSED"'" && $1 != "'"$subnet"'" { print $1 }' <<<"$routes" | sort -u | tr '\n' ' ')
   # Everything that is not Ket's own traffic to the server or the bypassed
   # address leaked, from now until the client disconnects.
-  filter="not arp and not (icmp6 and ip6[40] >= 133 and ip6[40] <= 137) and not udp port 5353 and not host $BYPASSED"
+  # Broadcast and multicast never leave the network (the host's own
+  # discovery traffic reaches the bridge too), so they do not count.
+  filter="not arp and not broadcast and not multicast and not (icmp6 and ip6[40] >= 133 and ip6[40] <= 137) and not udp port 5353 and not host $BYPASSED"
   for server in $servers; do filter+=" and not host ${server%/32}"; done
   lab sh -c "tcpdump -i $interface -n --immediate-mode -U -w /tmp/leak.pcap '$filter' >/dev/null 2>&1 &"
   sleep 2
