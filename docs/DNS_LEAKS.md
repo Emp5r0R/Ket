@@ -31,7 +31,7 @@ Each check looks up unique names and reports any that leave outside the tunnel.
 sudo scripts/dns-leak-check.sh
 ```
 
-It captures every interface except the tunnel. It then looks up names through glibc, the systemd-resolved API, and `dig`, and opens an IPv6 connection. It reports any probe name, any other DNS, and any non-local IPv6 that left outside the tunnel. Run it with `--baseline` and without Ket to see that it catches direct lookups on your network.
+It captures every interface except the tunnel. It then looks up names through glibc, the systemd-resolved API, and `dig`, and opens an IPv6 connection. It reports any probe name, any other DNS, and any non-local IPv6 that left outside the tunnel. Link-local and multicast IPv6 and Neighbor Discovery count as local: routers never forward them, even when a neighbor solicitation names the network's own unique local address. Run it with `--baseline` and without Ket to see that it catches direct lookups on your network.
 
 **Linux lab** (Docker, no changes to this computer):
 

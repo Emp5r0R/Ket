@@ -50,6 +50,12 @@ expect_clean 'eth0 12:00:00.1 IP 10.0.0.53 > 10.0.0.1: ICMP echo request, id 1, 
 expect_clean 'eth0 12:00:00.1 IP 192.168.1.20.1853 > 192.168.1.9.8853: UDP, length 20'
 expect_clean 'eth0 12:00:00.1 IP6 fe80::2 > ff02::2: ICMP6, router solicitation, length 16'
 expect_clean 'eth0 12:00:00.1 IP6 fe80::2 > fe80::1: ICMP6, neighbor solicitation, who has fe80::1, length 32'
+# Neighbor Discovery stays on the link even when it names a unique local address.
+expect_clean 'eth0 15:54:07.1 IP6 fe80::c8c3:ddff:fe28:676b > fd6b:6574:6c61::1: ICMP6, neighbor solicitation, who has fd6b:6574:6c61::1, length 32'
+expect_clean 'eth0 12:00:00.1 IP6 fd6b:6574:6c61::1 > fd6b:6574:6c61::2: ICMP6, neighbor advertisement, tgt is fd6b:6574:6c61::1, length 32'
+# Other ICMPv6 to a routable address still counts.
+expect_leak 'eth0 12:00:00.1 IP6 2001:db8::20 > 2606:4700:4700::1111: ICMP6, echo request, id 1, seq 1, length 64' \
+  'IPv6 outside the tunnel on eth0'
 expect_clean 'eth0 12:00:00.1 ARP, Request who-has 192.168.1.1 tell 192.168.1.20, length 28'
 expect_clean 'eth0 12:00:00.1 IP 172.17.0.2.40000 > 203.0.113.70.443: Flags [S], seq 1, length 0'
 # A server allowance must not cover a neighbouring address.

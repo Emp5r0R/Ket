@@ -57,10 +57,13 @@ leak_findings() {
   done
 }
 
-# local_ipv6_packet PACKET: true for link-local or multicast IPv6, which never
-# leaves the local network.
+# local_ipv6_packet PACKET: true for link-local or multicast IPv6, and for
+# Neighbor Discovery (router and neighbor solicitations and advertisements,
+# redirects), which a router never forwards whatever its destination: a
+# neighbor solicitation can name the network's own unique local address.
 local_ipv6_packet() {
   local destination
+  [[ $1 =~ ICMP6,\ ((router|neighbor)\ (solicitation|advertisement)|redirect) ]] && return 0
   destination=$(sed -n 's/.* > \([^ ]*\): .*/\1/p' <<<"$1")
   [[ $destination == fe8* || $destination == fe9* || $destination == fea* || $destination == feb* \
     || $destination == ff* ]]

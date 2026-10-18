@@ -74,6 +74,16 @@ enroll() {
   (cd "$ROOT" && cargo run -q -p ket-client-core --example invite_enroll_check <<<"$1" 2>&1)
 }
 
+# wait_client_error LOG SECONDS: true once the client reported phase=Error.
+wait_client_error() {
+  local _
+  for _ in $(seq 1 "$2"); do
+    grep -q '^phase=Error' "$1" && return 0
+    sleep 1
+  done
+  return 1
+}
+
 # run_protocol PROTOCOL
 run_protocol() {
   local protocol=$1 label output invite id client_log egress pushed=0 _ result
@@ -133,8 +143,10 @@ run_protocol() {
   else
     pass 'the tunnel no longer carries traffic'
   fi
-  if grep -q '^phase=Error' "$client_log"; then pass 'the client stopped with an error'; else
-    problem "the client did not stop: $(tail -n 3 "$client_log" | tr '\n' ' ')"
+  # A protocol that recovers by itself (WireGuard) tries to reconnect first;
+  # its renewal is then refused.
+  if wait_client_error "$client_log" 60; then pass 'the client stopped with an error'; else
+    problem "the client did not stop within 60 s: $(tail -n 3 "$client_log" | tr '\n' ' ')"
   fi
   finish_protocol "$client_log"
 
