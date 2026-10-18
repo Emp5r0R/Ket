@@ -69,9 +69,22 @@ export interface ClientUpdate {
   download_url: string;
 }
 
+/** Where a transport the client left gave up. */
+export type FallbackStage = "probe" | "connect" | "connected";
+
 export interface TransportFallback {
   transport: TransportSummary;
   issue: ClientIssue;
+  /** Absent from apps before diagnostic reports format 2. */
+  stage?: FallbackStage;
+  /** How long the attempt ran; null for a tunnel lost after connecting. */
+  elapsed_ms?: number | null;
+}
+
+/** What a diagnostic report says about this computer (never which network). */
+export interface DiagnosticEnvironment {
+  network: "wifi" | "ethernet" | "cellular" | "other" | "none" | "unknown";
+  system: string;
 }
 
 /** Connection settings chosen in Settings, applied to every connection. */

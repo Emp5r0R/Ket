@@ -1,0 +1,49 @@
+name: Reachability
+
+# Connects to the Ket server whose invite is in the KET_REACHABILITY_INVITE
+# repository secret with every protocol, from a GitHub runner: a network that
+# blocks nothing. A protocol that works here but not at home is blocked by the
+# home network, not broken on the server. Started by hand only; the log names
+# no server address (see docs/TROUBLESHOOTING.md).
+on:
+  workflow_dispatch:
+    inputs:
+      protocols:
+        description: Protocols to test, such as "open_vpn_stunnel wire_guard" (empty tests all)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  reachability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check the invite secret
+        env:
+          KET_REACHABILITY_INVITE: ${{ secrets.KET_REACHABILITY_INVITE }}
+        run: |
+          if [[ -z $KET_REACHABILITY_INVITE ]]; then
+            echo '::error::Add a KET_REACHABILITY_INVITE repository secret holding a Ket invite (see docs/TROUBLESHOOTING.md).'
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - name: Install OpenVPN build dependencies
+        run: sudo ./.github/scripts/install-ubuntu-dependencies.sh build-essential libcap-ng-dev libssl-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+      - name: Connect with each protocol
+        env:
+          KET_REACHABILITY_INVITE: ${{ secrets.KET_REACHABILITY_INVITE }}
+          PROTOCOLS: ${{ inputs.protocols }}
+        run: |
+          args=()
+          for protocol in $PROTOCOLS; do
+            [[ $protocol =~ ^[a-z0-9_]+$ ]] || { echo "::error::not a protocol name: $protocol"; exit 2; }
+            args+=(--protocol "$protocol")
+          done
+          printf '%s\n' "$KET_REACHABILITY_INVITE" \
+            | ./scripts/reachability-lab.sh --invite-file - --build-openvpn "${args[@]}"

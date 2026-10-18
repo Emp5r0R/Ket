@@ -16,8 +16,9 @@ use windows_sys::Win32::{
         IpHelper::{
             ConvertInterfaceLuidToAlias, CreateIpForwardEntry2, DeleteIpForwardEntry2,
             FreeMibTable, GetIfTable2, GetIpForwardTable2, GetIpInterfaceEntry,
-            IF_TYPE_SOFTWARE_LOOPBACK, InitializeIpForwardEntry, InitializeIpInterfaceEntry,
-            MIB_IF_TABLE2, MIB_IPFORWARD_ROW2, MIB_IPFORWARD_TABLE2, MIB_IPINTERFACE_ROW,
+            IF_TYPE_ETHERNET_CSMACD, IF_TYPE_IEEE80211, IF_TYPE_SOFTWARE_LOOPBACK, IF_TYPE_WWANPP,
+            IF_TYPE_WWANPP2, InitializeIpForwardEntry, InitializeIpInterfaceEntry, MIB_IF_TABLE2,
+            MIB_IPFORWARD_ROW2, MIB_IPFORWARD_TABLE2, MIB_IPINTERFACE_ROW,
         },
         Ndis::{IF_MAX_STRING_SIZE, NET_LUID_LH},
     },
@@ -27,7 +28,7 @@ use windows_sys::Win32::{
     },
 };
 
-use super::{DefaultRoute, Family, RouteAction, RouteSystem, ServerPath};
+use super::{DefaultRoute, Family, NetworkKind, RouteAction, RouteSystem, ServerPath};
 
 const ROUTE_METRIC: u32 = 23;
 
@@ -137,6 +138,27 @@ fn loopback_index() -> io::Result<u32> {
     };
     unsafe { FreeMibTable(table.cast()) };
     index.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no loopback interface"))
+}
+
+/// What kind of network an interface is, from its interface type.
+pub(crate) fn interface_kind(interface_index: u32) -> NetworkKind {
+    let mut table: *mut MIB_IF_TABLE2 = ptr::null_mut();
+    if check(unsafe { GetIfTable2(&mut table) }).is_err() {
+        return NetworkKind::Other;
+    }
+    let kind = unsafe {
+        slice::from_raw_parts((*table).Table.as_ptr(), (*table).NumEntries as usize)
+            .iter()
+            .find(|row| row.InterfaceIndex == interface_index)
+            .map(|row| match row.Type {
+                IF_TYPE_IEEE80211 => NetworkKind::Wifi,
+                IF_TYPE_ETHERNET_CSMACD => NetworkKind::Ethernet,
+                IF_TYPE_WWANPP | IF_TYPE_WWANPP2 => NetworkKind::Cellular,
+                _ => NetworkKind::Other,
+            })
+    };
+    unsafe { FreeMibTable(table.cast()) };
+    kind.unwrap_or(NetworkKind::Other)
 }
 
 fn interface_metric(family: Family, luid: NET_LUID_LH) -> u32 {

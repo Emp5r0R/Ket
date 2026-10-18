@@ -8,7 +8,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use super::{DefaultRoute, Family, RouteAction, RouteSystem, ServerPath};
+use super::{DefaultRoute, Family, NetworkKind, RouteAction, RouteSystem, ServerPath};
 
 /// Marks Ket's routes (`proto 75`) so leftovers can be found and removed.
 const ROUTE_PROTOCOL: &str = "75";
@@ -65,6 +65,29 @@ pub(crate) fn read_default_routes() -> io::Result<Vec<DefaultRoute>> {
 /// `/proc/net/arp`, which tells apart networks that share a gateway address.
 pub(crate) fn neighbour_hardware(address: IpAddr) -> Option<String> {
     parse_neighbour(&fs::read_to_string("/proc/net/arp").ok()?, address)
+}
+
+/// What kind of network an interface is, from what the kernel says about it
+/// under `/sys/class/net`.
+pub(crate) fn interface_kind(interface: &str) -> NetworkKind {
+    let device = Path::new("/sys/class/net").join(interface);
+    kind_from(
+        interface,
+        device.join("wireless").exists() || device.join("phy80211").exists(),
+        device.join("device").exists(),
+    )
+}
+
+fn kind_from(interface: &str, wireless: bool, hardware: bool) -> NetworkKind {
+    if wireless {
+        NetworkKind::Wifi
+    } else if interface.starts_with("ww") || interface.starts_with("rmnet") {
+        NetworkKind::Cellular
+    } else if hardware {
+        NetworkKind::Ethernet
+    } else {
+        NetworkKind::Other
+    }
 }
 
 fn parse_neighbour(table: &str, address: IpAddr) -> Option<String> {
@@ -291,5 +314,13 @@ IP address       HW type     Flags       HW address            Mask     Device
             .join(" "),
             "-4 route del 203.0.113.5/32 metric 23 proto 75"
         );
+    }
+
+    #[test]
+    fn interfaces_are_told_apart_by_what_the_kernel_reports() {
+        assert_eq!(kind_from("wlp2s0", true, true), NetworkKind::Wifi);
+        assert_eq!(kind_from("wwan0", false, true), NetworkKind::Cellular);
+        assert_eq!(kind_from("enp3s0", false, true), NetworkKind::Ethernet);
+        assert_eq!(kind_from("docker0", false, false), NetworkKind::Other);
     }
 }

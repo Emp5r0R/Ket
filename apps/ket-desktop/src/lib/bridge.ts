@@ -5,6 +5,7 @@ import type {
   ClientSnapshot,
   ConnectOptions,
   DesktopState,
+  DiagnosticEnvironment,
   EnrollmentInput,
   InviteDetails,
 } from "../types";
@@ -14,6 +15,8 @@ type SnapshotListener = (snapshot: ClientSnapshot) => void;
 
 export interface DesktopBridge {
   state(): Promise<DesktopState>;
+  /** The operating system and network kind, for a diagnostic report. */
+  diagnosticEnvironment(): Promise<DiagnosticEnvironment>;
   inspectInvite(invite: string): Promise<InviteDetails>;
   /** Decodes and verifies an invite QR image natively; bytes travel as a raw IPC body. */
   decodeInviteQr(image: Uint8Array): Promise<InviteDetails>;
@@ -27,6 +30,7 @@ export interface DesktopBridge {
 
 const tauriBridge: DesktopBridge = {
   state: () => invoke<DesktopState>("desktop_state"),
+  diagnosticEnvironment: () => invoke<DiagnosticEnvironment>("diagnostic_context"),
   inspectInvite: (invite) => invoke<InviteDetails>("inspect_invite", { invite }),
   decodeInviteQr: (image) => invoke<InviteDetails>("decode_invite_qr", image),
   enroll: (input) =>
@@ -163,6 +167,7 @@ function mockBridge(): DesktopBridge {
       platform: "linux",
       version: "1.2.0",
     }),
+    diagnosticEnvironment: async () => ({ network: "wifi", system: "Demo" }),
     inspectInvite: async (invite) => {
       if (!invite.startsWith("ket:invite:")) {
         throw {

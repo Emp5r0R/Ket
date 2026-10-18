@@ -92,12 +92,7 @@ internal class NetworkTransportMemory(
             network ?: return null
             val capabilities = connectivity.getNetworkCapabilities(network) ?: return null
             if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return null
-            val kind = when {
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
-                else -> "other"
-            }
+            val kind = AndroidNetworkKind.of(capabilities)
             val link: LinkProperties = connectivity.getLinkProperties(network) ?: return null
             val gateway = link.routes.firstOrNull { it.isDefaultRoute && it.gateway != null }
                 ?.gateway?.hostAddress.orEmpty()

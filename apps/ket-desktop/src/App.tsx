@@ -5,6 +5,7 @@ import type {
   ClientIssue,
   ClientSnapshot,
   DesktopState,
+  DiagnosticEnvironment,
   EnrollmentInput,
   InviteDetails,
   TrafficPoint,
@@ -230,6 +231,7 @@ export default function App() {
   );
   const [diagnostics, setDiagnostics] = useState<ConnectionDiagnostic[]>([]);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticEnvironment, setDiagnosticEnvironment] = useState<DiagnosticEnvironment | null>(null);
   const [surveillanceVariant, setSurveillanceVariant] = useState(0);
   const lastObservedIssue = useRef("");
   const protocolPreferenceRef = useRef(protocolPreference);
@@ -351,6 +353,23 @@ export default function App() {
     }
     return issue;
   };
+
+  // The network can change between reports, so it is read each time one opens.
+  useEffect(() => {
+    if (!diagnosticsOpen) return;
+    let active = true;
+    void bridge
+      .diagnosticEnvironment()
+      .then((environment) => {
+        if (active) setDiagnosticEnvironment(environment);
+      })
+      .catch(() => {
+        if (active) setDiagnosticEnvironment(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [diagnosticsOpen]);
 
   useEffect(() => {
     let active = true;
@@ -757,12 +776,27 @@ export default function App() {
   const diagnosticReport = useMemo(() => formatDiagnosticReport({
     platform: state.platform,
     version: state.version,
+    environment: diagnosticEnvironment,
     engineStatus: state.engine.status,
     currentPhase: state.snapshot.phase,
     nodeId: state.snapshot.node?.node_id ?? null,
+    serverVersion: state.snapshot.server_version,
+    control: savedSealedControl ? "sealed" : savedNodeKey !== null ? "sealed_if_offered" : "plain",
     protocolPreference,
-    activeTransportId: state.snapshot.active_transport?.id ?? null,
-  }, diagnostics), [diagnostics, protocolPreference, state]);
+    automaticExcluded,
+    activeTransport: state.snapshot.active_transport,
+    handshakeLatencyMs: state.snapshot.handshake_latency_ms,
+    reconnectAttempt: state.snapshot.reconnect_attempt,
+    fallbacks: state.snapshot.fallbacks,
+  }, diagnostics), [
+    automaticExcluded,
+    diagnosticEnvironment,
+    diagnostics,
+    protocolPreference,
+    savedNodeKey,
+    savedSealedControl,
+    state,
+  ]);
 
   if (startupStage !== "ready") {
     const startup = startupPresentation(startupStage);

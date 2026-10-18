@@ -1,3 +1,5 @@
+mod diagnostics;
+
 use std::{
     collections::BTreeSet,
     sync::Arc,
@@ -150,6 +152,12 @@ async fn desktop_state(
         platform: std::env::consts::OS,
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+/// The operating system and network kind for a diagnostic report.
+#[tauri::command]
+fn diagnostic_context() -> diagnostics::DiagnosticContext {
+    diagnostics::context()
 }
 
 /// Verifies invite text locally (signature, structure, expiry); no network.
@@ -434,6 +442,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             desktop_state,
+            diagnostic_context,
             inspect_invite,
             decode_invite_qr,
             enroll,

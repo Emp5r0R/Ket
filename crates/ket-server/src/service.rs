@@ -9,7 +9,8 @@ use std::{
 
 use ket_core::{
     AccessGrantSummary, CreateAccessGrantBatchRequest, CreateAccessGrantRequest,
-    CreateAccessGrantResponse, MAX_ACCESS_GRANT_VALIDITY_MINUTES, ProtocolAccess, SecretString,
+    CreateAccessGrantResponse, GrantActivity, GrantActivityEvent,
+    MAX_ACCESS_GRANT_VALIDITY_MINUTES, ProtocolAccess, SecretString, TransportProtocol,
     UpdateAccessGrantRequest, generate_access_code, generate_scoped_token, generate_session_token,
     hash_secret, hash_token_secret, split_access_code, split_session_token, verify_secret,
     verify_token_secret,
@@ -18,6 +19,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::{
+    activity::{Activity, ActivityLog},
     grant_admin,
     model::{AccessGrantRecord, PersistedState, SessionRecord},
     repository::{FileStateRepository, RepositoryError, StateRepository},
@@ -36,6 +38,7 @@ pub struct CreatedSession {
     pub token: SecretString,
     pub data_plane_token: SecretString,
     pub id: String,
+    pub grant_id: String,
     pub resource_slot: u32,
     pub expired_allocations: Vec<SessionAllocation>,
     pub client_name: String,
@@ -51,6 +54,7 @@ impl std::fmt::Debug for CreatedSession {
             .field("token", &"[REDACTED]")
             .field("data_plane_token", &"[REDACTED]")
             .field("id", &self.id)
+            .field("grant_id", &self.grant_id)
             .field("resource_slot", &self.resource_slot)
             .field("expired_allocations", &self.expired_allocations.len())
             .field("client_name", &self.client_name)
@@ -67,6 +71,7 @@ impl std::fmt::Debug for CreatedSession {
 #[derive(Clone, Debug)]
 pub struct SessionView {
     pub id: String,
+    pub grant_id: String,
     pub resource_slot: u32,
     pub client_name: String,
     pub expires_at_epoch_seconds: u64,
@@ -108,6 +113,9 @@ pub enum ServiceError {
     Busy,
     #[error("the requested resource does not exist")]
     NotFound,
+    /// Valid credentials for something the grant does not allow.
+    #[error("the access grant does not allow this")]
+    Forbidden,
     #[error("secure secret processing failed")]
     Crypto,
     #[error("state persistence failed: {0}")]
@@ -126,6 +134,8 @@ pub struct AccessService {
     crypto_overloads: AtomicU64,
     session_ttl: Duration,
     max_sessions: u32,
+    /// In memory only; see [`crate::activity`].
+    activity: std::sync::Mutex<ActivityLog>,
 }
 
 impl AccessService {
@@ -160,6 +170,7 @@ impl AccessService {
             crypto_overloads: AtomicU64::new(0),
             session_ttl,
             max_sessions,
+            activity: std::sync::Mutex::default(),
         })
     }
 
@@ -329,7 +340,14 @@ impl AccessService {
         let mut next = state.clone();
         let ended = grant_admin::apply(&mut next, id, &changes, now)?;
         self.repository.store(&next).await?;
+        let ended_sessions = state
+            .sessions
+            .iter()
+            .filter(|session| ended.iter().any(|allocation| allocation.id == session.id))
+            .cloned()
+            .collect::<Vec<_>>();
         *state = next;
+        self.note_ended(&state, &ended_sessions, GrantActivityEvent::EndedByChange);
         let grant = state
             .grants
             .iter()
@@ -354,6 +372,7 @@ impl AccessService {
         next.sessions.retain(|session| session.grant_id != id);
         self.repository.store(&next).await?;
         *state = next;
+        self.forget_missing_activity(&state);
         Ok(revoked_sessions)
     }
 
@@ -373,7 +392,25 @@ impl AccessService {
                 .cloned()
         }
         .ok_or(ServiceError::Unauthorized)?;
-        if !self.verify(code.secret, grant.secret_hash).await? {
+        let result = self
+            .admit_session(grant, code.secret, client_name.clone())
+            .await;
+        if let Err(error) = &result
+            && let Some(event) = enrollment_refusal(error)
+        {
+            let state = self.state.lock().await;
+            self.note(&state, &code.id, Activity::enrollment(event, &client_name));
+        }
+        result
+    }
+
+    async fn admit_session(
+        &self,
+        grant: AccessGrantRecord,
+        secret: String,
+        client_name: String,
+    ) -> Result<CreatedSession, ServiceError> {
+        if !self.verify(secret, grant.secret_hash).await? {
             return Err(ServiceError::Unauthorized);
         }
         if grant.paused {
@@ -392,18 +429,15 @@ impl AccessService {
 
         let mut state = self.state.lock().await;
         let mut next = state.clone();
-        let expired_allocations = next
-            .sessions
+        let expired = take_expired_sessions(&mut next, now);
+        let expired_allocations = expired
             .iter()
-            .filter(|session| session.expires_at_epoch_seconds <= now)
             .map(session_allocation)
             .collect::<Result<Vec<_>, _>>()?;
-        next.sessions
-            .retain(|session| session.expires_at_epoch_seconds > now);
         let grant = next
             .grants
             .iter()
-            .find(|candidate| candidate.id == code.id)
+            .find(|candidate| candidate.id == grant.id)
             .ok_or(ServiceError::Unauthorized)?;
         if grant
             .expires_at_epoch_seconds
@@ -455,14 +489,17 @@ impl AccessService {
         if next.sessions.iter().any(|item| item.id == session.id) {
             return Err(ServiceError::Crypto);
         }
+        let grant_id = grant.id.clone();
         next.sessions.push(session);
         self.repository.store(&next).await?;
         *state = next;
+        self.note_ended(&state, &expired, GrantActivityEvent::LeaseEnded);
 
         Ok(CreatedSession {
             token: token.into(),
             data_plane_token: data_plane_token.into(),
             id: token_parts.id,
+            grant_id,
             resource_slot,
             expired_allocations,
             client_name,
@@ -477,6 +514,7 @@ impl AccessService {
         let resource_slot = required_resource_slot(&record)?;
         Ok(SessionView {
             id: record.id,
+            grant_id: grant.id,
             resource_slot,
             client_name: record.client_name,
             expires_at_epoch_seconds: record.expires_at_epoch_seconds,
@@ -485,8 +523,42 @@ impl AccessService {
         })
     }
 
-    pub async fn authenticate_data_plane(&self, token: &str) -> Result<SessionView, ServiceError> {
+    /// Signs a device in to `protocol`'s server with its data-plane token.
+    /// OpenVPN also names the session as `username`. The outcome is recorded
+    /// against the device's grant.
+    pub async fn authenticate_data_plane(
+        &self,
+        token: &str,
+        protocol: &TransportProtocol,
+        username: Option<&str>,
+    ) -> Result<SessionView, ServiceError> {
         let parts = split_session_token(token).map_err(|_| ServiceError::Unauthorized)?;
+        let result = self.verify_data_plane(&parts, protocol, username).await;
+        let event = match &result {
+            Ok(_) => GrantActivityEvent::SignedIn,
+            Err(ServiceError::Forbidden) => GrantActivityEvent::SignInRefusedProtocol,
+            Err(_) => GrantActivityEvent::SignInRefused,
+        };
+        let state = self.state.lock().await;
+        if let Some(session) = state.sessions.iter().find(|session| session.id == parts.id) {
+            self.note(
+                &state,
+                &session.grant_id,
+                Activity::session(event, &session.id, &session.client_name).over(protocol.clone()),
+            );
+        }
+        result.map_err(|_| ServiceError::Unauthorized)
+    }
+
+    async fn verify_data_plane(
+        &self,
+        parts: &ket_core::SessionTokenParts,
+        protocol: &TransportProtocol,
+        username: Option<&str>,
+    ) -> Result<SessionView, ServiceError> {
+        if username.is_some_and(|username| username != parts.id) {
+            return Err(ServiceError::Unauthorized);
+        }
         let (session, grant) = {
             let state = self.state.lock().await;
             let session = state
@@ -519,9 +591,13 @@ impl AccessService {
         {
             return Err(ServiceError::Unauthorized);
         }
+        if !grant.protocols.allows(protocol) {
+            return Err(ServiceError::Forbidden);
+        }
         let resource_slot = required_resource_slot(&session)?;
         Ok(SessionView {
             id: session.id,
+            grant_id: grant.id,
             resource_slot,
             client_name: session.client_name,
             expires_at_epoch_seconds: session.expires_at_epoch_seconds,
@@ -548,9 +624,19 @@ impl AccessService {
         session.expires_at_epoch_seconds = expires_at;
         self.repository.store(&next).await?;
         *state = next;
+        self.note(
+            &state,
+            &grant.id,
+            Activity::session(
+                GrantActivityEvent::CheckedIn,
+                &record.id,
+                &record.client_name,
+            ),
+        );
         let resource_slot = required_resource_slot(&record)?;
         Ok(SessionView {
             id: record.id,
+            grant_id: grant.id,
             resource_slot,
             client_name: record.client_name,
             expires_at_epoch_seconds: expires_at,
@@ -559,7 +645,26 @@ impl AccessService {
         })
     }
 
+    /// Ends the session at the app's request.
     pub async fn release_session(&self, token: &str) -> Result<SessionAllocation, ServiceError> {
+        self.end_session(token, Some(GrantActivityEvent::Left))
+            .await
+    }
+
+    /// Ends a session that was created but must not be used. Its refusal is
+    /// recorded by whoever refused it.
+    pub(crate) async fn discard_session(
+        &self,
+        token: &str,
+    ) -> Result<SessionAllocation, ServiceError> {
+        self.end_session(token, None).await
+    }
+
+    async fn end_session(
+        &self,
+        token: &str,
+        event: Option<GrantActivityEvent>,
+    ) -> Result<SessionAllocation, ServiceError> {
         let (record, _) = self.authenticate(token).await?;
         let allocation = session_allocation(&record)?;
         let mut state = self.state.lock().await;
@@ -567,7 +672,57 @@ impl AccessService {
         next.sessions.retain(|session| session.id != record.id);
         self.repository.store(&next).await?;
         *state = next;
+        if let Some(event) = event {
+            self.note_ended(&state, std::slice::from_ref(&record), event);
+        }
         Ok(allocation)
+    }
+
+    /// Records `activity` against the grant, which must still exist.
+    pub(crate) async fn record_activity(&self, grant_id: &str, activity: Activity) {
+        let state = self.state.lock().await;
+        self.note(&state, grant_id, activity);
+    }
+
+    /// What devices recently did with the grant, newest first.
+    pub fn recent_activity(&self, grant_id: &str) -> Vec<GrantActivity> {
+        self.activity
+            .lock()
+            .map(|log| log.recent(grant_id))
+            .unwrap_or_default()
+    }
+
+    /// Records `activity` if `state` still holds the grant, so the log never
+    /// keeps entries for grants that are gone.
+    fn note(&self, state: &PersistedState, grant_id: &str, activity: Activity) {
+        if !state.grants.iter().any(|grant| grant.id == grant_id) {
+            return;
+        }
+        if let Ok(mut log) = self.activity.lock() {
+            log.record(grant_id, activity, unix_time());
+        }
+    }
+
+    fn note_ended(
+        &self,
+        state: &PersistedState,
+        sessions: &[SessionRecord],
+        event: GrantActivityEvent,
+    ) {
+        for session in sessions {
+            self.note(
+                state,
+                &session.grant_id,
+                Activity::session(event, &session.id, &session.client_name),
+            );
+        }
+    }
+
+    /// Drops the log of every grant `state` no longer holds.
+    fn forget_missing_activity(&self, state: &PersistedState) {
+        if let Ok(mut log) = self.activity.lock() {
+            log.retain(|grant_id| state.grants.iter().any(|grant| grant.id == grant_id));
+        }
     }
 
     /// Ends expired session leases and forgets invites that expired more than
@@ -575,21 +730,20 @@ impl AccessService {
     pub async fn expire_sessions(&self) -> Result<Vec<SessionAllocation>, ServiceError> {
         let now = unix_time();
         let mut state = self.state.lock().await;
-        let expired = state
-            .sessions
+        let mut next = state.clone();
+        let ended = take_expired_sessions(&mut next, now);
+        let expired = ended
             .iter()
-            .filter(|session| session.expires_at_epoch_seconds <= now)
             .map(session_allocation)
             .collect::<Result<Vec<_>, _>>()?;
-        let mut next = state.clone();
-        next.sessions
-            .retain(|session| session.expires_at_epoch_seconds > now);
         let forgot_grants = forget_stale_grants(&mut next, now);
         if expired.is_empty() && !forgot_grants {
             return Ok(expired);
         }
         self.repository.store(&next).await?;
         *state = next;
+        self.note_ended(&state, &ended, GrantActivityEvent::LeaseEnded);
+        self.forget_missing_activity(&state);
         Ok(expired)
     }
 
@@ -748,6 +902,28 @@ fn prepare_resource_slots(
         changed = true;
     }
     Ok(changed)
+}
+
+/// Removes and returns the sessions whose lease has run out.
+fn take_expired_sessions(state: &mut PersistedState, now: u64) -> Vec<SessionRecord> {
+    let (expired, live): (Vec<_>, Vec<_>) = std::mem::take(&mut state.sessions)
+        .into_iter()
+        .partition(|session| session.expires_at_epoch_seconds <= now);
+    state.sessions = live;
+    expired
+}
+
+/// The activity an enrollment refusal is recorded as, for refusals that say
+/// something about the grant or the server.
+fn enrollment_refusal(error: &ServiceError) -> Option<GrantActivityEvent> {
+    match error {
+        ServiceError::Unauthorized => Some(GrantActivityEvent::RefusedWrongCode),
+        ServiceError::GrantExpired => Some(GrantActivityEvent::RefusedExpired),
+        ServiceError::GrantPaused => Some(GrantActivityEvent::RefusedPaused),
+        ServiceError::GrantCapacity => Some(GrantActivityEvent::RefusedDeviceLimit),
+        ServiceError::NodeCapacity => Some(GrantActivityEvent::RefusedServerFull),
+        _ => None,
+    }
 }
 
 /// Removes invites that expired at least [`EXPIRED_GRANT_RETENTION_SECONDS`]
@@ -928,6 +1104,61 @@ mod tests {
         assert!(renewed.expires_at_epoch_seconds >= current.expires_at_epoch_seconds);
         assert_eq!(service.crypto_overload_count(), 0);
         drop(saturated);
+    }
+
+    #[tokio::test]
+    async fn check_ins_departures_and_lapsed_leases_are_recorded_per_device() {
+        let service = AccessService::load(Arc::new(EmptyRepository), Duration::from_secs(300), 4)
+            .await
+            .expect("service should load");
+        let grant = service
+            .create_grant(CreateAccessGrantRequest {
+                label: "Activity".to_owned(),
+                max_connections: 2,
+                valid_for_minutes: 60,
+                protocols: Default::default(),
+            })
+            .await
+            .expect("grant should be created");
+        let leaving = service
+            .create_session(grant.access_code.expose_secret(), "linux/1.2.0".to_owned())
+            .await
+            .expect("session should be created");
+        let lapsing = service
+            .create_session(
+                grant.access_code.expose_secret(),
+                "android/1.2.0".to_owned(),
+            )
+            .await
+            .expect("session should be created");
+        for _ in 0..2 {
+            service
+                .renew_session(leaving.token.expose_secret())
+                .await
+                .expect("session should renew");
+        }
+        service
+            .release_session(leaving.token.expose_secret())
+            .await
+            .expect("session should be released");
+        // The other app stops renewing and its lease runs out.
+        service.state.lock().await.sessions[0].expires_at_epoch_seconds = unix_time() - 1;
+        assert_eq!(service.expire_sessions().await.unwrap().len(), 1);
+
+        let recent = service.recent_activity(&grant.id);
+        let summary = recent
+            .iter()
+            .map(|entry| (entry.event, entry.session_id.clone(), entry.count))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            summary,
+            [
+                (GrantActivityEvent::LeaseEnded, Some(lapsing.id.clone()), 1),
+                (GrantActivityEvent::Left, Some(leaving.id.clone()), 1),
+                (GrantActivityEvent::CheckedIn, Some(leaving.id.clone()), 2),
+            ]
+        );
+        assert_eq!(recent[0].client_name, "android/1.2.0");
     }
 
     #[tokio::test]

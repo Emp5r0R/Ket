@@ -18,6 +18,10 @@ A session is deleted when the device disconnects or its lease runs out. The serv
 
 The server's `.env` holds its own keys (TLS, node identity, protocol keys). Per-device protocol credentials are either derived from those keys and the session ID when they are needed, or kept only as the token hash above; none is stored in a form that could be handed to someone else.
 
+## Kept in memory only
+
+So an operator can see why a device cannot connect, `sudo ket invites show ID` lists what devices recently did with that invite: joined, checked in, disconnected, were refused and why (wrong code, paused, device limit, app too old), and whether their traffic reached the OpenVPN or Hysteria2 server. Each entry names the app and the start of its session ID, with a count and the last time; no address. The server keeps the last 24 entries per invite in memory, never writes them to disk, forgets them when it restarts, and drops an invite's entries when the invite is revoked or forgotten.
+
 ## Logs
 
 - The HTTPS edge keeps no access log and logs errors only.

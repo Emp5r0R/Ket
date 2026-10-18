@@ -105,6 +105,83 @@ pub struct AccessGrantDetails {
     #[serde(flatten)]
     pub grant: AccessGrantSummary,
     pub devices: Vec<ConnectedDevice>,
+    /// What devices recently did with the invite, newest first. Kept in the
+    /// server's memory only; older servers send none.
+    #[serde(default)]
+    pub recent: Vec<GrantActivity>,
+}
+
+/// Something a device did with an access grant, or that was done to it.
+/// Repeats of the same thing are counted in one entry.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GrantActivity {
+    pub event: GrantActivityEvent,
+    /// The device's session, once it has one. Refused enrollments have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// The name the app gave itself.
+    pub client_name: String,
+    /// The protocol, for sign-ins to a protocol's server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<TransportProtocol>,
+    pub count: u32,
+    pub first_at_epoch_seconds: u64,
+    pub last_at_epoch_seconds: u64,
+}
+
+/// Stable wire names for [`GrantActivity`] events.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantActivityEvent {
+    /// The app joined and received its session.
+    Enrolled,
+    /// The app renewed its session.
+    CheckedIn,
+    /// The app disconnected and released its session.
+    Left,
+    /// The app stopped renewing, so its session ran out.
+    LeaseEnded,
+    /// A pause or edit of the invite disconnected the device.
+    EndedByChange,
+    RefusedWrongCode,
+    RefusedExpired,
+    RefusedPaused,
+    RefusedDeviceLimit,
+    RefusedServerFull,
+    RefusedUpdateRequired,
+    /// The server offers no protocol the invite allows.
+    RefusedNoProtocol,
+    /// The protocol servers were not ready or could not take the session.
+    RefusedServerUnavailable,
+    /// The device's traffic reached a protocol's server and signed in.
+    SignedIn,
+    /// A protocol's server refused the device: its session had ended.
+    SignInRefused,
+    /// A protocol's server refused the device: the invite does not allow it.
+    SignInRefusedProtocol,
+}
+
+impl GrantActivityEvent {
+    /// Every event, in the order of `tests/vectors/grant-activity-events.json`,
+    /// which the `ket` command's wording is checked against.
+    pub const ALL: [Self; 16] = [
+        Self::Enrolled,
+        Self::CheckedIn,
+        Self::Left,
+        Self::LeaseEnded,
+        Self::EndedByChange,
+        Self::RefusedWrongCode,
+        Self::RefusedExpired,
+        Self::RefusedPaused,
+        Self::RefusedDeviceLimit,
+        Self::RefusedServerFull,
+        Self::RefusedUpdateRequired,
+        Self::RefusedNoProtocol,
+        Self::RefusedServerUnavailable,
+        Self::SignedIn,
+        Self::SignInRefused,
+        Self::SignInRefusedProtocol,
+    ];
 }
 
 #[cfg(test)]
@@ -155,6 +232,29 @@ mod tests {
             .map(TransportProtocol::short_name)
             .collect::<BTreeSet<_>>();
         assert_eq!(names.len(), protocols.len());
+    }
+
+    #[test]
+    fn activity_events_match_the_shared_wire_names() {
+        let names: Vec<String> =
+            serde_json::from_str(include_str!("../tests/vectors/grant-activity-events.json"))
+                .unwrap();
+        let encoded = GrantActivityEvent::ALL
+            .iter()
+            .map(|event| serde_json::to_value(event).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            encoded,
+            names.iter().map(|name| json!(name)).collect::<Vec<_>>()
+        );
+        // Details from servers that keep no activity still decode.
+        let details: AccessGrantDetails = serde_json::from_value(json!({
+            "id": "abcdefghij", "label": "x", "max_connections": 1, "active_connections": 0,
+            "expires_at_epoch_seconds": null, "created_at_epoch_seconds": 1, "paused": false,
+            "protocols": "all", "devices": []
+        }))
+        .unwrap();
+        assert!(details.recent.is_empty());
     }
 
     #[test]

@@ -46,6 +46,26 @@ impl From<&TransportProfile> for TransportSummary {
 pub struct TransportFallback {
     pub transport: TransportSummary,
     pub issue: ClientIssue,
+    /// Where the transport gave up.
+    #[serde(default)]
+    pub stage: FallbackStage,
+    /// How long the attempt ran before it gave up; `None` for a tunnel lost
+    /// after it connected.
+    #[serde(default)]
+    pub elapsed_ms: Option<u64>,
+}
+
+/// Where a transport the client left gave up.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FallbackStage {
+    /// Before connecting: its server could not be found or reached.
+    Probe,
+    /// While its engine was connecting.
+    #[default]
+    Connect,
+    /// After it connected, when the tunnel stopped working.
+    Connected,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]

@@ -187,6 +187,47 @@ pub(crate) fn physical_network(tunnel_interface: &str) -> Option<String> {
     Some(format!("{}\n{gateway}\n{hardware}", route.interface))
 }
 
+/// What kind of network carries the device's traffic, for diagnostic
+/// reports: it says nothing about which network it is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkKind {
+    Wifi,
+    Ethernet,
+    Cellular,
+    Other,
+    /// No network is connected.
+    None,
+    /// This platform cannot tell.
+    Unknown,
+}
+
+/// The kind of the physical network the default route uses now.
+pub fn network_kind() -> NetworkKind {
+    let tunnel = crate::full_route::TUNNEL_INTERFACE;
+    let Some(routes) = physical_routes() else {
+        return NetworkKind::Unknown;
+    };
+    plan::best_default(&routes, Family::V4, tunnel)
+        .or_else(|| plan::best_default(&routes, Family::V6, tunnel))
+        .map_or(NetworkKind::None, interface_kind)
+}
+
+#[cfg(all(target_os = "linux", not(test)))]
+fn interface_kind(route: &DefaultRoute) -> NetworkKind {
+    linux::interface_kind(&route.interface)
+}
+
+#[cfg(all(windows, not(test)))]
+fn interface_kind(route: &DefaultRoute) -> NetworkKind {
+    windows::interface_kind(route.interface_index)
+}
+
+#[cfg(any(not(any(target_os = "linux", windows)), test))]
+fn interface_kind(_route: &DefaultRoute) -> NetworkKind {
+    NetworkKind::Unknown
+}
+
 #[cfg(all(target_os = "linux", not(test)))]
 fn physical_routes() -> Option<Vec<DefaultRoute>> {
     linux::read_default_routes().ok()

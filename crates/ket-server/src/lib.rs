@@ -1,3 +1,4 @@
+mod activity;
 pub mod api;
 pub mod config;
 mod data_plane;

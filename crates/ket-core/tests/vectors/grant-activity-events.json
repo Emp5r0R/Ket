@@ -1,0 +1,18 @@
+[
+  "enrolled",
+  "checked_in",
+  "left",
+  "lease_ended",
+  "ended_by_change",
+  "refused_wrong_code",
+  "refused_expired",
+  "refused_paused",
+  "refused_device_limit",
+  "refused_server_full",
+  "refused_update_required",
+  "refused_no_protocol",
+  "refused_server_unavailable",
+  "signed_in",
+  "sign_in_refused",
+  "sign_in_refused_protocol"
+]

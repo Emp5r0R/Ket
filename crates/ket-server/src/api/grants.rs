@@ -95,9 +95,11 @@ pub(super) async fn grant_details(
             traffic,
         });
     }
+    let recent = state.access.recent_activity(&grant.id);
     Ok(Json(AccessGrantDetails {
         grant,
         devices: connected,
+        recent,
     }))
 }
 
@@ -599,5 +601,77 @@ mod tests {
                 .status(),
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[tokio::test]
+    async fn details_show_what_devices_recently_did_without_addresses() {
+        use ket_core::GrantActivityEvent as Event;
+
+        let harness = harness().await;
+        let grant = harness.create(grant_body(None)).await;
+        let path = format!("/v1/admin/access-grants/{}", grant.id);
+        let recent = || async {
+            let details: AccessGrantDetails = response_json(
+                harness
+                    .send(empty_request("GET", &path, Some(ADMIN_TOKEN)))
+                    .await,
+            )
+            .await;
+            details.recent
+        };
+
+        let manifest: SessionManifest =
+            response_json(harness.enroll(grant.access_code.expose_secret()).await).await;
+        let session_id = manifest.session_token.expose_secret()[..12].to_owned();
+        let auth = manifest.transports[0]
+            .credential
+            .as_ref()
+            .expect("Hysteria credential")
+            .auth
+            .clone();
+        assert!(harness.hysteria_accepts(auth.expose_secret()).await);
+        assert!(harness.hysteria_accepts(auth.expose_secret()).await);
+        let mut forged = auth.expose_secret().to_owned();
+        let last = if forged.ends_with('a') { "b" } else { "a" };
+        forged.replace_range(forged.len() - 1.., last);
+        assert!(!harness.hysteria_accepts(&forged).await);
+        let wrong_code = format!("{}{}", grant.id, "x".repeat(22));
+        assert_eq!(
+            harness.enroll(&wrong_code).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        harness.update(&grant.id, json!({"paused": true})).await;
+        // The paused invite's session is gone, so this sign-in names nobody.
+        assert!(!harness.hysteria_accepts(auth.expose_secret()).await);
+        harness.enroll(grant.access_code.expose_secret()).await;
+
+        let recent = recent().await;
+        let events = recent.iter().map(|entry| entry.event).collect::<Vec<_>>();
+        assert_eq!(
+            events,
+            [
+                Event::RefusedPaused,
+                Event::EndedByChange,
+                Event::RefusedWrongCode,
+                Event::SignInRefused,
+                Event::SignedIn,
+                Event::Enrolled,
+            ]
+        );
+        let signed_in = &recent[4];
+        assert_eq!(signed_in.count, 2);
+        assert_eq!(signed_in.protocol, Some(TransportProtocol::Hysteria2));
+        assert_eq!(signed_in.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(recent[0].session_id, None);
+        assert_eq!(recent[0].client_name, "Laptop");
+        // The address the protocol server reported is never kept.
+        let encoded = serde_json::to_string(&recent).unwrap();
+        assert!(!encoded.contains("192.0.2.10"));
+
+        // Revoking forgets the invite's activity with it.
+        harness
+            .send(empty_request("DELETE", &path, Some(ADMIN_TOKEN)))
+            .await;
+        assert!(harness.state.access.recent_activity(&grant.id).is_empty());
     }
 }

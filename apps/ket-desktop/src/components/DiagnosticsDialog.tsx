@@ -55,7 +55,8 @@ export function DiagnosticsDialog({ open, report, onClose }: DiagnosticsDialogPr
         </header>
         <div className="diagnostics-body">
           <p>
-            This report contains connection stages and cleanup results. Access codes and session credentials are excluded.
+            Send this to the person who runs your server. It shows what each protocol tried and why it stopped,
+            without addresses, access codes, or the sites you visited.
           </p>
           <pre role="region" tabIndex={0} aria-label="Connection diagnostic report">{report}</pre>
         </div>

@@ -105,7 +105,8 @@ internal fun KetDiagnosticsDialog(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
                     if (!compactHeight) {
                         Text(
-                            "Connection stages and cleanup results are included. Access codes and session credentials are excluded.",
+                            "Send this to the person who runs your server. It shows what each protocol tried and why it " +
+                                "stopped, without addresses, access codes, or the sites you visited.",
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,

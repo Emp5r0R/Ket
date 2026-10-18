@@ -14,7 +14,7 @@ describe("diagnostics dialog", () => {
     rerender(<DiagnosticsDialog open report="safe report" onClose={vi.fn()} />);
     expect(screen.getByRole("dialog", { name: "Connection diagnostics" })).toBeInTheDocument();
     expect(screen.getByText("safe report")).toBeInTheDocument();
-    expect(screen.getByText(/credentials are excluded/i)).toBeInTheDocument();
+    expect(screen.getByText(/without addresses, access codes/i)).toBeInTheDocument();
   });
 
   it("keeps actions outside the scrollable report region", () => {

@@ -217,7 +217,11 @@ make_install "$install_dir" v1.1.0
   details=$(jq -c --argjson since "$((now - 600))" '. + {devices: [{session_id: "Session00001",
     client_name: "Ket Android", connected_at_epoch_seconds: $since, session_expires_at_epoch_seconds: 0,
     traffic: {available: true, bytes_sent: 1048576, bytes_received: 524288, online_connections: 1,
-    observed_at_epoch_seconds: 0}}]}' <<<"$grant")
+    observed_at_epoch_seconds: 0}}],
+    recent: [{event: "signed_in", session_id: "Session00001", client_name: "Ket Android",
+      protocol: "stealth", count: 3, first_at_epoch_seconds: $since, last_at_epoch_seconds: ($since + 300)},
+     {event: "refused_device_limit", client_name: "linux/1.2.0", count: 1,
+      first_at_epoch_seconds: $since, last_at_epoch_seconds: $since}]}' <<<"$grant")
   admin_log="$work/admin.log"
   : > "$admin_log"
   admin_request() {
@@ -266,6 +270,16 @@ make_install "$install_dir" v1.1.0
   contains 'show protocols' "$output" 'Protocols:  all'
   contains 'show connected device' "$output" 'Ket Android'
   contains 'show traffic' "$output" '1.5 MB'
+  contains 'show device tag' "$output" 'Ket Android #Sess'
+  contains 'show activity' "$output" 'Reached the server over HTTPS Stealth'
+  contains 'show activity count and age' "$output" '5 min ago'
+  contains 'show refused enrollment' "$output" 'Refused: the device limit is reached'
+  output=$(details=$(jq -c 'del(.recent)' <<<"$details") cmd_invites show Grant00001)
+  if [[ $output == *'Recent activity'* ]]; then fail_test 'an older server showed an activity section'; fi
+  while read -r event; do
+    what=$(activity_what "{\"event\":\"$event\",\"protocol\":\"stealth\"}" "$offered_fixture")
+    [[ -n $what && $what != "$event" && $what != *null* ]] || fail_test "activity event $event has no wording"
+  done < <(jq -r '.[]' "$root/crates/ket-core/tests/vectors/grant-activity-events.json")
   if output=$(cmd_invites show Missing001 2>&1); then fail_test 'an unknown invite was shown'; fi
   contains 'unknown invite explained' "$output" 'no invite with that ID'
   if (cmd_invites show 'bad id!' 2>/dev/null); then fail_test 'an unsafe grant ID was accepted'; fi

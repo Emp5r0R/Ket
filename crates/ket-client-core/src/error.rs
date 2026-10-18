@@ -11,31 +11,31 @@ pub struct ClientIssue {
 
 #[derive(Debug, Error)]
 pub enum ClientError {
-    #[error("server URL is invalid: {0}")]
+    #[error("the server address is not valid: {0}")]
     InvalidEndpoint(String),
     #[error("input is invalid: {0}")]
     InvalidInput(String),
-    #[error("the client has not been enrolled")]
+    #[error("this device has not joined a server yet")]
     NotEnrolled,
-    #[error("a tunnel is already connected")]
+    #[error("Ket is already connected")]
     AlreadyConnected,
-    #[error("the control server rejected the request ({code})")]
+    #[error("the server refused the request ({code})")]
     Api {
         status: u16,
         code: String,
         message: String,
     },
-    #[error("the control server could not be reached: {0}")]
+    #[error("Ket could not reach the server: {0}")]
     Network(&'static str),
-    #[error("the control server response exceeded the size limit")]
+    #[error("the server sent a reply that was too large")]
     ResponseTooLarge,
-    #[error("the control server returned invalid data: {0}")]
+    #[error("the server sent a reply Ket could not read: {0}")]
     InvalidResponse(String),
-    #[error("no compatible transport is available")]
+    #[error("none of the server's protocols can be used on this device")]
     NoCompatibleTransport,
     #[error("{0} is not available for this invite; choose Automatic or another protocol")]
     PreferredProtocolUnavailable(String),
-    #[error("transport {transport_id} failed: {message}")]
+    #[error("transport {transport_id}: could not look up the server's address ({message})")]
     DnsResolution {
         transport_id: String,
         message: &'static str,
@@ -46,9 +46,9 @@ pub enum ClientError {
         message: String,
         retryable: bool,
     },
-    #[error("local client operation failed: {0}")]
+    #[error("something went wrong on this device: {0}")]
     Local(String),
-    #[error("the invite is not usable: {0}")]
+    #[error("the invite cannot be used: {0}")]
     Invite(ket_invite::InviteError),
     #[error("the server could not prove it is the node named in the invite")]
     NodeIdentityMismatch,
@@ -110,10 +110,18 @@ impl ClientError {
             Self::PreferredProtocolUnavailable(_) => {
                 issue("preferred_protocol_unavailable", self, false)
             }
-            Self::DnsResolution { .. } => issue("transport_dns_failed", self, true),
-            Self::Transport { retryable, .. } => ClientIssue {
+            // Apps show the issue next to the protocol's name, so its
+            // message leaves out the transport ID that logs carry.
+            Self::DnsResolution { message, .. } => ClientIssue {
+                code: "transport_dns_failed".to_owned(),
+                message: format!("could not look up the server's address ({message})"),
+                retryable: true,
+            },
+            Self::Transport {
+                message, retryable, ..
+            } => ClientIssue {
                 code: "transport_failed".to_owned(),
-                message: self.to_string(),
+                message: message.clone(),
                 retryable: *retryable,
             },
             Self::Local(_) => issue("local_failure", self, false),
@@ -172,6 +180,21 @@ fn issue(code: &str, error: &ClientError, retryable: bool) -> ClientIssue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transport_issues_say_what_happened_without_internal_ids() {
+        let failed = ClientError::transport("reality-primary", "Xray check timed out", true);
+        assert_eq!(failed.issue().message, "Xray check timed out");
+        assert!(
+            failed.to_string().contains("reality-primary"),
+            "logs keep the ID"
+        );
+        let unresolved = ClientError::dns_resolution("hy2-primary", "DNS timed out");
+        assert_eq!(
+            unresolved.issue().message,
+            "could not look up the server's address (DNS timed out)"
+        );
+    }
 
     #[test]
     fn every_error_variant_has_a_stable_public_issue_policy() {

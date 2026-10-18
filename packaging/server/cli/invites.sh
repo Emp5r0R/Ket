@@ -226,23 +226,73 @@ invites_show() {
     "  Created:    \(.created_at_epoch_seconds | when)"
   ' <<<"$body"
   info "  Protocols:  $(protocol_names "$(jq -c '.protocols' <<<"$body")" "$offered")"
-  if [[ $(jq '.devices | length' <<<"$body") == 0 ]]; then
-    info ''
-    info 'No device is connected through it right now.'
-    return 0
-  fi
   info ''
-  jq -r '
-    def size: if . >= 1073741824 then "\(. / 1073741824 * 10 | floor / 10) GB"
-      elif . >= 1048576 then "\(. / 1048576 * 10 | floor / 10) MB"
-      elif . >= 1024 then "\(. / 1024 | floor) KB" else "\(.) B" end;
-    ["DEVICE", "CONNECTED SINCE", "TRAFFIC"],
-    (.devices[] | [ (.client_name | gsub("[[:cntrl:]]"; "") | .[0:32]),
-                    (.connected_at_epoch_seconds | strftime("%Y-%m-%d %H:%M UTC")),
-                    (if .traffic.available then (.traffic.bytes_sent + .traffic.bytes_received | size)
-                     else "unknown" end) ])
+  if [[ $(jq '.devices | length' <<<"$body") == 0 ]]; then
+    info 'No device is connected through it right now.'
+  else
+    jq -r "$DEVICE_JQ"'
+      def size: if . >= 1073741824 then "\(. / 1073741824 * 10 | floor / 10) GB"
+        elif . >= 1048576 then "\(. / 1048576 * 10 | floor / 10) MB"
+        elif . >= 1024 then "\(. / 1024 | floor) KB" else "\(.) B" end;
+      ["DEVICE", "CONNECTED SINCE", "TRAFFIC"],
+      (.devices[] | [ device,
+                      (.connected_at_epoch_seconds | strftime("%Y-%m-%d %H:%M UTC")),
+                      (if .traffic.available then (.traffic.bytes_sent + .traffic.bytes_received | size)
+                       else "unknown" end) ])
+      | @tsv
+    ' <<<"$body" | column -t -s $'\t'
+  fi
+  invite_activity "$body" "$offered"
+}
+
+# The app's name and the start of its session ID, which tells two devices
+# with the same app apart and matches them up across the tables.
+DEVICE_JQ='def device: (.client_name | gsub("[[:cntrl:]]"; "") | .[0:32])
+  + (if .session_id then " #\(.session_id[0:4])" else "" end);'
+
+# What each activity event means; every name in
+# crates/ket-core/tests/vectors/grant-activity-events.json has an entry.
+# shellcheck disable=SC2016 # jq, not shell, expands these.
+ACTIVITY_JQ='def protocol: . as $p | ($offered | map(select(.protocol == $p)) | first | .display_name) // $p;
+  def what: {
+    enrolled: "Connected",
+    checked_in: "Checked in",
+    left: "Disconnected",
+    lease_ended: "Stopped checking in, so its session ended",
+    ended_by_change: "Disconnected by a change to the invite",
+    refused_wrong_code: "Refused: wrong access code",
+    refused_expired: "Refused: the invite has ended",
+    refused_paused: "Refused: the invite is paused",
+    refused_device_limit: "Refused: the device limit is reached",
+    refused_server_full: "Refused: the server is full",
+    refused_update_required: "Refused: the app must be updated",
+    refused_no_protocol: "Refused: the server offers no protocol this invite allows",
+    refused_server_unavailable: "Refused: the protocol servers were not ready",
+    signed_in: "Reached the server over \(.protocol | protocol)",
+    sign_in_refused: "\(.protocol | protocol) refused it: its session had ended",
+    sign_in_refused_protocol: "\(.protocol | protocol) refused it: the invite does not allow it"
+  }[.event] // .event;'
+
+# activity_what EVENT_JSON OFFERED: one event in words.
+activity_what() { jq -r --argjson offered "$2" "$ACTIVITY_JQ"' what' <<<"$1"; }
+
+# invite_activity DETAILS OFFERED: what devices recently did with the invite,
+# newest first. Older servers keep no activity, so nothing is printed.
+invite_activity() {
+  [[ $(jq '.recent // [] | length' <<<"$1") != 0 ]] || return 0
+  info ''
+  info 'Recent activity (since Ket last started; kept in memory only, without addresses):'
+  jq -r --argjson now "$(date +%s)" --argjson offered "$2" "$DEVICE_JQ $ACTIVITY_JQ"'
+    def ago: ($now - .) as $s
+      | if $s < 60 then "just now" elif $s < 3600 then "\($s / 60 | floor) min ago"
+        elif $s < 86400 then "\($s / 3600 | floor) h ago" else "\($s / 86400 | floor) d ago" end;
+    ["WHEN", "DEVICE", "WHAT", "TIMES"],
+    (.recent[] | [ (.last_at_epoch_seconds | ago), device, what, "\(.count)" ])
     | @tsv
-  ' <<<"$body" | column -t -s $'\t'
+  ' <<<"$1" | column -t -s $'\t'
+  info ''
+  info 'OpenVPN and Hysteria 2 report when a device reaches them. A device that connects'
+  info 'but never reaches them is probably on a network that blocks those protocols.'
 }
 
 # report_change REPLY: says what a change did to connected devices.

@@ -1,0 +1,65 @@
+{
+  "description": "Message redaction for shareable diagnostic reports. The desktop (apps/ket-desktop/src/lib/diagnostics.ts) and Android (ConnectionDiagnostics.kt) apps both replay these cases.",
+  "cases": [
+    {
+      "name": "plain wording is kept",
+      "input": "the control server could not be reached: request timed out",
+      "output": "the control server could not be reached: request timed out"
+    },
+    {
+      "name": "IPv4 addresses and ports",
+      "input": "connect to 203.0.113.5:443 failed via 192.168.1.1",
+      "output": "connect to [address] failed via [address]"
+    },
+    {
+      "name": "IPv6 addresses, bracketed or bare",
+      "input": "dial [2001:db8::1]:8443 then fe80::1%wlan0 and ::1",
+      "output": "dial [address] then [address] and [address]"
+    },
+    {
+      "name": "host names with and without ports",
+      "input": "TLS to vpn.example.com:443 for www.wikipedia.org failed",
+      "output": "TLS to [host] for [host] failed"
+    },
+    {
+      "name": "URLs as a whole",
+      "input": "GET https://ket.example.net/v1/sessions?x=1 returned 502",
+      "output": "GET [url] returned 502"
+    },
+    {
+      "name": "invites",
+      "input": "rejected ket:invite:v1.AAAABBBBCCCC.dddd",
+      "output": "rejected [invite]"
+    },
+    {
+      "name": "bearer tokens and named secrets",
+      "input": "Authorization: Bearer abc.def-123 password=hunter2 session_token: zzz",
+      "output": "Authorization: Bearer [REDACTED] password=[REDACTED] session_token: [REDACTED]"
+    },
+    {
+      "name": "long opaque strings",
+      "input": "token A2345678901234567890123456789012 and key q83vEjRWeJq83vEjRWeJq83vEjRWeJq83vEjRWeJ_- end",
+      "output": "token [REDACTED] and key [REDACTED] end"
+    },
+    {
+      "name": "email addresses",
+      "input": "contact admin@example.org now",
+      "output": "contact [email] now"
+    },
+    {
+      "name": "MAC addresses",
+      "input": "gateway aa:bb:cc:dd:ee:ff answered",
+      "output": "gateway [address] answered"
+    },
+    {
+      "name": "versions, durations, and codes are kept",
+      "input": "Ket 1.2.0 timed out after 15s (code transport_failed, HTTP 504)",
+      "output": "Ket 1.2.0 timed out after 15s (code transport_failed, HTTP 504)"
+    },
+    {
+      "name": "line breaks collapse",
+      "input": "first line\r\n\tsecond line",
+      "output": "first line second line"
+    }
+  ]
+}

@@ -16,9 +16,10 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ket_core::{
-    CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate, CreateSessionRequest, ErrorResponse, HealthState,
-    NodeStatus, SEALED_CONTROL_PATH, SecretString, SessionManifest, SessionStatus, SessionTraffic,
-    SessionTransport, TransportCredential, TransportProtocol, UpdateAdvice,
+    CLIENT_UPDATE_REQUIRED_CODE, ClientUpdate, CreateSessionRequest, ErrorResponse,
+    GrantActivityEvent, HealthState, NodeStatus, SEALED_CONTROL_PATH, SecretString,
+    SessionManifest, SessionStatus, SessionTraffic, SessionTransport, TransportCredential,
+    TransportProtocol, UpdateAdvice,
 };
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -33,6 +34,7 @@ mod grants;
 mod sealed;
 
 use crate::{
+    activity::Activity,
     config::{HysteriaObfuscation, ServerConfig},
     data_plane::{self, DataPlaneControl},
     service::{AccessService, CreatedSession, ServiceError, SessionAllocation, unix_time},
@@ -227,7 +229,7 @@ async fn create_session(
             .metrics
             .rejected_sessions
             .fetch_add(1, Ordering::Relaxed);
-        roll_back_session(&state, &created).await;
+        refuse_session(&state, &created, GrantActivityEvent::RefusedUpdateRequired).await;
         return Err(ApiError::client_update_required(updates.client));
     }
     if let Err(error) = state.data_plane.provision(&allocation).await {
@@ -235,7 +237,12 @@ async fn create_session(
             .metrics
             .rejected_sessions
             .fetch_add(1, Ordering::Relaxed);
-        roll_back_session(&state, &created).await;
+        refuse_session(
+            &state,
+            &created,
+            GrantActivityEvent::RefusedServerUnavailable,
+        )
+        .await;
         return Err(ApiError::data_plane_unavailable(error));
     }
     state
@@ -248,13 +255,24 @@ async fn create_session(
             .metrics
             .rejected_sessions
             .fetch_add(1, Ordering::Relaxed);
-        roll_back_session(&state, &created).await;
+        refuse_session(&state, &created, GrantActivityEvent::RefusedNoProtocol).await;
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "grant_protocols_unavailable",
             "the server no longer offers any protocol this invite allows",
         ));
     }
+    state
+        .access
+        .record_activity(
+            &created.grant_id,
+            Activity::session(
+                GrantActivityEvent::Enrolled,
+                &created.id,
+                &created.client_name,
+            ),
+        )
+        .await;
     let response = SessionManifest {
         session_token: created.token,
         session_expires_at_epoch_seconds: created.expires_at_epoch_seconds,
@@ -266,11 +284,18 @@ async fn create_session(
     signed_manifest_response(&state, enrollment_nonce.as_ref(), &response)
 }
 
-/// Releases a session that was created but must not be used.
-async fn roll_back_session(state: &AppState, created: &CreatedSession) {
+/// Records why a created session must not be used, and ends it.
+async fn refuse_session(state: &AppState, created: &CreatedSession, event: GrantActivityEvent) {
+    state
+        .access
+        .record_activity(
+            &created.grant_id,
+            Activity::enrollment(event, &created.client_name),
+        )
+        .await;
     match state
         .access
-        .release_session(created.token.expose_secret())
+        .discard_session(created.token.expose_secret())
         .await
     {
         Ok(session) => state.kick_sessions(&[session]).await,
@@ -344,7 +369,18 @@ async fn renew_session(
     let updates = state.config.client_updates.advice(&headers, unix_time());
     if updates::is_required(&updates) {
         // Authenticate first so the refusal reveals nothing to a stranger.
-        state.access.session(token).await?;
+        let session = state.access.session(token).await?;
+        state
+            .access
+            .record_activity(
+                &session.grant_id,
+                Activity::session(
+                    GrantActivityEvent::RefusedUpdateRequired,
+                    &session.id,
+                    &session.client_name,
+                ),
+            )
+            .await;
         return Err(ApiError::client_update_required(updates.client));
     }
     let session = state.access.renew_session(token).await?;
@@ -388,10 +424,9 @@ async fn authenticate_hysteria(
     let session = match protocol {
         Some(protocol) => state
             .access
-            .authenticate_data_plane(request.auth.expose_secret())
+            .authenticate_data_plane(request.auth.expose_secret(), &protocol, None)
             .await
-            .ok()
-            .filter(|session| session.protocols.allows(&protocol)),
+            .ok(),
         None => None,
     };
     match session {
@@ -437,19 +472,18 @@ async fn authenticate_openvpn(
         let candidate = candidate.as_bytes();
         expected.len() == candidate.len() && bool::from(expected.ct_eq(candidate))
     });
-    let session = if authorized {
-        state
+    let protocol = transport_protocol(&state, &config.transport_id);
+    let session = match protocol.filter(|_| authorized) {
+        Some(protocol) => state
             .access
-            .authenticate_data_plane(request.password.expose_secret())
+            .authenticate_data_plane(
+                request.password.expose_secret(),
+                &protocol,
+                Some(&request.username),
+            )
             .await
-            .ok()
-            .filter(|session| session.id == request.username)
-            .filter(|session| {
-                transport_protocol(&state, &config.transport_id)
-                    .is_some_and(|protocol| session.protocols.allows(&protocol))
-            })
-    } else {
-        None
+            .ok(),
+        None => None,
     };
     if session.is_some() {
         state
@@ -786,7 +820,7 @@ impl From<ServiceError> for ApiError {
             ServiceError::InvalidInput(message) => {
                 Self::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", message)
             }
-            ServiceError::Unauthorized => Self::unauthorized(),
+            ServiceError::Unauthorized | ServiceError::Forbidden => Self::unauthorized(),
             ServiceError::GrantExpired => {
                 Self::new(StatusCode::FORBIDDEN, "grant_expired", error.to_string())
             }

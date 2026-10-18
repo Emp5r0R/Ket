@@ -183,10 +183,13 @@ class MainActivity : ComponentActivity() {
                         onForgetProfile = {
                             runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
                         },
-                        diagnosticReport = AndroidConnectionDiagnostics.report(
-                            BuildConfig.VERSION_NAME,
-                            tunnelState.value,
-                        ),
+                        diagnosticReport = {
+                            AndroidConnectionDiagnostics.report(
+                                BuildConfig.VERSION_NAME,
+                                tunnelState.value,
+                                DiagnosticEnvironment.current(this, connectionOptions.value),
+                            )
+                        },
                         onConnect = ::requestConnection,
                         onDisconnect = { KetTunnelController.disconnect(this) },
                     )

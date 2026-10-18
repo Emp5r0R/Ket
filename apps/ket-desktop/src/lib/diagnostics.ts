@@ -1,4 +1,11 @@
-import type { ClientIssue, ClientPhase, DesktopState } from "../types";
+import type {
+  ClientIssue,
+  ClientPhase,
+  DesktopState,
+  DiagnosticEnvironment,
+  TransportFallback,
+  TransportSummary,
+} from "../types";
 import type { ProtocolPreference } from "./protocols";
 
 export type DiagnosticOutcome = "started" | "succeeded" | "failed" | "observed";
@@ -17,18 +24,46 @@ export interface ConnectionDiagnostic {
 export interface DiagnosticContext {
   platform: string;
   version: string;
+  /** Null until the app has asked the system. */
+  environment: DiagnosticEnvironment | null;
   engineStatus: DesktopState["engine"]["status"];
   currentPhase: ClientPhase;
   nodeId: string | null;
+  serverVersion: string | null;
+  /**
+   * How control requests travel: always sealed to the server's key, sealed
+   * when the server offers it (older invites), or in the clear inside TLS.
+   */
+  control: "sealed" | "sealed_if_offered" | "plain";
   protocolPreference: ProtocolPreference;
-  activeTransportId: string | null;
+  automaticExcluded: readonly string[];
+  activeTransport: TransportSummary | null;
+  handshakeLatencyMs: number | null;
+  reconnectAttempt: number;
+  fallbacks: readonly TransportFallback[];
 }
 
+const REPORT_FORMAT = 2;
 const MAX_DIAGNOSTICS = 80;
 const MAX_MESSAGE_LENGTH = 600;
-const SECRET_PATTERN = /\b[A-Za-z0-9]{32}\b/g;
-const BEARER_PATTERN = /(bearer\s+)[A-Za-z0-9._~+/=-]+/gi;
-const TOKEN_PATTERN = /((?:session|access|token|password|auth)(?:[_ -]?(?:token|code))?\s*[:=]\s*)\S+/gi;
+const NODE_ID_SHOWN = 8;
+
+/**
+ * Applied in order to every message. The Android app applies the same rules,
+ * and both replay apps/vectors/diagnostic-redaction.json.
+ */
+const REDACTIONS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/ket:invite:\S+/gi, "[invite]"],
+  [/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "[url]"],
+  [/(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED]"],
+  [/((?:session|access|token|password|auth)(?:[_ -]?(?:token|code))?\s*[:=]\s*)\S+/gi, "$1[REDACTED]"],
+  [/\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g, "[email]"],
+  [/(?<![A-Za-z0-9_+/=-])(?=[A-Za-z0-9_+/=-]*\d)(?=[A-Za-z0-9_+/=-]*[A-Za-z])[A-Za-z0-9_+/=-]{32,}(?![A-Za-z0-9_+/=-])/g, "[REDACTED]"],
+  [/\[[0-9a-f:.]+(?:%[\w.-]+)?\](?::\d{1,5})?/gi, "[address]"],
+  [/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?\b/g, "[address]"],
+  [/(?<![\w:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:%[\w.-]+)?(?![\w:])/gi, "[address]"],
+  [/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9](?::\d{1,5})?\b/gi, "[host]"],
+];
 
 export function appendDiagnostic(
   diagnostics: ConnectionDiagnostic[],
@@ -43,16 +78,27 @@ export function formatDiagnosticReport(
   generatedAt = new Date(),
 ): string {
   const lines = [
-    "Ket connection diagnostics",
+    "Ket diagnostic report",
+    "Share it with the person who runs your server. It contains no addresses, access codes, tokens, or sites you visited.",
+    `format=${REPORT_FORMAT}`,
     `generated_at=${generatedAt.toISOString()}`,
-    `version=${context.version}`,
+    `app=desktop ${context.version}`,
     `platform=${context.platform}`,
+    `system=${field(context.environment?.system ?? "unknown")}`,
+    `network=${context.environment?.network ?? "unknown"}`,
     `engine_status=${context.engineStatus}`,
-    `current_phase=${context.currentPhase}`,
-    `node_id=${context.nodeId ?? "none"}`,
+    `server=${context.nodeId === null ? "none" : `#${field(context.nodeId).slice(0, NODE_ID_SHOWN)}`}`,
+    `server_version=${field(context.serverVersion ?? "unknown")}`,
+    `control=${context.control}`,
     `protocol_preference=${context.protocolPreference}`,
-    `active_transport=${context.activeTransportId ?? "none"}`,
+    `automatic_skips=${context.automaticExcluded.length === 0 ? "none" : context.automaticExcluded.map(field).join(",")}`,
+    `current_phase=${context.currentPhase}`,
+    `active_transport=${context.activeTransport ? field(context.activeTransport.id) : "none"}`,
+    `reconnect_attempt=${context.reconnectAttempt}`,
     "secrets=redacted_by_design",
+    "",
+    "attempts:",
+    ...attemptLines(context),
     "",
     "events:",
   ];
@@ -86,12 +132,49 @@ export function formatDiagnosticReport(
   return `${lines.join("\n")}\n`;
 }
 
+/** The transports the latest connection left, in order, then the one in use. */
+function attemptLines(context: DiagnosticContext): string[] {
+  const lines = context.fallbacks.map((fallback, index) => {
+    const fields = [
+      `attempt=${index + 1}`,
+      `protocol=${field(fallback.transport.protocol)}`,
+      `transport=${field(fallback.transport.id)}`,
+      `stage=${fallback.stage ?? "unknown"}`,
+      `outcome=failed`,
+    ];
+    if (fallback.elapsed_ms !== undefined && fallback.elapsed_ms !== null) {
+      fields.push(`elapsed_ms=${Math.max(0, Math.round(fallback.elapsed_ms))}`);
+    }
+    fields.push(
+      `code=${field(fallback.issue.code)}`,
+      `retryable=${fallback.issue.retryable}`,
+      `message=${sanitizeDiagnosticMessage(fallback.issue.message)}`,
+    );
+    return fields.join(" ");
+  });
+  if (context.activeTransport && context.currentPhase === "connected") {
+    const fields = [
+      `attempt=${lines.length + 1}`,
+      `protocol=${field(context.activeTransport.protocol)}`,
+      `transport=${field(context.activeTransport.id)}`,
+      "outcome=connected",
+    ];
+    if (context.handshakeLatencyMs !== null) fields.push(`handshake_ms=${context.handshakeLatencyMs}`);
+    lines.push(fields.join(" "));
+  }
+  return lines.length === 0 ? ["none"] : lines;
+}
+
+/** One report value: no spaces or line breaks, bounded. */
+function field(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.:/#()-]/g, "_").slice(0, 96);
+}
+
 export function sanitizeDiagnosticMessage(message: string): string {
-  return message
-    .replace(BEARER_PATTERN, "$1[REDACTED]")
-    .replace(TOKEN_PATTERN, "$1[REDACTED]")
-    .replace(SECRET_PATTERN, "[REDACTED]")
+  return REDACTIONS
+    .reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), message)
     .replace(/[\r\n\t]+/g, " ")
+    .replace(/ {2,}/g, " ")
     .trim()
     .slice(0, MAX_MESSAGE_LENGTH);
 }

@@ -80,6 +80,8 @@ android { namespace = "com.ket.android"; compileSdk = 36
             resources.srcDir("src/main/res/raw")
             // Invite conformance vectors are owned by the Rust reference implementation.
             resources.srcDir(rootProject.layout.projectDirectory.dir("../../crates/ket-invite/tests/vectors"))
+            // Diagnostic redaction vectors are shared with the desktop app.
+            resources.srcDir(rootProject.layout.projectDirectory.dir("../vectors"))
         }
     }
     packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += setOf("**/libhysteria.so", "**/libsslocal.so", "**/libxray.so", "**/libwstunnel.so", "**/libopenvpn.so", "**/libovpnexec.so") } }

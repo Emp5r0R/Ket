@@ -17,7 +17,7 @@ use crate::route_health::{HttpsRouteHealthProbe, RouteHealthProbe};
 use crate::validation::{validate_manifest, validate_status};
 use crate::{
     ActiveTunnel, ClientError, ClientIssue, ClientPhase, ClientSnapshot, ConnectOptions,
-    ControlEndpoint, ControlPlane, ProbeReport, SelectionPolicy, TransportAdapter,
+    ControlEndpoint, ControlPlane, FallbackStage, ProbeReport, SelectionPolicy, TransportAdapter,
     TransportFallback, TransportHistory, TransportMemory, TransportSelector, TransportSummary,
     TunnelStatus,
 };
@@ -682,6 +682,7 @@ impl KetClient {
                 .find(|adapter| adapter.supports(&transport))
                 .expect("the selector admitted only supported transports");
             let summary = TransportSummary::from(&transport.profile);
+            let attempt_started = std::time::Instant::now();
             self.update_snapshot(|snapshot| {
                 snapshot.phase = if reconnecting {
                     ClientPhase::Reconnecting
@@ -705,7 +706,13 @@ impl KetClient {
                     if let Some(probe) = self.cached_probe(&transport, &error).await {
                         probe
                     } else {
-                        self.record_failure(&summary, &error).await;
+                        self.record_failure(
+                            &summary,
+                            &error,
+                            FallbackStage::Probe,
+                            attempt_started,
+                        )
+                        .await;
                         last_error = Some(error);
                         continue;
                     }
@@ -760,7 +767,8 @@ impl KetClient {
                     return Ok(self.snapshot());
                 }
                 Some(Err(error)) => {
-                    self.record_failure(&summary, &error).await;
+                    self.record_failure(&summary, &error, FallbackStage::Connect, attempt_started)
+                        .await;
                     last_error = Some(error);
                 }
             }
@@ -946,9 +954,21 @@ impl KetClient {
     }
 
     /// Cools a transport down after it failed to connect and records why.
-    async fn record_failure(&self, transport: &TransportSummary, error: &ClientError) {
+    async fn record_failure(
+        &self,
+        transport: &TransportSummary,
+        error: &ClientError,
+        stage: FallbackStage,
+        started: std::time::Instant,
+    ) {
         self.cool_down(&transport.id).await;
-        self.note_fallback(transport.clone(), error.issue());
+        let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        self.note_fallback(TransportFallback {
+            transport: transport.clone(),
+            issue: error.issue(),
+            stage,
+            elapsed_ms: Some(elapsed_ms),
+        });
     }
 
     /// Cools down a transport whose connected tunnel was lost and records why.
@@ -959,14 +979,16 @@ impl KetClient {
             .active_transport
             .filter(|transport| transport.id == transport_id);
         if let Some(transport) = transport {
-            self.note_fallback(
+            self.note_fallback(TransportFallback {
                 transport,
-                ClientIssue {
+                issue: ClientIssue {
                     code: code.to_owned(),
                     message,
                     retryable: true,
                 },
-            );
+                stage: FallbackStage::Connected,
+                elapsed_ms: None,
+            });
         }
     }
 
@@ -982,11 +1004,9 @@ impl KetClient {
         }
     }
 
-    fn note_fallback(&self, transport: TransportSummary, issue: ClientIssue) {
+    fn note_fallback(&self, fallback: TransportFallback) {
         self.update_snapshot(|snapshot| {
-            snapshot
-                .fallbacks
-                .push(TransportFallback { transport, issue });
+            snapshot.fallbacks.push(fallback);
             let excess = snapshot.fallbacks.len().saturating_sub(MAX_FALLBACKS);
             snapshot.fallbacks.drain(..excess);
         });
@@ -1949,6 +1969,9 @@ mod tests {
                 .message
                 .contains("simulated censorship")
         );
+        // The blocked transport's server could not be reached.
+        assert_eq!(connected.fallbacks[0].stage, FallbackStage::Probe);
+        assert!(connected.fallbacks[0].elapsed_ms.is_some());
         assert_eq!(
             *adapter.connect_options.lock().unwrap(),
             [split],
@@ -1971,6 +1994,11 @@ mod tests {
                 ("reality-primary", "transport_failed"),
                 ("hy2-fallback", "transport_lost")
             ]
+        );
+        let lost = &recovered.fallbacks[1];
+        assert_eq!(
+            (lost.stage, lost.elapsed_ms),
+            (FallbackStage::Connected, None)
         );
         assert_eq!(adapter.connect_options.lock().unwrap().len(), 2);
         assert!(adapter.connect_options.lock().unwrap()[1].split_tls_hello);

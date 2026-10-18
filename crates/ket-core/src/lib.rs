@@ -9,8 +9,8 @@ mod update;
 
 pub use contract::*;
 pub use grant::{
-    AccessGrantDetails, ConnectedDevice, OfferedProtocol, ProtocolAccess, UpdateAccessGrantRequest,
-    UpdateAccessGrantResponse,
+    AccessGrantDetails, ConnectedDevice, GrantActivity, GrantActivityEvent, OfferedProtocol,
+    ProtocolAccess, UpdateAccessGrantRequest, UpdateAccessGrantResponse,
 };
 pub use sealed::{
     SEALED_CLOCK_SKEW_CODE, SEALED_CONTENT_TYPE, SEALED_CONTROL_PATH,

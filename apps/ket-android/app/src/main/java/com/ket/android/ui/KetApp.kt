@@ -110,7 +110,8 @@ internal fun KetApp(
     onConnectionOptionsChange: (ConnectionOptions) -> Unit = {},
     loadInstalledApps: () -> List<InstalledApp> = { emptyList() },
     onForgetProfile: () -> Unit = {},
-    diagnosticReport: String = "Ket Android connection diagnostics\nevents:\nnone\n",
+    /** Builds the diagnostic report when it is opened. */
+    diagnosticReport: () -> String = { "Ket diagnostic report\nevents:\nnone\n" },
     appVersion: String = "",
     inviteReader: InviteReader = appInviteReader,
     onConnect: (String, String, KetProtocol?, NodePublicKey?) -> Unit,
@@ -359,7 +360,8 @@ internal fun KetApp(
         }
     }
     if (diagnosticsVisible) {
-        KetDiagnosticsDialog(report = diagnosticReport, onDismissRequest = { diagnosticsVisible = false })
+        val report = remember { diagnosticReport() }
+        KetDiagnosticsDialog(report = report, onDismissRequest = { diagnosticsVisible = false })
     }
     if (sharedInvite != null && profileSaved) {
         AlertDialog(
