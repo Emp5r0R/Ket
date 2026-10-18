@@ -105,7 +105,7 @@ impl RouteSystem for WindowsRoutes {
 }
 
 /// A copy of the routing table.
-fn forward_rows() -> io::Result<Vec<MIB_IPFORWARD_ROW2>> {
+pub(crate) fn forward_rows() -> io::Result<Vec<MIB_IPFORWARD_ROW2>> {
     let mut table: *mut MIB_IPFORWARD_TABLE2 = ptr::null_mut();
     check(unsafe { GetIpForwardTable2(AF_UNSPEC, &mut table) })?;
     let rows = unsafe {
@@ -203,7 +203,7 @@ fn interface_metric(family: Family, luid: NET_LUID_LH) -> u32 {
     }
 }
 
-fn alias(luid: &NET_LUID_LH) -> Option<String> {
+pub(crate) fn alias(luid: &NET_LUID_LH) -> Option<String> {
     let mut buffer = [0_u16; IF_MAX_STRING_SIZE as usize + 1];
     (unsafe { ConvertInterfaceLuidToAlias(luid, buffer.as_mut_ptr(), buffer.len()) }
         == ERROR_SUCCESS)
@@ -221,7 +221,7 @@ fn family_of(address: &SOCKADDR_INET) -> Option<Family> {
     }
 }
 
-fn address_of(address: &SOCKADDR_INET) -> Option<IpAddr> {
+pub(crate) fn address_of(address: &SOCKADDR_INET) -> Option<IpAddr> {
     match family_of(address)? {
         Family::V4 => Some(IpAddr::V4(Ipv4Addr::from(
             unsafe { address.Ipv4.sin_addr.S_un.S_addr }.to_ne_bytes(),
@@ -259,7 +259,7 @@ fn socket_address(address: IpAddr) -> SOCKADDR_INET {
     }
 }
 
-fn check(status: WIN32_ERROR) -> io::Result<()> {
+pub(crate) fn check(status: WIN32_ERROR) -> io::Result<()> {
     if status == ERROR_SUCCESS {
         Ok(())
     } else {

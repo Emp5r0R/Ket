@@ -16,10 +16,10 @@ usage() {
 }
 
 # Libraries every build of Ket must bundle for one ABI, including the Rust invite
-# verifier. The Go and Rust engines that only ship for 64-bit ABIs are listed per ABI.
+# verifier and share proxy. The Go and Rust engines that only ship for 64-bit ABIs are listed per ABI.
 required_libraries() {
   printf '%s\n' libhysteria.so libhev-socks5-tunnel.so libket-android-native.so libket_invite_jni.so \
-    libopenvpn.so libovpnexec.so
+    libket_share_jni.so libopenvpn.so libovpnexec.so
   case $1 in
     arm64-v8a) printf '%s\n' libsslocal.so libxray.so libwstunnel.so ;;
     x86_64) printf '%s\n' libsslocal.so libxray.so ;;

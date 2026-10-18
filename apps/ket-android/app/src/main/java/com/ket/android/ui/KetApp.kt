@@ -73,6 +73,8 @@ import com.ket.android.ui.connection.StatusIsland
 import com.ket.android.ui.metrics.MetricsScreen
 import com.ket.android.ui.protocols.ProtocolGuideScreen
 import com.ket.android.ui.settings.SettingsScreen
+import com.ket.android.share.ShareActions
+import com.ket.android.share.ShareState
 import kotlinx.coroutines.delay
 
 internal enum class KetAppDestination(val storedName: String, val displayName: String) {
@@ -114,6 +116,8 @@ internal fun KetApp(
     diagnosticReport: () -> String = { "Ket diagnostic report\nevents:\nnone\n" },
     appVersion: String = "",
     inviteReader: InviteReader = appInviteReader,
+    share: ShareState = ShareState(),
+    shareActions: ShareActions = ShareActions.None,
     onConnect: (String, String, KetProtocol?, NodePublicKey?) -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -323,6 +327,9 @@ internal fun KetApp(
                                         }
                                     },
                                     onOpenDiagnostics = { diagnosticsVisible = true },
+                                    share = share,
+                                    onOpenShare = { destinationWireName = KetAppDestination.Settings.storedName },
+                                    onStopShare = shareActions.stop,
                                 )
                             }
                         KetAppDestination.Metrics -> MetricsScreen(snapshot, accessRemainingSeconds)
@@ -353,6 +360,8 @@ internal fun KetApp(
                             onOpenProtocolGuide = { openGuide(null) },
                             appVersion = appVersion,
                             serverVersion = snapshot.serverVersion,
+                            share = share,
+                            shareActions = shareActions,
                         )
                     }
                 }

@@ -7,6 +7,21 @@ import { ProtocolsView } from "./ProtocolsView";
 import { SettingsView } from "./SettingsView";
 import { StatStrip } from "./StatStrip";
 import { TrafficChart } from "./TrafficChart";
+import type { Sharing } from "../lib/sharing";
+
+
+function idleSharing(): Sharing {
+  return {
+    networks: [],
+    view: null,
+    status: null,
+    notice: null,
+    busy: false,
+    refreshNetworks: vi.fn(async () => undefined),
+    start: vi.fn(async () => undefined),
+    stop: vi.fn(async () => undefined),
+  };
+}
 
 describe("desktop navigation and protocol guides", () => {
   it("marks exactly one active navigation view and emits selected destinations", () => {
@@ -70,6 +85,8 @@ describe("desktop settings", () => {
         bypass={[]}
         checkBypassEntry={vi.fn(async (entry: string) => entry)}
         onBypassChange={vi.fn()}
+        sharing={idleSharing()}
+        connected={false}
         onForget={vi.fn(async () => undefined)}
       />,
     );
@@ -103,6 +120,8 @@ describe("desktop settings", () => {
         bypass={[]}
         checkBypassEntry={vi.fn(async (entry: string) => entry)}
         onBypassChange={vi.fn()}
+        sharing={idleSharing()}
+        connected={false}
         onForget={vi.fn(async () => undefined)}
       />,
     );
@@ -133,6 +152,8 @@ describe("desktop settings", () => {
           bypass={[]}
           checkBypassEntry={vi.fn(async (entry: string) => entry)}
           onBypassChange={vi.fn()}
+          sharing={idleSharing()}
+          connected={false}
           onForget={vi.fn(async () => undefined)}
         />,
       );
@@ -177,6 +198,8 @@ describe("desktop settings", () => {
           bypass={[]}
           checkBypassEntry={vi.fn(async (entry: string) => entry)}
           onBypassChange={vi.fn()}
+          sharing={idleSharing()}
+          connected={false}
           onForget={vi.fn(async () => undefined)}
         />,
       );
@@ -205,6 +228,8 @@ describe("desktop settings", () => {
         bypass={[]}
         checkBypassEntry={vi.fn(async (entry: string) => entry)}
         onBypassChange={vi.fn()}
+        sharing={idleSharing()}
+        connected={false}
         onForget={onForget}
       />,
     );

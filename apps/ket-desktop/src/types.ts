@@ -156,3 +156,32 @@ export interface TrafficPoint {
   sent: number;
   received: number;
 }
+
+/** A network this computer can share its Ket connection on. */
+export interface ShareNetwork {
+  interface: string;
+  address: string;
+  kind: DiagnosticEnvironment["network"];
+}
+
+/** How nearby devices connect to the share. */
+export interface ShareView {
+  details: {
+    network: ShareNetwork;
+    port: number;
+    username: string;
+    password: string;
+  };
+  /** `http://ket:PASSWORD@ADDRESS:PORT`, which proxy apps can import. */
+  proxy_url: string;
+  qr_svg: string;
+}
+
+export interface ShareStatus {
+  devices: number;
+  refused_sign_ins: number;
+  /** A tunnel is up to carry the devices' traffic right now. */
+  tunnel: boolean;
+  /** Set once the share stopped on its own. */
+  ended: "network_gone" | null;
+}

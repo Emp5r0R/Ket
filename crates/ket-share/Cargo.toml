@@ -1,0 +1,20 @@
+[package]
+name = "ket-share"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# The proxy that shares a device's Ket connection with nearby devices. The
+# desktop app and Android (through crates/ket-share-android) run this same
+# code; each supplies its own way out through the tunnel.
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+rand.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+zeroize.workspace = true

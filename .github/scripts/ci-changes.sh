@@ -53,6 +53,10 @@ classify() {
       # Android verifies invites with these crates and replays their vectors.
       enable rust desktop_native linux_package desktop_windows windows_package container android
       ;;
+    crates/ket-share/* | crates/ket-share-android/*)
+      # The desktop app and Android share their connection through these.
+      enable rust desktop_native linux_package desktop_windows windows_package android
+      ;;
     crates/*)
       enable rust desktop_native linux_package desktop_windows windows_package container
       ;;
@@ -71,7 +75,7 @@ classify() {
     apps/ket-android/*)
       enable android
       ;;
-    packaging/build-android.sh | packaging/prepare-android-engines.sh | packaging/build-android-invite.sh)
+    packaging/build-android.sh | packaging/prepare-android-engines.sh | packaging/build-android-rust.sh)
       enable android
       ;;
     packaging/validate-android-apk.sh | packaging/test-validate-android-apk.sh)

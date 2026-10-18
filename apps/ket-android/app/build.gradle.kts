@@ -74,7 +74,7 @@ android { namespace = "com.ket.android"; compileSdk = 36
     sourceSets {
         named("main") {
             jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-engines/jniLibs"))
-            jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-invite/jniLibs"))
+            jniLibs.srcDir(layout.buildDirectory.dir("generated/ket-rust/jniLibs"))
         }
         named("test") {
             resources.srcDir("src/main/res/raw")
@@ -113,43 +113,46 @@ val prepareAndroidEngines by tasks.registering(Exec::class) {
     )
     outputs.dir(layout.buildDirectory.dir("generated/ket-engines"))
 }
-// Invites are read by the shared Rust implementation (crates/ket-invite-android), built here
-// for every ABI and, for the JVM unit tests, for the build machine.
+// Invites are read, and the connection shared with nearby devices, by the shared Rust
+// implementations (crates/ket-invite-android, crates/ket-share-android), built here for every
+// ABI and, for the JVM unit tests, for the build machine.
 val repositoryRoot = rootProject.layout.projectDirectory.dir("../..")
-val inviteLibrarySources = listOf(
+val rustLibrarySources = listOf(
     repositoryRoot.file("Cargo.lock"),
     repositoryRoot.file("Cargo.toml"),
-    repositoryRoot.file("packaging/build-android-invite.sh"),
+    repositoryRoot.file("packaging/build-android-rust.sh"),
     repositoryRoot.dir("crates/invite-capsule"),
     repositoryRoot.dir("crates/ket-invite"),
     repositoryRoot.dir("crates/ket-invite-android"),
+    repositoryRoot.dir("crates/ket-share"),
+    repositoryRoot.dir("crates/ket-share-android"),
 )
-val buildInviteLibraries by tasks.registering(Exec::class) {
-    val output = layout.buildDirectory.dir("generated/ket-invite")
-    inputs.files(inviteLibrarySources)
+val buildRustLibraries by tasks.registering(Exec::class) {
+    val output = layout.buildDirectory.dir("generated/ket-rust")
+    inputs.files(rustLibrarySources)
     outputs.dir(output)
     doFirst {
         commandLine(
-            repositoryRoot.file("packaging/build-android-invite.sh").asFile.absolutePath,
+            repositoryRoot.file("packaging/build-android-rust.sh").asFile.absolutePath,
             "android",
             android.ndkDirectory.absolutePath,
             output.get().asFile.absolutePath,
         )
     }
 }
-val buildHostInviteLibrary by tasks.registering(Exec::class) {
-    val output = layout.buildDirectory.dir("generated/ket-invite-host")
-    inputs.files(inviteLibrarySources)
+val buildHostRustLibraries by tasks.registering(Exec::class) {
+    val output = layout.buildDirectory.dir("generated/ket-rust-host")
+    inputs.files(rustLibrarySources)
     outputs.dir(output)
     commandLine(
-        repositoryRoot.file("packaging/build-android-invite.sh").asFile.absolutePath,
+        repositoryRoot.file("packaging/build-android-rust.sh").asFile.absolutePath,
         "host",
         output.get().asFile.absolutePath,
     )
 }
 tasks.withType<Test>().configureEach {
-    dependsOn(buildHostInviteLibrary)
-    systemProperty("java.library.path", layout.buildDirectory.dir("generated/ket-invite-host").get().asFile.absolutePath)
+    dependsOn(buildHostRustLibraries)
+    systemProperty("java.library.path", layout.buildDirectory.dir("generated/ket-rust-host").get().asFile.absolutePath)
 }
 tasks.configureEach {
     if (
@@ -159,7 +162,7 @@ tasks.configureEach {
         dependsOn(prepareAndroidEngines)
     }
     if (name.startsWith("merge") && (name.endsWith("NativeLibs") || name.endsWith("JniLibFolders"))) {
-        dependsOn(buildInviteLibraries)
+        dependsOn(buildRustLibraries)
     }
 }
 tasks.withType<KotlinCompile>().configureEach { kotlinOptions.jvmTarget = "17" }

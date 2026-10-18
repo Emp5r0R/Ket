@@ -50,7 +50,7 @@ build_image() {
 FROM ubuntu:24.04
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      systemd systemd-sysv systemd-resolved dbus tcpdump iproute2 dnsutils curl ca-certificates procps \
+      systemd systemd-sysv systemd-resolved dbus tcpdump iproute2 iptables dnsutils curl ca-certificates procps \
  && rm -rf /var/lib/apt/lists/* \
  && systemctl mask systemd-networkd.service systemd-networkd.socket getty.target console-getty.service
 STOPSIGNAL SIGRTMIN+3

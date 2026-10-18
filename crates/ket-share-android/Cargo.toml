@@ -1,0 +1,20 @@
+[package]
+name = "ket-share-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Ket Android shares its connection with nearby devices through this library,
+# so the phone runs the same proxy as the desktop app (crates/ket-share).
+[lib]
+name = "ket_share_jni"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+async-trait.workspace = true
+jni = { version = "=0.21.1", default-features = false }
+ket-share = { path = "../ket-share" }
+libc.workspace = true
+tokio.workspace = true

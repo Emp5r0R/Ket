@@ -22,6 +22,8 @@ The server's `.env` holds its own keys (TLS, node identity, protocol keys). Per-
 
 So an operator can see why a device cannot connect, `sudo ket invites show ID` lists what devices recently did with that invite: joined, checked in, disconnected, were refused and why (wrong code, paused, device limit, app too old), and whether their traffic reached the OpenVPN or Hysteria2 server. Each entry names the app and the start of its session ID, with a count and the last time; no address. The server keeps the last 24 entries per invite in memory, never writes them to disk, forgets them when it restarts, and drops an invite's entries when the invite is revoked or forgotten.
 
+Sharing with nearby devices ([SHARING.md](SHARING.md)) happens entirely in the app: the share's password, the devices using it, and how many wrong passwords were tried stay in the app's memory and end with the share. The server sees the shared traffic as the sharing device's own.
+
 ## Logs
 
 - The HTTPS edge keeps no access log and logs errors only.

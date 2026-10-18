@@ -21,6 +21,8 @@ import { WorldMap } from "./components/WorldMap";
 import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
 import { loadBypass, saveBypass } from "./lib/bypass";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { ShareBanner } from "./components/ShareBanner";
+import { useSharing } from "./lib/sharing";
 import {
   appendDiagnostic,
   formatDiagnosticReport,
@@ -236,6 +238,7 @@ export default function App() {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [diagnosticEnvironment, setDiagnosticEnvironment] = useState<DiagnosticEnvironment | null>(null);
   const [surveillanceVariant, setSurveillanceVariant] = useState(0);
+  const sharing = useSharing(bridge);
   const lastObservedIssue = useRef("");
   const protocolPreferenceRef = useRef(protocolPreference);
   const savedAccessCodeRef = useRef(savedAccessCode);
@@ -869,6 +872,7 @@ export default function App() {
               </div>
             </header>
             <UpdateBanner update={state.snapshot.client_update} />
+            <ShareBanner sharing={sharing} onOpenDetails={() => setView("settings")} />
             <div className="connection-layout">
               <section className="map-stage" aria-label="Server map">
                 <WorldMap location={state.snapshot.node?.location ?? null} connected={connected} />
@@ -944,6 +948,8 @@ export default function App() {
             bypass={bypass}
             checkBypassEntry={bridge.checkBypassEntry}
             onBypassChange={chooseBypass}
+            sharing={sharing}
+            connected={connected}
             onForget={forget}
           />
         ) : null}

@@ -1,4 +1,5 @@
 mod diagnostics;
+mod sharing;
 
 use std::{
     collections::BTreeSet,
@@ -372,7 +373,11 @@ fn parse_protocol(value: &str) -> Result<TransportProtocol, ClientIssue> {
 #[tauri::command]
 async fn stop_tunnel(
     controller: State<'_, DesktopController>,
+    sharing: State<'_, sharing::ShareController>,
 ) -> Result<ClientSnapshot, ClientIssue> {
+    // Disconnecting ends the share too: nearby devices would only be told
+    // that Ket is not connected.
+    sharing.stop().await;
     let client = controller
         .session
         .lock()
@@ -396,7 +401,11 @@ async fn refresh(controller: State<'_, DesktopController>) -> Result<ClientSnaps
 }
 
 #[tauri::command]
-async fn forget(controller: State<'_, DesktopController>) -> Result<ClientSnapshot, ClientIssue> {
+async fn forget(
+    controller: State<'_, DesktopController>,
+    sharing: State<'_, sharing::ShareController>,
+) -> Result<ClientSnapshot, ClientIssue> {
+    sharing.stop().await;
     let _lifecycle = controller.lifecycle.lock().await;
     Ok(retire_current_session(&controller)
         .await?
@@ -444,6 +453,7 @@ fn release_session_before_exit(app: &AppHandle) {
     let (finished, receiver) = std::sync::mpsc::sync_channel(1);
     tauri::async_runtime::spawn(async move {
         let controller = app.state::<DesktopController>();
+        app.state::<sharing::ShareController>().stop().await;
         let _ = tokio::time::timeout(EXIT_CLEANUP_TIMEOUT, shutdown_controller(&controller)).await;
         let _ = finished.send(());
     });
@@ -467,6 +477,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
             app.manage(DesktopController::new(BrokerConfig::from_env()?));
+            app.manage(sharing::ShareController::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -480,6 +491,10 @@ pub fn run() {
             stop_tunnel,
             refresh,
             forget,
+            sharing::list_share_networks,
+            sharing::start_sharing,
+            sharing::stop_sharing,
+            sharing::share_status,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Ket desktop");

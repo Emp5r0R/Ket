@@ -2136,6 +2136,7 @@ dependencies = [
  "ket-core",
  "ket-invite",
  "ket-seal",
+ "ket-share",
  "ket-tunnel-protocol",
  "libc",
  "rand 0.8.7",
@@ -2257,6 +2258,31 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "zeroize",
+]
+
+[[package]]
+name = "ket-share"
+version = "1.2.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "rand 0.8.7",
+ "subtle",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
+name = "ket-share-android"
+version = "1.2.0"
+dependencies = [
+ "async-trait",
+ "jni 0.21.1",
+ "ket-share",
+ "libc",
+ "tokio",
 ]
 
 [[package]]

@@ -9,6 +9,8 @@ members = [
     "crates/ket-qr",
     "crates/ket-seal",
     "crates/ket-server",
+    "crates/ket-share",
+    "crates/ket-share-android",
     "crates/ket-tunnel-protocol",
     "crates/ket-tunnel-service",
     "crates/ket-update",

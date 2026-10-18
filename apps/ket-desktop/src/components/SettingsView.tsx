@@ -17,6 +17,8 @@ import type { ThemePreference } from "../App";
 import { protocolInfo, type ProtocolId } from "../lib/protocols";
 import type { DesktopState } from "../types";
 import { BypassListEditor } from "./BypassListEditor";
+import { SharePanel } from "./SharePanel";
+import type { Sharing } from "../lib/sharing";
 
 interface SettingsViewProps {
   state: DesktopState;
@@ -32,6 +34,8 @@ interface SettingsViewProps {
   bypass: string[];
   checkBypassEntry: (entry: string) => Promise<string>;
   onBypassChange: (entries: string[]) => void;
+  sharing: Sharing;
+  connected: boolean;
   onForget: () => Promise<void>;
 }
 
@@ -55,6 +59,8 @@ export function SettingsView({
   bypass,
   checkBypassEntry,
   onBypassChange,
+  sharing,
+  connected,
   onForget,
 }: SettingsViewProps) {
   const offered = [
@@ -180,6 +186,8 @@ export function SettingsView({
         ) : null}
         <BypassListEditor entries={bypass} check={checkBypassEntry} onChange={onBypassChange} />
       </section>
+
+      <SharePanel sharing={sharing} connected={connected} />
 
       <section className="settings-section danger-section" aria-labelledby="access-heading">
         <div className="settings-heading">

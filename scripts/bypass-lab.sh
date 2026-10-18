@@ -77,7 +77,7 @@ run_protocol() {
   # address leaked, from now until the client disconnects.
   filter="not arp and not (icmp6 and ip6[40] >= 133 and ip6[40] <= 137) and not udp port 5353 and not host $BYPASSED"
   for server in $servers; do filter+=" and not host ${server%/32}"; done
-  lab sh -c "tcpdump -i $interface -n -w /tmp/leak.pcap '$filter' >/dev/null 2>&1 &"
+  lab sh -c "tcpdump -i $interface -n --immediate-mode -U -w /tmp/leak.pcap '$filter' >/dev/null 2>&1 &"
   sleep 2
 
   seen=$(egress "$BYPASSED_URL")
@@ -103,6 +103,8 @@ run_protocol() {
   else
     pass "the container's own network $subnet is left to its own route"
   fi
+  # Packets of the last request may still be on their way to the capture.
+  sleep 1
   lab pkill -INT tcpdump || true
   sleep 1
   leaked=$(lab sh -c 'tcpdump -n -r /tmp/leak.pcap 2>/dev/null | head -n 5')

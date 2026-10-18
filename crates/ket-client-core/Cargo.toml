@@ -11,6 +11,7 @@ base64.workspace = true
 ket-core = { path = "../ket-core" }
 ket-invite = { path = "../ket-invite" }
 ket-seal = { path = "../ket-seal" }
+ket-share = { path = "../ket-share" }
 ket-tunnel-protocol = { path = "../ket-tunnel-protocol" }
 rand.workspace = true
 reqwest.workspace = true

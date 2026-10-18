@@ -8,6 +8,9 @@ import type {
   DiagnosticEnvironment,
   EnrollmentInput,
   InviteDetails,
+  ShareNetwork,
+  ShareStatus,
+  ShareView,
 } from "../types";
 import type { ProtocolId } from "./protocols";
 
@@ -28,6 +31,13 @@ export interface DesktopBridge {
   refresh(): Promise<ClientSnapshot>;
   forget(): Promise<ClientSnapshot>;
   subscribe(listener: SnapshotListener): Promise<UnlistenFn>;
+  /** The networks this computer can share its connection on now. */
+  listShareNetworks(): Promise<ShareNetwork[]>;
+  /** Starts sharing on one of this computer's addresses, with a new password. */
+  startSharing(address: string): Promise<ShareView>;
+  stopSharing(): Promise<void>;
+  /** Null when sharing is off. */
+  shareStatus(): Promise<ShareStatus | null>;
 }
 
 const tauriBridge: DesktopBridge = {
@@ -56,7 +66,13 @@ const tauriBridge: DesktopBridge = {
   forget: () => invoke<ClientSnapshot>("forget"),
   subscribe: async (listener) =>
     listen<ClientSnapshot>("ket://snapshot", (event) => listener(event.payload)),
+  listShareNetworks: () => invoke<ShareNetwork[]>("list_share_networks"),
+  startSharing: (address) => invoke<ShareView>("start_sharing", { address }),
+  stopSharing: () => invoke<void>("stop_sharing"),
+  shareStatus: () => invoke<ShareStatus | null>("share_status"),
 };
+
+const DEMO_QR = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#fff"/><path d="M1 1h2v2H1zM5 1h2v2H5zM1 5h2v2H1zM4 4h1v1H4z" fill="#000"/></svg>';
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -152,6 +168,7 @@ function mockBridge(): DesktopBridge {
     };
   }
   let configured = snapshot.node !== null;
+  let sharing: ShareView | null = null;
   const listeners = new Set<SnapshotListener>();
   const publish = (next: ClientSnapshot) => {
     snapshot = next;
@@ -226,7 +243,10 @@ function mockBridge(): DesktopBridge {
       return publish(demoSnapshot("enrolled"));
     },
     connect: async (preferredProtocol) => publish(demoSnapshot("connected", preferredProtocol)),
-    stop: async () => publish(demoSnapshot("enrolled", snapshot.preferred_protocol)),
+    stop: async () => {
+      sharing = null;
+      return publish(demoSnapshot("enrolled", snapshot.preferred_protocol));
+    },
     refresh: async () => {
       if (snapshot.traffic) {
         snapshot = {
@@ -243,6 +263,7 @@ function mockBridge(): DesktopBridge {
       return publish(snapshot);
     },
     forget: async () => {
+      sharing = null;
       configured = false;
       return publish(demoSnapshot("disconnected"));
     },
@@ -250,6 +271,28 @@ function mockBridge(): DesktopBridge {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    listShareNetworks: async () => [
+      { interface: "wlan0", address: "192.168.1.24", kind: "wifi" },
+      { interface: "eth0", address: "10.0.0.8", kind: "ethernet" },
+    ],
+    startSharing: async (address) => {
+      sharing = {
+        details: {
+          network: { interface: "wlan0", address, kind: "wifi" },
+          port: 39740,
+          username: "ket",
+          password: "demo7pass2xy",
+        },
+        proxy_url: `http://ket:demo7pass2xy@${address}:39740`,
+        qr_svg: DEMO_QR,
+      };
+      return sharing;
+    },
+    stopSharing: async () => {
+      sharing = null;
+    },
+    shareStatus: async () =>
+      sharing === null ? null : { devices: 1, refused_sign_ins: 0, tunnel: snapshot.phase === "connected", ended: null },
   };
 }
 

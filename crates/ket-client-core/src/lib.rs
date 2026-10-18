@@ -14,6 +14,7 @@ mod route_keeper;
 mod runtime;
 mod sealed_control;
 mod shadowsocks;
+mod share;
 mod state;
 mod strategy;
 mod system_dns;
@@ -35,6 +36,10 @@ pub use ket_tunnel_protocol::{
 pub use openvpn::OpenVpnStunnelAdapter;
 pub use route_keeper::{NetworkKind, network_kind};
 pub use shadowsocks::Shadowsocks2022Adapter;
+pub use share::{
+    PREFERRED_PORT as SHARE_PORT, ShareDetails, ShareEnd, ShareError, ShareNetwork, ShareSession,
+    ShareStatus, TunnelEgress, share_networks,
+};
 pub use state::{ClientPhase, ClientSnapshot, FallbackStage, TransportFallback, TransportSummary};
 pub use strategy::{SelectionPolicy, TransportHistory, TransportSelector};
 pub use system_dns::recover_system_dns;

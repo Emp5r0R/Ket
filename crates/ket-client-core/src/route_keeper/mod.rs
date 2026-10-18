@@ -9,11 +9,11 @@
 
 #[cfg(target_os = "linux")]
 #[cfg_attr(test, allow(dead_code))]
-mod linux;
+pub(crate) mod linux;
 mod plan;
 #[cfg(windows)]
 #[cfg_attr(test, allow(dead_code))]
-mod windows;
+pub(crate) mod windows;
 
 use std::{
     collections::BTreeMap,

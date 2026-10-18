@@ -16,7 +16,7 @@ STUB
 chmod +x "$scratch/apksigner"
 export APKSIGNER="$scratch/apksigner"
 
-common=(libhysteria.so libhev-socks5-tunnel.so libket-android-native.so libket_invite_jni.so libopenvpn.so libovpnexec.so)
+common=(libhysteria.so libhev-socks5-tunnel.so libket-android-native.so libket_invite_jni.so libket_share_jni.so libopenvpn.so libovpnexec.so)
 
 # libraries ABI -> the library list the validator requires for that ABI.
 libraries() {

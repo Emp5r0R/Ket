@@ -18,6 +18,10 @@ import com.ket.android.splittunnel.SplitTunnelPolicy
 import com.ket.android.connection.ConnectionOptions
 import com.ket.android.connection.ConnectionOptionsStore
 import com.ket.android.splittunnel.SplitTunnelStore
+import com.ket.android.share.KetShare
+import com.ket.android.share.ShareActions
+import com.ket.android.share.ShareNetworks
+import com.ket.android.share.ShareState
 import com.ket.android.ui.KetApp
 import com.ket.android.ui.KetStartupScreen
 import com.ket.android.ui.KetTheme
@@ -56,6 +60,8 @@ class MainActivity : ComponentActivity() {
     private val startupMode = mutableStateOf(KetStartupMode.Ready)
     /** An invite shared to Ket from another app, waiting for the add-server screen. */
     private val sharedInvite = mutableStateOf<String?>(null)
+    private val shareState = mutableStateOf(ShareState())
+    private var shareSubscription: AutoCloseable? = null
     private var startupRestoreStarted = false
     private var subscription: AutoCloseable? = null
     private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -140,6 +146,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        shareSubscription = KetShare.controller.subscribe { state -> runOnUiThread { shareState.value = state } }
         setContent {
             KetTheme(
                 connected = tunnelState.value.phase == TunnelPhase.Connected,
@@ -190,6 +197,12 @@ class MainActivity : ComponentActivity() {
                                 DiagnosticEnvironment.current(this, connectionOptions.value),
                             )
                         },
+                        share = shareState.value,
+                        shareActions = ShareActions(
+                            networks = ShareNetworks::current,
+                            start = { address -> KetShare.start(this, address) },
+                            stop = { KetShare.stop() },
+                        ),
                         onConnect = ::requestConnection,
                         onDisconnect = { KetTunnelController.disconnect(this) },
                     )
@@ -224,6 +237,8 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         subscription?.close()
         subscription = null
+        shareSubscription?.close()
+        shareSubscription = null
         super.onDestroy()
     }
 

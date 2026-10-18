@@ -48,6 +48,8 @@ import com.ket.android.ui.common.CardShape
 import com.ket.android.ui.common.Pill
 import com.ket.android.ui.healthTone
 import com.ket.android.KetUpdateBanner
+import com.ket.android.share.ShareBanner
+import com.ket.android.share.ShareState
 
 /**
  * The home screen once a server is saved: where the server is, the power
@@ -66,6 +68,9 @@ internal fun ConnectionScreen(
     onOpenProtocolGuide: () -> Unit,
     onToggle: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    share: ShareState = ShareState(),
+    onOpenShare: () -> Unit = {},
+    onStopShare: () -> Unit = {},
 ) {
     val connected = snapshot.phase == TunnelPhase.Connected
     val busy = snapshot.phase in setOf(
@@ -112,6 +117,7 @@ internal fun ConnectionScreen(
             FailureNotice(snapshot.message, onOpenDiagnostics)
         }
         KetUpdateBanner(snapshot.clientUpdate)
+        ShareBanner(share, onOpenDetails = onOpenShare, onStop = onStopShare)
         Surface(
             shape = CardShape,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),

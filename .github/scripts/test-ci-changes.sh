@@ -37,6 +37,11 @@ assert_selection 'shared invite format' crates/invite-capsule/src/capsule.rs \
   rust desktop_native linux_package desktop_windows windows_package container android
 assert_selection 'Android invite library' crates/ket-invite-android/src/lib.rs \
   rust desktop_native linux_package desktop_windows windows_package container android
+assert_selection 'share proxy' crates/ket-share/src/server.rs \
+  rust desktop_native linux_package desktop_windows windows_package android
+assert_selection 'Android share library' crates/ket-share-android/src/lib.rs \
+  rust desktop_native linux_package desktop_windows windows_package android
+assert_selection 'Android Rust build' packaging/build-android-rust.sh android
 assert_selection 'desktop UI' apps/ket-desktop/src/App.tsx desktop_ui linux_package windows_package
 assert_selection 'desktop native' apps/ket-desktop/src-tauri/src/lib.rs \
   desktop_native linux_package desktop_windows windows_package

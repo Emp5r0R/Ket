@@ -37,6 +37,9 @@ import com.ket.android.KetProtocol
 import com.ket.android.connection.ConnectionOptions
 import com.ket.android.connection.ConnectionOptionsSection
 import com.ket.android.formatDuration
+import com.ket.android.share.ShareActions
+import com.ket.android.share.ShareSection
+import com.ket.android.share.ShareState
 import com.ket.android.splittunnel.InstalledApp
 import com.ket.android.splittunnel.SplitTunnelPolicy
 import com.ket.android.splittunnel.SplitTunnelSection
@@ -64,6 +67,8 @@ internal fun SettingsScreen(
     onOpenProtocolGuide: () -> Unit,
     appVersion: String,
     serverVersion: String?,
+    share: ShareState = ShareState(),
+    shareActions: ShareActions = ShareActions.None,
 ) {
     var confirmingForget by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -93,6 +98,9 @@ internal fun SettingsScreen(
         }
         SectionCard(title = "Connection", subtitle = "Applies from the next connection.") {
             ConnectionOptionsSection(connectionOptions, onConnectionOptionsChange, offeredProtocols)
+        }
+        SectionCard(title = "Share with nearby devices", subtitle = "Let a laptop or another phone use this connection.") {
+            ShareSection(share, shareActions, connected)
         }
         if (savedServerUrl != null) {
             SectionCard(title = "Your server") {
