@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.ket.android.AndroidNodeStatus
 import com.ket.android.DataAllowanceStatus
@@ -33,7 +34,11 @@ import com.ket.android.ui.common.SectionCard
 import com.ket.android.ui.healthTone
 
 @Composable
-internal fun MetricsScreen(snapshot: TunnelSnapshot, accessRemainingSeconds: Long?) {
+internal fun MetricsScreen(
+    snapshot: TunnelSnapshot,
+    accessRemainingSeconds: Long?,
+    trafficHistory: List<TrafficSample> = emptyList(),
+) {
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         ScreenTitle("Metrics", "This connection and the server behind it")
         val node = snapshot.node
@@ -46,10 +51,35 @@ internal fun MetricsScreen(snapshot: TunnelSnapshot, accessRemainingSeconds: Lon
             return@Column
         }
         val connected = snapshot.phase == TunnelPhase.Connected
+        val latest = if (connected) Throughput.latest(trafficHistory) else null
+        val download = MaterialTheme.colorScheme.primary
+        val upload = MaterialTheme.colorScheme.onSurfaceVariant
         SectionCard(title = "This connection") {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TrafficFigure(Icons.Filled.ArrowDownward, "Downloaded", formatBytes(snapshot.receivedBytes), Modifier.weight(1f))
-                TrafficFigure(Icons.Filled.ArrowUpward, "Uploaded", formatBytes(snapshot.sentBytes), Modifier.weight(1f))
+                TrafficFigure(
+                    Icons.Filled.ArrowDownward,
+                    "Download",
+                    formatRate(latest?.received),
+                    "${formatBytes(snapshot.receivedBytes)} in total",
+                    download,
+                    Modifier.weight(1f),
+                )
+                TrafficFigure(
+                    Icons.Filled.ArrowUpward,
+                    "Upload",
+                    formatRate(latest?.sent),
+                    "${formatBytes(snapshot.sentBytes)} in total",
+                    upload,
+                    Modifier.weight(1f),
+                )
+            }
+            if (connected) {
+                SpeedChart(
+                    Throughput.rates(trafficHistory),
+                    download = download,
+                    upload = upload,
+                    grid = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                )
             }
             InfoRow("Protocol", if (connected) snapshot.transportName else "Not connected")
             InfoRow("Set up in", formatSetupTime(snapshot.handshakeLatencyMs))
@@ -96,13 +126,21 @@ internal fun allowanceText(allowance: DataAllowanceStatus): String {
 }
 
 @Composable
-private fun TrafficFigure(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String, modifier: Modifier) {
+private fun TrafficFigure(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    speed: String,
+    total: String,
+    tone: Color,
+    modifier: Modifier,
+) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.height(16.dp))
+            Icon(icon, contentDescription = null, tint = tone, modifier = Modifier.height(16.dp))
             Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
         }
-        Text(value, style = MaterialTheme.typography.headlineSmall)
+        Text(speed, style = MaterialTheme.typography.headlineSmall)
+        Text(total, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
     }
 }
 

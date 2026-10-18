@@ -20,12 +20,17 @@ enum class TunnelPhase {
     Failed,
 }
 
+/** Whether Android starts Ket by itself, and whether it blocks apps while Ket is not connected. */
+data class AlwaysOnState(val alwaysOn: Boolean, val lockdown: Boolean)
+
 data class TunnelSnapshot(
     val phase: TunnelPhase = TunnelPhase.Disconnected,
     val node: AndroidNodeStatus? = null,
     val message: String = "",
     val sentBytes: Long = 0,
     val receivedBytes: Long = 0,
+    /** When [sentBytes] and [receivedBytes] were read, on the elapsed-realtime clock. */
+    val trafficObservedAtMillis: Long? = null,
     val onlineConnections: Int = 0,
     val handshakeLatencyMs: Long? = null,
     val transportName: String = "Auto",
@@ -41,6 +46,8 @@ data class TunnelSnapshot(
     val fallbacks: List<TransportFallbackNote> = emptyList(),
     /** The protocols the current session offers, so the app lists only those. */
     val availableProtocols: List<KetProtocol> = emptyList(),
+    /** Android's always-on settings for Ket, as the VPN service last saw them (Android 10+). */
+    val alwaysOn: AlwaysOnState? = null,
 )
 
 internal class TunnelLaunchSpec(

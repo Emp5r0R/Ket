@@ -179,7 +179,7 @@ describe("Ket desktop shell", () => {
     const { default: App } = await import("./App");
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Choose your node" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Add your server" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Advanced: use a server URL and access code" }));
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://de-fra.ket.example" },
@@ -425,7 +425,7 @@ describe("Ket desktop shell", () => {
     const { default: App } = await import("./App");
     const { container } = render(<App />);
 
-    await screen.findByRole("heading", { name: "Choose your node" });
+    await screen.findByRole("heading", { name: "Add your server" });
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
 

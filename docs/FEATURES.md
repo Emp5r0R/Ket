@@ -15,6 +15,10 @@ Everything Ket implements today, and the qualification status of each transport.
 - Share with nearby devices on desktop and Android (off by default): a password-protected HTTP and SOCKS5 proxy on your hotspot or Wi-Fi address that carries other devices through Ket, with every protocol, and only through the tunnel ([SHARING.md](SHARING.md)).
 - Data allowances (off by default): an invite's devices may use so much data together each day, week, or month; at the limit Ket disconnects them and refuses them until the period starts over. The apps show what is used ([FAIRNESS.md](FAIRNESS.md#data-allowances)).
 - Fair sharing (off by default): `sudo ket shaping set 950mbit` shares a full server connection equally between devices, so one with many downloads cannot crowd out the rest ([FAIRNESS.md](FAIRNESS.md#fair-sharing-of-the-connection)).
+- Live speed on desktop and Android: download and upload speed as it changes, with a chart of the last minute or so and the totals beside it.
+- Android Quick Settings tile: connect the saved server or disconnect from the notification shade ([ANDROID.md](ANDROID.md#quick-settings-tile)).
+- Android Settings shows whether Android's "Always-on VPN" and "Block connections without VPN" are on for Ket and opens the system page to turn them on ([ANDROID.md](ANDROID.md#always-on-vpn)).
+- Desktop: the first screen explains where an invite comes from and takes a QR image dropped on it; settings use switches and protocol chips.
 - `ket doctor` flags a Cloudflare Tunnel that sends the Ket hostname past the edge to the control plane.
 - WireGuard TLS loads sites by name on desktop and Android. Before, it connected but resolved names to addresses the server could not route ([DNS_LEAKS.md](DNS_LEAKS.md#wireguard-name-resolution)).
 - Linux desktops with systemd-resolved (Ubuntu, Fedora) connect. Before, the sandboxed tunnel service could not write resolved's `/etc/resolv.conf`, so every protocol failed there ([DNS_LEAKS.md](DNS_LEAKS.md#what-ket-does)).

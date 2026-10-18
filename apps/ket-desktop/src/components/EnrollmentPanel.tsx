@@ -1,5 +1,5 @@
 import { Clock3, Eye, EyeOff, ImageUp, Link2, LoaderCircle, Ticket } from "lucide-react";
-import { useRef, useState, type ClipboardEvent, type FormEvent } from "react";
+import { useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent } from "react";
 import { formatDuration } from "../lib/format";
 import type { ClientIssue, EnrollmentInput } from "../types";
 
@@ -46,6 +46,7 @@ export function EnrollmentPanel({
 }: EnrollmentPanelProps) {
   const [mode, setMode] = useState<EnrollmentMode>(initialMode);
   const [imageIssue, setImageIssue] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   const imageInput = useRef<HTMLInputElement>(null);
   const [invite, setInvite] = useState("");
   const [revealInvite, setRevealInvite] = useState(false);
@@ -86,6 +87,15 @@ export function EnrollmentPanel({
     }
   };
 
+  /** A QR image dropped anywhere on the panel is read like an opened one. */
+  const dropImage = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    setDragging(false);
+    if (busy || mode !== "invite") return;
+    const image = Array.from(event.dataTransfer.files).find((file) => file.type.startsWith("image/"));
+    if (image) void useQrImage(image);
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (mode === "invite") {
@@ -100,10 +110,27 @@ export function EnrollmentPanel({
   };
 
   return (
-    <section className="enrollment-panel" aria-labelledby="enroll-title">
+    <section
+      className={`enrollment-panel ${dragging ? "is-dropping" : ""}`}
+      aria-labelledby="enroll-title"
+      onDragOver={(event) => {
+        if (mode !== "invite" || busy) return;
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={dropImage}
+    >
       <div className="section-heading">
         <span className="section-kicker">New connection</span>
         <h2 id="enroll-title">Add a Ket server</h2>
+        <p className="enrollment-hint">
+          {mode === "invite"
+            ? "Paste the invite your server's owner sent you, or open or drop its QR code image."
+            : "Use the server address and the 32-character access code from your server's owner."}
+        </p>
       </div>
       <form onSubmit={submit}>
         {accessRemaining !== null ? (

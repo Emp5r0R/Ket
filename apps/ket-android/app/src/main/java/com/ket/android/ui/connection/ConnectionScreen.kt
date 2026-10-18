@@ -43,6 +43,9 @@ import com.ket.android.connection.FallbackNotes
 import com.ket.android.connectionLocationHeading
 import com.ket.android.connectionPowerDetail
 import com.ket.android.formatBytes
+import com.ket.android.ui.metrics.Throughput
+import com.ket.android.ui.metrics.TrafficSample
+import com.ket.android.ui.metrics.formatRate
 import com.ket.android.formatDuration
 import com.ket.android.ui.common.CardShape
 import com.ket.android.ui.common.Pill
@@ -61,6 +64,7 @@ internal fun ConnectionScreen(
     lastNode: AndroidNodeStatus?,
     serverUrl: String,
     accessRemainingSeconds: Long?,
+    trafficHistory: List<TrafficSample> = emptyList(),
     preferredProtocol: KetProtocol?,
     offeredProtocols: List<KetProtocol>,
     canStartConnection: Boolean,
@@ -139,10 +143,12 @@ internal fun ConnectionScreen(
                 RouteRow(Icons.Filled.Schedule, "Access left", formatDuration(accessRemainingSeconds))
                 if (connected) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    val speed = Throughput.latest(trafficHistory)
                     RouteRow(
                         Icons.Filled.SwapVert,
-                        "Traffic",
-                        "↓ ${formatBytes(snapshot.receivedBytes)}   ↑ ${formatBytes(snapshot.sentBytes)}",
+                        "Speed",
+                        "↓ ${formatRate(speed?.received)}   ↑ ${formatRate(speed?.sent)}",
+                        hint = "${formatBytes(snapshot.receivedBytes)} down, ${formatBytes(snapshot.sentBytes)} up so far",
                     )
                 }
             }

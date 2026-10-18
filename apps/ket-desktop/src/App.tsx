@@ -23,6 +23,7 @@ import { loadBypass, saveBypass } from "./lib/bypass";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ShareBanner } from "./components/ShareBanner";
 import { useSharing } from "./lib/sharing";
+import { TRAFFIC_HISTORY_LENGTH } from "./lib/throughput";
 import {
   appendDiagnostic,
   formatDiagnosticReport,
@@ -303,7 +304,7 @@ export default function App() {
       };
       setHistory((current) => {
         if (current.at(-1)?.at === point.at) return current;
-        return [...current, point].slice(-24);
+        return [...current, point].slice(-TRAFFIC_HISTORY_LENGTH);
       });
     }
     if (snapshot.issue !== null) {
@@ -785,7 +786,7 @@ export default function App() {
   );
   const heading = useMemo(() => {
     const location = state.snapshot.node?.location;
-    if (!location) return "Choose your node";
+    if (!location) return "Add your server";
     return location.city ? `${location.city}, ${location.country_name}` : location.country_name;
   }, [state.snapshot.node]);
   const disconnectedStatus = surveillanceVariant === 0
@@ -886,7 +887,7 @@ export default function App() {
                   <span>{state.snapshot.node?.display_name ?? "No server selected"}</span>
                   <span>{state.snapshot.node?.location.country_code ?? "--"}</span>
                 </div>
-                <StatStrip snapshot={state.snapshot} />
+                <StatStrip snapshot={state.snapshot} history={history} />
               </section>
               {state.configured && state.snapshot.node ? (
                 <ConnectionPanel

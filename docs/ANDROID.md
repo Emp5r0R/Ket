@@ -46,6 +46,18 @@ A dark capsule at the top centre of every screen shows the connection state, lik
 
 When the state changes the island opens for 3.5 seconds with a second line, such as "Protected with HTTPS Stealth", then folds back. A tap opens or closes it. On a dark theme it is lifted and outlined so it stays visible. It is a polite live region, so screen readers announce each change.
 
+## Quick Settings tile
+
+Ket adds a tile to Quick Settings (add it with the pencil in the shade). It shows whether Ket is connected and, while it is, with which protocol. Tapping it while Ket is connected or connecting disconnects. Tapping it while Ket is off connects the saved server the same way Android's always-on VPN starts Ket, with the saved protocol choice; without a saved server or VPN permission it opens the app instead. Its decisions are plain functions (`tileAction`, `tileSubtitle`) with unit tests.
+
+## Always-on VPN
+
+Settings, "Always-on VPN", explains Android's own protection: start Ket after a restart, and with "Block connections without VPN", no app reaches the internet while Ket is not connected, so nothing slips out while Ket starts or reconnects. Only the system can turn it on; the button opens Android's VPN settings. The VPN service reads `isAlwaysOn` and `isLockdownEnabled` each time it connects (Android 10 and later) and the card says whether both are on.
+
+## Speed
+
+The Connect screen shows download and upload speed while connected, and Metrics adds a chart of about the last 80 seconds. The VPN service reads the active engine's own counters every two seconds; nothing is sent to the server for it. `Throughput` turns the running totals into speeds and counts a total that went down (a new connection) as moved in that interval.
+
 ## Apps that use Ket
 
 Settings, "Apps that use Ket", chooses between all apps (the default), only chosen apps, and all apps except chosen ones. The list shows apps with a launcher entry, through a manifest `<queries>` entry rather than broad package visibility. The choice is stored in ordinary app preferences and applied every time the VPN interface is built, including always-on starts after a reboot; changing it while connected takes effect on the next connection.

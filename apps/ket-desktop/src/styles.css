@@ -474,6 +474,12 @@ input:disabled {
   background: var(--map);
 }
 
+/* The map takes whatever height the panel beside it needs, so the
+   statistics always sit at the bottom of the card. */
+.map-stage .world-map {
+  flex: 1 1 auto;
+}
+
 .world-map svg {
   display: block;
   width: 100%;
@@ -624,6 +630,15 @@ input:disabled {
 .stat-copy strong {
   overflow: hidden;
   font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -644,7 +659,23 @@ input:disabled {
 .enrollment-panel form {
   display: grid;
   gap: 18px;
-  margin-top: 28px;
+  margin-top: 24px;
+}
+
+.enrollment-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.enrollment-panel {
+  transition: box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.enrollment-panel.is-dropping {
+  background: var(--green-soft);
+  box-shadow: inset 0 0 0 2px var(--green);
 }
 
 .field {
@@ -811,6 +842,11 @@ input:disabled {
 .inline-issue {
   display: grid;
   gap: 8px;
+}
+
+.connection-panel .inline-issue,
+.connection-panel .fallback-note {
+  margin-top: 14px;
 }
 
 .fallback-note {
@@ -1133,6 +1169,18 @@ input:disabled {
   background: var(--danger-bg);
 }
 
+/* While Ket looks for a route, rings ripple out of the button; once
+   connected it glows slowly. */
+.power-button.is-cancellable {
+  animation: power-seek 1.8s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+}
+
+.power-button.is-connected {
+  animation:
+    liberated-power-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    power-glow 3.2s ease-in-out 420ms infinite;
+}
+
 .power-button.is-cancellable:hover:not(:disabled) {
   color: var(--on-accent);
   background: var(--danger-strong);
@@ -1357,6 +1405,7 @@ input:disabled {
 
 .chart-heading strong {
   font-size: 20px;
+  font-variant-numeric: tabular-nums;
 }
 
 .chart-legend {
@@ -1396,7 +1445,20 @@ input:disabled {
 .chart-line {
   fill: none;
   stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
   vector-effect: non-scaling-stroke;
+}
+
+.chart-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 20px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .chart-area {
@@ -1616,13 +1678,34 @@ input:disabled {
   line-height: 1.5;
 }
 
+.settings-chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+  padding-left: 46px;
+}
+
 .settings-checklist label {
   display: flex;
+  min-height: 38px;
   align-items: center;
   gap: 10px;
-  padding-left: 30px;
-  color: var(--ink);
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
   cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.settings-checklist label:has(input:checked) {
+  border-color: var(--green);
+  color: var(--ink);
+  background: var(--green-soft);
+}
+
+.settings-checklist label:hover {
+  border-color: var(--green);
 }
 
 .settings-checklist input {
@@ -1728,11 +1811,41 @@ input:disabled {
   line-height: 1.5;
 }
 
+/* A switch: on and off read at a glance. */
 .settings-toggle input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--green-dark);
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: 0 0 38px;
+  margin: 0;
+  border: 1px solid var(--input-border);
+  border-radius: 999px;
+  background: var(--input);
   cursor: pointer;
+  appearance: none;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.settings-toggle input::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--muted);
+  content: "";
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+
+.settings-toggle input:checked {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.settings-toggle input:checked::after {
+  background: var(--on-accent);
+  transform: translateX(16px);
 }
 
 .danger-section {
@@ -1999,6 +2112,25 @@ input:disabled {
   }
 }
 
+@keyframes power-seek {
+  0% {
+    box-shadow: 0 0 0 0 rgb(var(--accent-rgb) / 34%);
+  }
+  100% {
+    box-shadow: 0 0 0 26px rgb(var(--accent-rgb) / 0%);
+  }
+}
+
+@keyframes power-glow {
+  0%,
+  100% {
+    box-shadow: 0 9px 24px rgb(var(--accent-rgb) / 20%);
+  }
+  50% {
+    box-shadow: 0 9px 38px rgb(var(--accent-rgb) / 42%);
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -2068,6 +2200,12 @@ input:disabled {
 
   .summary-item:nth-child(-n + 3) {
     border-bottom: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-chips {
+    padding-left: 0;
   }
 }
 

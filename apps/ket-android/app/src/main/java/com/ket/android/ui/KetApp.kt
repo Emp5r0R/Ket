@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
+import com.ket.android.AlwaysOnState
 import com.ket.android.KetDiagnosticsDialog
 import com.ket.android.KetProtocol
 import com.ket.android.KetThemeMode
@@ -71,6 +72,8 @@ import com.ket.android.ui.connection.AddServerScreen
 import com.ket.android.ui.connection.ConnectionScreen
 import com.ket.android.ui.connection.StatusIsland
 import com.ket.android.ui.metrics.MetricsScreen
+import com.ket.android.ui.metrics.Throughput
+import com.ket.android.ui.metrics.TrafficSample
 import com.ket.android.ui.protocols.ProtocolGuideScreen
 import com.ket.android.ui.settings.SettingsScreen
 import com.ket.android.share.ShareActions
@@ -112,6 +115,7 @@ internal fun KetApp(
     onConnectionOptionsChange: (ConnectionOptions) -> Unit = {},
     loadInstalledApps: () -> List<InstalledApp> = { emptyList() },
     onForgetProfile: () -> Unit = {},
+    onOpenVpnSettings: () -> Unit = {},
     /** Builds the diagnostic report when it is opened. */
     diagnosticReport: () -> String = { "Ket diagnostic report\nevents:\nnone\n" },
     appVersion: String = "",
@@ -137,6 +141,19 @@ internal fun KetApp(
     var diagnosticsVisible by rememberSaveable { mutableStateOf(false) }
     var destinationWireName by rememberSaveable { mutableStateOf(KetAppDestination.Connection.storedName) }
     var guideFocusWireName by rememberSaveable { mutableStateOf<String?>(null) }
+    // Android's always-on settings as last seen while connected; they cannot be read otherwise.
+    var alwaysOn by remember { mutableStateOf<AlwaysOnState?>(null) }
+    LaunchedEffect(snapshot.alwaysOn) { snapshot.alwaysOn?.let { alwaysOn = it } }
+    // Recent traffic readings of the current connection, for its speed.
+    var trafficHistory by remember { mutableStateOf(emptyList<TrafficSample>()) }
+    LaunchedEffect(snapshot.phase, snapshot.trafficObservedAtMillis) {
+        val observedAt = snapshot.trafficObservedAtMillis
+        trafficHistory = if (snapshot.phase != TunnelPhase.Connected || observedAt == null) {
+            emptyList()
+        } else {
+            Throughput.append(trafficHistory, TrafficSample(observedAt, snapshot.sentBytes, snapshot.receivedBytes))
+        }
+    }
     LaunchedEffect(snapshot.accessExpiresAtEpochSeconds) {
         snapshot.accessExpiresAtEpochSeconds?.let {
             accessExpiresAtEpochSeconds = it
@@ -307,6 +324,7 @@ internal fun KetApp(
                                     lastNode = lastNode,
                                     serverUrl = serverUrl,
                                     accessRemainingSeconds = accessRemainingSeconds,
+                                    trafficHistory = trafficHistory,
                                     preferredProtocol = preferredProtocol,
                                     offeredProtocols = lastOffered,
                                     canStartConnection = serverUrl.isNotBlank() && accessCode.matches(ACCESS_CODE),
@@ -332,7 +350,7 @@ internal fun KetApp(
                                     onStopShare = shareActions.stop,
                                 )
                             }
-                        KetAppDestination.Metrics -> MetricsScreen(snapshot, accessRemainingSeconds)
+                        KetAppDestination.Metrics -> MetricsScreen(snapshot, accessRemainingSeconds, trafficHistory)
                         KetAppDestination.Protocols -> ProtocolGuideScreen(
                             offered = lastOffered,
                             selected = preferredProtocol,
@@ -362,6 +380,8 @@ internal fun KetApp(
                             serverVersion = snapshot.serverVersion,
                             share = share,
                             shareActions = shareActions,
+                            alwaysOn = alwaysOn,
+                            onOpenVpnSettings = onOpenVpnSettings,
                         )
                     }
                 }

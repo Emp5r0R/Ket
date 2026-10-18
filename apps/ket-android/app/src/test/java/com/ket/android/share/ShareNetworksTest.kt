@@ -31,6 +31,31 @@ class ShareNetworksTest {
     }
 
     @Test
+    fun `a wlan interface that is not one of the phone's wifi connections is its hotspot`() {
+        val interfaces = listOf(
+            local("wlan0", "172.25.212.46"),
+            local("wlan1", "10.120.201.49"),
+        )
+        assertEquals(
+            listOf(
+                ShareNetwork("wlan1", "10.120.201.49", ShareNetworkKind.Hotspot),
+                ShareNetwork("wlan0", "172.25.212.46", ShareNetworkKind.WiFi),
+            ),
+            ShareNetworks.candidates(interfaces, wifiClients = setOf("wlan0")),
+        )
+        // With Wi-Fi off, every wlan interface left is the hotspot.
+        assertEquals(
+            listOf(ShareNetworkKind.Hotspot, ShareNetworkKind.Hotspot),
+            ShareNetworks.candidates(interfaces, wifiClients = emptySet()).map { it.kind },
+        )
+        // When the system cannot say, the name decides.
+        assertEquals(
+            listOf(ShareNetworkKind.WiFi, ShareNetworkKind.WiFi),
+            ShareNetworks.candidates(interfaces).map { it.kind },
+        )
+    }
+
+    @Test
     fun `mobile data, the vpn, loopback, public addresses, and interfaces that are down are never offered`() {
         val networks = ShareNetworks.candidates(
             listOf(

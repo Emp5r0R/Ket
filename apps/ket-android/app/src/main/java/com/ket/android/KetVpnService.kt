@@ -93,6 +93,7 @@ class KetVpnService : VpnService() {
     private var transportAddresses: Map<String, InetAddress> = emptyMap()
     private var healthTask: ScheduledFuture<*>? = null
     private var telemetryTask: ScheduledFuture<*>? = null
+    private var localTrafficTask: ScheduledFuture<*>? = null
     private var networkChangeTask: ScheduledFuture<*>? = null
     private var networkCallbackRegistered = false
     private var idleModeReceiverRegistered = false
@@ -165,6 +166,7 @@ class KetVpnService : VpnService() {
         val terminalSnapshot = lifecycle.destroy()
         healthTask?.cancel(true)
         telemetryTask?.cancel(true)
+        localTrafficTask?.cancel(true)
         networkChangeTask?.cancel(true)
         if (networkCallbackRegistered) {
             connectivityManager.unregisterNetworkCallback(networkCallback)
@@ -196,6 +198,7 @@ class KetVpnService : VpnService() {
             publishConnected(spec, selected)
             scheduleHealthChecks()
             scheduleTelemetry()
+            scheduleLocalTraffic()
         } catch (error: Exception) {
             AndroidConnectionDiagnostics.record(
                 stage = "tunnel_start",
@@ -419,6 +422,7 @@ class KetVpnService : VpnService() {
                 handshakeLatencyMs = selected.started.handshakeLatencyMs,
                 transportName = selected.engine.displayName,
                 reconnectAttempt = 0,
+                alwaysOn = alwaysOnState() ?: it.alwaysOn,
             )
         }
         updateForegroundNotification("Liberated with ${selected.engine.displayName}")
@@ -429,6 +433,12 @@ class KetVpnService : VpnService() {
             protocol = spec.preferredProtocol,
             transport = activeTransportId,
         )
+    }
+
+    private fun alwaysOnState(): AlwaysOnState? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        AlwaysOnState(alwaysOn = isAlwaysOn, lockdown = isLockdownEnabled)
+    } else {
+        null
     }
 
     private fun scheduleHealthChecks() {
@@ -670,6 +680,37 @@ class KetVpnService : VpnService() {
         )
     }
 
+    /**
+     * Reads this phone's own traffic counters every two seconds, so the app can show the speed
+     * as it changes. Nothing is sent to the server.
+     */
+    private fun scheduleLocalTraffic() {
+        localTrafficTask = scheduler.scheduleWithFixedDelay(
+            ::refreshLocalTraffic,
+            LOCAL_TRAFFIC_SECONDS,
+            LOCAL_TRAFFIC_SECONDS,
+            TimeUnit.SECONDS,
+        )
+    }
+
+    private fun refreshLocalTraffic() {
+        if (lifecycle.isStopping() || reconnecting.get()) return
+        val local = localTrafficStats() ?: return
+        val sent = local.getOrNull(1) ?: return
+        val received = local.getOrNull(3) ?: return
+        if (lifecycle.isStopping()) return
+        KetTunnelRuntime.update {
+            it.copy(sentBytes = sent, receivedBytes = received, trafficObservedAtMillis = SystemClock.elapsedRealtime())
+        }
+    }
+
+    /** The active engine's or bridge's counters: packets and bytes sent, then received. */
+    private fun localTrafficStats(): LongArray? = engine?.trafficStats() ?: if (bridgeActive) {
+        runCatching { bridge.stats() }.getOrNull()
+    } else {
+        null
+    }
+
     private fun requestImmediateTelemetryRefresh() {
         if (launchSpec == null) return
         if (lifecycle.isStopping() || scheduler.isShutdown) return
@@ -762,15 +803,7 @@ class KetVpnService : VpnService() {
                 return
             }
             if (lifecycle.isStopping()) return
-            val local = if (reconnecting.get()) {
-                null
-            } else {
-                engine?.trafficStats() ?: if (bridgeActive) {
-                    runCatching { bridge.stats() }.getOrNull()
-                } else {
-                    null
-                }
-            }
+            val local = if (reconnecting.get()) null else localTrafficStats()
             if (lifecycle.isStopping()) return
             val remoteTraffic = remote.takeIf(SessionTelemetry::available)
             KetTunnelRuntime.update {
@@ -780,6 +813,11 @@ class KetVpnService : VpnService() {
                         ?: it.accessExpiresAtEpochSeconds,
                     sentBytes = local?.getOrNull(1) ?: remoteTraffic?.sent ?: it.sentBytes,
                     receivedBytes = local?.getOrNull(3) ?: remoteTraffic?.received ?: it.receivedBytes,
+                    trafficObservedAtMillis = if (local != null || remoteTraffic != null) {
+                        SystemClock.elapsedRealtime()
+                    } else {
+                        it.trafficObservedAtMillis
+                    },
                     onlineConnections = remoteTraffic?.online ?: it.onlineConnections,
                     allowance = remote.allowance,
                     serverVersion = remote.updates?.serverVersion ?: it.serverVersion,
@@ -1067,6 +1105,7 @@ class KetVpnService : VpnService() {
         private const val RECONNECT_RETRY_MILLIS = 3_000L
         private const val NETWORK_CHANGE_DEBOUNCE_MILLIS = 1_500L
         private const val BRIDGE_SETTLE_MILLIS = 250L
+        private const val LOCAL_TRAFFIC_SECONDS = 2L
     }
 }
 

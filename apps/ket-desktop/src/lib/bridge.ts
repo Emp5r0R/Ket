@@ -187,6 +187,24 @@ function mockBridge(): DesktopBridge {
     listeners.forEach((listener) => listener(snapshot));
     return snapshot;
   };
+  // A demo page (?demo=...) moves some traffic so the speed charts can be
+  // seen working; tests never set it.
+  if (demoPhase !== null) {
+    window.setInterval(() => {
+      const traffic = snapshot.traffic;
+      if (snapshot.phase !== "connected" || traffic === null) return;
+      const burst = Math.random() < 0.3 ? 6 : 1;
+      publish({
+        ...snapshot,
+        traffic: {
+          ...traffic,
+          bytes_received: traffic.bytes_received + Math.round(burst * (300_000 + Math.random() * 900_000)),
+          bytes_sent: traffic.bytes_sent + Math.round(burst * (20_000 + Math.random() * 90_000)),
+          observed_at_epoch_seconds: traffic.observed_at_epoch_seconds + 3,
+        },
+      });
+    }, 1_000);
+  }
   return {
     state: async () => ({
       snapshot,

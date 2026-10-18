@@ -22,7 +22,11 @@ import java.util.concurrent.TimeUnit
 object KetShare {
     private const val TICK_SECONDS = 2L
 
-    val controller = ShareController(NativeShareEngine, ShareNetworks::current)
+    @Volatile private var appContext: Context? = null
+
+    val controller = ShareController(NativeShareEngine) {
+        appContext?.let(ShareNetworks::current).orEmpty()
+    }
 
     private val scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "ket-share-watch").apply { isDaemon = true }
@@ -38,6 +42,7 @@ object KetShare {
     @Volatile private var ketConnected = false
 
     fun start(context: Context, address: String): Boolean {
+        appContext = context.applicationContext
         watch(context.applicationContext)
         val started = controller.start(address)
         if (!started) unwatch()

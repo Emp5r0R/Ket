@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.ket.android.AlwaysOnState
 import com.ket.android.KetThemeMode
 import com.ket.android.KetProtocol
 import com.ket.android.connection.ConnectionOptions
@@ -69,6 +70,8 @@ internal fun SettingsScreen(
     serverVersion: String?,
     share: ShareState = ShareState(),
     shareActions: ShareActions = ShareActions.None,
+    alwaysOn: AlwaysOnState? = null,
+    onOpenVpnSettings: () -> Unit = {},
 ) {
     var confirmingForget by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -87,6 +90,9 @@ internal fun SettingsScreen(
                     }
                 }
             }
+        }
+        SectionCard(title = "Always-on VPN", subtitle = "Keep apps off the internet whenever Ket is not connected.") {
+            AlwaysOnSection(alwaysOn, onOpenVpnSettings)
         }
         SectionCard(title = "Apps that use Ket") {
             SplitTunnelSection(

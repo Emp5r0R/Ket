@@ -97,7 +97,7 @@ describe("desktop settings", () => {
     expect(screen.getByRole("radio", { name: "Dark" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByRole("radio", { name: "Light" }));
     expect(onThemeChange).toHaveBeenCalledWith("light");
-    const split = screen.getByRole("checkbox", { name: /Split the TLS greeting/ });
+    const split = screen.getByRole("switch", { name: /Split the TLS greeting/ });
     expect(split).not.toBeChecked();
     fireEvent.click(split);
     expect(onSplitTlsHelloChange).toHaveBeenCalledWith(true);
@@ -257,21 +257,36 @@ describe("desktop telemetry", () => {
       },
       handshake_latency_ms: 42,
     });
-    const { rerender } = render(
-      <MetricsView snapshot={snapshot} history={[{ at: 1, sent: 10, received: 20 }]} />,
-    );
+    // 20 KB down and 10 KB up over 10 s, then 40 KB and 5 KB over 10 s.
+    const history = [
+      { at: 970, sent: 0, received: 0 },
+      { at: 980, sent: 10_240, received: 20_480 },
+      { at: 990, sent: 15_360, received: 61_440 },
+    ];
+    const { rerender } = render(<MetricsView snapshot={snapshot} history={history} />);
     expect(screen.getByText("HTTPS Stealth")).toBeInTheDocument();
     expect(screen.getByText("42 ms")).toBeInTheDocument();
     expect(screen.getByText("1.00 KB / 4.00 KB")).toBeInTheDocument();
     expect(screen.getByText("3 session slots available")).toBeInTheDocument();
-    expect(screen.getByText("2.00 KB")).toBeInTheDocument();
+    expect(screen.getByText("4.00 KB/s")).toBeInTheDocument();
+    expect(screen.getByText("512 B/s")).toBeInTheDocument();
+    expect(screen.getByText("2.00 KB in total")).toBeInTheDocument();
+    expect(screen.getByText("Peak 4.00 KB/s")).toBeInTheDocument();
+    expect(screen.getByText("Peak 1.00 KB/s")).toBeInTheDocument();
+    expect(screen.getAllByText("Last 20 s")).toHaveLength(2);
 
-    rerender(<StatStrip snapshot={snapshot} />);
+    rerender(<StatStrip snapshot={snapshot} history={history} />);
     const metrics = screen.getByLabelText("Connection metrics");
-    expect(within(metrics).getByText("2.00 KB")).toBeInTheDocument();
-    expect(within(metrics).getByText("1.00 KB")).toBeInTheDocument();
+    expect(within(metrics).getByText("4.00 KB/s")).toBeInTheDocument();
+    expect(within(metrics).getByText("2.00 KB total")).toBeInTheDocument();
+    expect(within(metrics).getByText("512 B/s")).toBeInTheDocument();
+    expect(within(metrics).getByText("1.00 KB total")).toBeInTheDocument();
     expect(within(metrics).getByText("42 ms")).toBeInTheDocument();
     expect(within(metrics).getByText("25%")).toBeInTheDocument();
+
+    // Speed is only shown while connected.
+    rerender(<StatStrip snapshot={{ ...snapshot, phase: "enrolled" }} history={history} />);
+    expect(within(screen.getByLabelText("Connection metrics")).getAllByText("--").length).toBeGreaterThanOrEqual(2);
   });
 
   it("shows the invite's data allowance only when the server set one", () => {
@@ -317,23 +332,22 @@ describe("desktop telemetry", () => {
     expect(container.querySelector(".capacity-track span")).toHaveStyle({ width: "100%" });
   });
 
-  it("builds no data path for empty history and stable geometry for one or many samples", () => {
-    const { container, rerender } = render(<TrafficChart points={[]} metric="received" />);
-    expect(screen.getByRole("img", { name: "Received traffic history" })).toBeInTheDocument();
+  it("builds no data path without speeds and scales speeds from zero to the peak", () => {
+    const { container, rerender } = render(<TrafficChart rates={[]} metric="received" />);
+    expect(screen.getByRole("img", { name: "Download speed history" })).toBeInTheDocument();
     expect(container.querySelector(".chart-line")).not.toBeInTheDocument();
 
-    rerender(<TrafficChart points={[{ at: 1, sent: 5, received: 10 }]} metric="received" />);
-    const single = container.querySelector(".chart-line")?.getAttribute("d");
-    expect(single).toBe("M8,75 L512,75");
+    rerender(<TrafficChart rates={[{ at: 1, sent: 5, received: 10 }]} metric="received" />);
+    expect(container.querySelector(".chart-line")?.getAttribute("d")).toBe("M8.0,8.0 L512.0,8.0");
     expect(container.querySelector(".chart-area")?.getAttribute("d")).toMatch(/ Z$/);
 
     rerender(
       <TrafficChart
-        points={[{ at: 1, sent: 1, received: 30 }, { at: 2, sent: 2, received: 10 }]}
+        rates={[{ at: 1, sent: 0, received: 30 }, { at: 2, sent: 2, received: 10 }, { at: 3, sent: 1, received: 0 }]}
         metric="sent"
       />,
     );
-    expect(screen.getByRole("img", { name: "Sent traffic history" })).toBeInTheDocument();
-    expect(container.querySelector(".chart-line")?.getAttribute("d")).toBe("M8,142 L512,8");
+    expect(screen.getByRole("img", { name: "Upload speed history" })).toBeInTheDocument();
+    expect(container.querySelector(".chart-line")?.getAttribute("d")).toBe("M8.0,142.0 L260.0,8.0 L512.0,75.0");
   });
 });

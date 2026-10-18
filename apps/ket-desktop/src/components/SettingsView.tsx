@@ -156,6 +156,7 @@ export function SettingsView({
           </span>
           <input
             type="checkbox"
+            role="switch"
             checked={splitTlsHello}
             onChange={(event) => onSplitTlsHelloChange(event.target.checked)}
           />
@@ -165,23 +166,25 @@ export function SettingsView({
             <legend>
               <span className="settings-row-icon"><ListChecks size={18} aria-hidden="true" /></span>
               <span>
-                <strong>Protocols Automatic tries</strong>
+                <strong>Protocols Automatic may use</strong>
                 <small>
                   Leave out ones that never work for you. Choosing a protocol by hand still
                   uses it, and if you leave out every one, Automatic tries them all.
                 </small>
               </span>
             </legend>
-            {offered.map((protocol) => (
-              <label key={protocol}>
-                <input
-                  type="checkbox"
-                  checked={!automaticExcluded.includes(protocol)}
-                  onChange={(event) => onAutomaticProtocolChange(protocol, event.target.checked)}
-                />
-                {protocolInfo(protocol).label}
-              </label>
-            ))}
+            <div className="settings-chips">
+              {offered.map((protocol) => (
+                <label key={protocol}>
+                  <input
+                    type="checkbox"
+                    checked={!automaticExcluded.includes(protocol)}
+                    onChange={(event) => onAutomaticProtocolChange(protocol, event.target.checked)}
+                  />
+                  {protocolInfo(protocol).label}
+                </label>
+              ))}
+            </div>
           </fieldset>
         ) : null}
         <BypassListEditor entries={bypass} check={checkBypassEntry} onChange={onBypassChange} />

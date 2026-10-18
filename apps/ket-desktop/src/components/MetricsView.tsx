@@ -1,6 +1,7 @@
 import { Cpu, Database, Gauge, Radio, Timer, Users } from "lucide-react";
 import { formatBytes, formatDuration } from "../lib/format";
 import type { ClientSnapshot, TrafficPoint } from "../types";
+import { formatRate, latestRate, peakRate, throughput } from "../lib/throughput";
 import { AllowanceSection } from "./AllowanceSection";
 import { TrafficChart } from "./TrafficChart";
 
@@ -12,6 +13,8 @@ interface MetricsViewProps {
 export function MetricsView({ snapshot, history }: MetricsViewProps) {
   const node = snapshot.node;
   const traffic = snapshot.traffic;
+  const rates = throughput(history);
+  const latest = latestRate(history);
   const metrics = [
     {
       label: "Transport",
@@ -72,26 +75,26 @@ export function MetricsView({ snapshot, history }: MetricsViewProps) {
       </section>
 
       <div className="chart-grid-layout">
-        <section className="chart-section">
-          <div className="chart-heading">
-            <div>
-              <span>Received</span>
-              <strong>{traffic?.available ? formatBytes(traffic.bytes_received) : "--"}</strong>
+        {(["received", "sent"] as const).map((metric) => (
+          <section className="chart-section" key={metric}>
+            <div className="chart-heading">
+              <div>
+                <span>{metric === "received" ? "Download" : "Upload"}</span>
+                <strong>{formatRate(latest?.[metric])}</strong>
+              </div>
+              <span className={`chart-legend legend-${metric}`}>
+                {traffic?.available
+                  ? `${formatBytes(metric === "received" ? traffic.bytes_received : traffic.bytes_sent)} in total`
+                  : "No traffic yet"}
+              </span>
             </div>
-            <span className="chart-legend legend-received">Downstream</span>
-          </div>
-          <TrafficChart points={history} metric="received" />
-        </section>
-        <section className="chart-section">
-          <div className="chart-heading">
-            <div>
-              <span>Sent</span>
-              <strong>{traffic?.available ? formatBytes(traffic.bytes_sent) : "--"}</strong>
+            <TrafficChart rates={rates} metric={metric} />
+            <div className="chart-footer">
+              <span>Peak {formatRate(rates.length ? peakRate(rates, metric) : null)}</span>
+              <span>Last {chartSpan(history)}</span>
             </div>
-            <span className="chart-legend legend-sent">Upstream</span>
-          </div>
-          <TrafficChart points={history} metric="sent" />
-        </section>
+          </section>
+        ))}
       </div>
 
       <section className="capacity-section">
@@ -110,4 +113,11 @@ export function MetricsView({ snapshot, history }: MetricsViewProps) {
       {snapshot.allowance && <AllowanceSection allowance={snapshot.allowance} />}
     </div>
   );
+}
+
+/** How much time the chart covers, such as "2 min". */
+function chartSpan(history: TrafficPoint[]): string {
+  const seconds = history.length > 1 ? history[history.length - 1].at - history[0].at : 0;
+  if (seconds < 60) return `${Math.max(seconds, 0)} s`;
+  return `${Math.round(seconds / 60)} min`;
 }

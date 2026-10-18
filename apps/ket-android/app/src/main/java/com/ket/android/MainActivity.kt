@@ -187,6 +187,9 @@ class MainActivity : ComponentActivity() {
                             connectionOptions.value = options
                             connectionOptionsStore.save(options)
                         },
+                        onOpenVpnSettings = {
+                            runCatching { startActivity(Intent(android.provider.Settings.ACTION_VPN_SETTINGS)) }
+                        },
                         onForgetProfile = {
                             runCatching { AndroidTunnelCredentialStore.get(this).clearAll() }
                         },
@@ -199,7 +202,7 @@ class MainActivity : ComponentActivity() {
                         },
                         share = shareState.value,
                         shareActions = ShareActions(
-                            networks = ShareNetworks::current,
+                            networks = { ShareNetworks.current(this) },
                             start = { address -> KetShare.start(this, address) },
                             stop = { KetShare.stop() },
                         ),

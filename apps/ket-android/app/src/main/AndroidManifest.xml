@@ -35,5 +35,15 @@
             <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON" android:value="true" />
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="vpn" />
         </service>
+        <!-- Quick Settings tile: connect the saved server or disconnect without opening the app. -->
+        <service
+            android:name=".KetTileService"
+            android:exported="true"
+            android:icon="@drawable/ket_notification"
+            android:label="Ket"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
+        </service>
     </application>
 </manifest>
